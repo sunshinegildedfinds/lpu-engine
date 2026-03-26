@@ -66,6 +66,13 @@
       category: {
         controlType: "custom_select",
         optionSelectors: DEFAULT_OPTION_SELECTORS,
+        stageOneAliases: {
+          "Clothing, Shoes & Accessories": [
+            "Clothing, Shoes and Accessories",
+            "Clothing Shoes & Accessories",
+            "Clothing Shoes and Accessories",
+          ],
+        },
         pickerContainerSelectors: [
           '[role="dialog"]',
           '[aria-modal="true"]',

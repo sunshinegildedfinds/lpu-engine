@@ -295,11 +295,11 @@
     openCustomSelectControl(control);
     await wait(140);
 
-    const options = findVisibleOptions(fieldConfig.optionSelectors ?? []);
-    const matchingOptions = findMatchingOptions(options, value);
+    const optionEntries = findVisibleOptionEntries(fieldConfig.optionSelectors ?? []);
+    const matchingOptions = findMatchingOptions(optionEntries, value);
 
     if (matchingOptions.length === 1) {
-      clickElement(matchingOptions[0]);
+      clickElement(matchingOptions[0].clickTarget);
       usedElements.add(control);
       return { status: "filled" };
     }
@@ -329,11 +329,16 @@
     openCustomSelectControl(control);
     await wait(150);
 
+    let stageOneChosenDebug = "";
     for (let index = 0; index < stages.length; index += 1) {
       const stageLabel = stages[index];
+      const stageLabelsToTry = getStageLabelsForMatch(stageLabel, index, fieldConfig);
       const pickerRoot = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
-      let options = findVisibleOptions(fieldConfig.optionSelectors ?? [], pickerRoot ?? undefined);
-      let matches = findMatchingOptions(options, stageLabel);
+      let optionEntries = findVisibleOptionEntries(
+        fieldConfig.optionSelectors ?? [],
+        pickerRoot ?? undefined
+      );
+      let matches = findMatchingOptionsForStage(optionEntries, stageLabelsToTry);
 
       if (matches.length !== 1 && pickerRoot) {
         const searchInput = findPickerSearchInput(
@@ -344,19 +349,39 @@
         if (searchInput) {
           setElementValue(searchInput, stageLabel);
           await wait(140);
-          options = findVisibleOptions(fieldConfig.optionSelectors ?? [], pickerRoot);
-          matches = findMatchingOptions(options, stageLabel);
+          optionEntries = findVisibleOptionEntries(fieldConfig.optionSelectors ?? [], pickerRoot);
+          matches = findMatchingOptionsForStage(optionEntries, stageLabelsToTry);
         }
       }
 
       if (matches.length !== 1) {
+        const visiblePreview = buildVisibleOptionsPreview(optionEntries, 3);
+        const stageDiagnostics =
+          index === 0 ? buildStageOneOptionDiagnostics(optionEntries, 10) : "";
+        const wanted = stageLabelsToTry[0] ?? stageLabel;
+        const detail = visiblePreview
+          ? `stopped at stage ${index + 1}: wanted "${wanted}"; visible: ${visiblePreview}`
+          : `stopped at stage ${index + 1}: wanted "${wanted}"`;
+        const withDiagnostics =
+          stageDiagnostics && index === 0
+            ? `${detail}; diag: ${stageDiagnostics}`
+            : detail;
+        const withChosen =
+          stageOneChosenDebug && index > 0
+            ? `${withDiagnostics}; stage1 click: ${stageOneChosenDebug}`
+            : withDiagnostics;
+
         return {
           status: "needs_review",
-          reason: `stopped at stage ${index + 1}`,
+          reason: withChosen,
         };
       }
 
-      clickElement(matches[0]);
+      if (index === 0) {
+        stageOneChosenDebug = describeOptionEntry(matches[0]);
+      }
+
+      clickElement(matches[0].clickTarget);
       await wait(180);
     }
 
@@ -424,7 +449,7 @@
     return null;
   }
 
-  function findVisibleOptions(optionSelectors, root) {
+  function findVisibleOptionEntries(optionSelectors, root) {
     const selectors = optionSelectors.length
       ? optionSelectors
       : [
@@ -434,8 +459,8 @@
           'li[role="option"]',
         ];
 
-    const seen = new Set();
-    const options = [];
+    const seenClickTargets = new Set();
+    const optionEntries = [];
 
     const scope = root ?? document;
     for (const selector of selectors) {
@@ -443,21 +468,47 @@
       for (const candidate of candidates) {
         if (!(candidate instanceof Element)) continue;
         if (!isVisible(candidate)) continue;
-        if (seen.has(candidate)) continue;
+        const clickTarget = resolveOptionClickTarget(candidate);
+        if (seenClickTargets.has(clickTarget)) continue;
 
-        seen.add(candidate);
-        options.push(candidate);
+        seenClickTargets.add(clickTarget);
+        optionEntries.push({
+          element: candidate,
+          selector,
+          clickTarget,
+        });
       }
     }
 
-    return options;
+    return optionEntries;
   }
 
-  function findMatchingOptions(options, value) {
+  function findMatchingOptions(optionEntries, value) {
     const normalizedValue = normalizeText(value);
     if (!normalizedValue) return [];
 
-    return options.filter((option) => normalizeText(getOptionText(option)) === normalizedValue);
+    return optionEntries.filter(
+      (entry) => normalizeText(getOptionTextFromEntry(entry)) === normalizedValue
+    );
+  }
+
+  function findMatchingOptionsForStage(optionEntries, candidateLabels) {
+    const normalizedCandidates = candidateLabels
+      .map((label) => normalizeText(label))
+      .filter(Boolean);
+
+    if (!normalizedCandidates.length) return [];
+
+    return optionEntries.filter((entry) =>
+      normalizedCandidates.includes(normalizeText(getOptionTextFromEntry(entry)))
+    );
+  }
+
+  function getOptionTextFromEntry(entry) {
+    const directText = cleanCategoryStage(getOptionText(entry.element));
+    if (directText) return directText;
+
+    return cleanCategoryStage(getOptionText(entry.clickTarget));
   }
 
   function getOptionText(option) {
@@ -488,8 +539,84 @@
   function splitCategoryStages(value) {
     return value
       .split(">")
-      .map((part) => normalizeText(part))
+      .map((part) => cleanCategoryStage(part))
       .filter(Boolean);
+  }
+
+  function cleanCategoryStage(value) {
+    return String(value ?? "").trim().replace(/\s+/g, " ");
+  }
+
+  function getStageLabelsForMatch(stageLabel, stageIndex, fieldConfig) {
+    if (stageIndex !== 0) return [stageLabel];
+
+    const stageOneAliases = fieldConfig?.stageOneAliases ?? {};
+    const aliases = stageOneAliases[stageLabel] ?? [];
+    return [stageLabel, ...aliases].filter(Boolean);
+  }
+
+  function buildVisibleOptionsPreview(options, maxItems) {
+    const labels = [];
+    const seen = new Set();
+
+    for (const entry of options) {
+      const label = cleanCategoryStage(getOptionTextFromEntry(entry));
+      const normalizedLabel = normalizeText(label);
+      if (!normalizedLabel || seen.has(normalizedLabel)) continue;
+      seen.add(normalizedLabel);
+      labels.push(`"${label}"`);
+      if (labels.length >= maxItems) break;
+    }
+
+    return labels.join(", ");
+  }
+
+  function buildStageOneOptionDiagnostics(optionEntries, maxItems) {
+    const snippets = [];
+    for (let index = 0; index < optionEntries.length && snippets.length < maxItems; index += 1) {
+      snippets.push(`#${index + 1} ${describeOptionEntry(optionEntries[index])}`);
+    }
+    return snippets.join(" | ");
+  }
+
+  function describeOptionEntry(entry) {
+    const label = cleanCategoryStage(getOptionTextFromEntry(entry));
+    const nodeType = detectOptionNodeType(entry.element);
+    const clickType = detectOptionNodeType(entry.clickTarget);
+    return `sel:${entry.selector} node:${nodeType} text:"${label}" click:${clickType}`;
+  }
+
+  function detectOptionNodeType(node) {
+    if (!(node instanceof Element)) return "unknown";
+
+    if (
+      node.matches(
+        '[role="option"], [data-radix-collection-item], li[role="option"], .select__option, .option'
+      )
+    ) {
+      return "row";
+    }
+
+    if (node.matches("button")) {
+      return "row";
+    }
+
+    const text = cleanCategoryStage(getOptionText(node));
+    if (text && node.children.length <= 1) {
+      return "child_label";
+    }
+
+    return "icon_or_child";
+  }
+
+  function resolveOptionClickTarget(node) {
+    if (!(node instanceof Element)) return node;
+
+    const row = node.closest(
+      '[role="option"], [data-radix-collection-item], li[role="option"], .select__option, .option, button'
+    );
+
+    return row ?? node;
   }
 
   function isCategoryCompletionConfirmed(input) {
@@ -497,13 +624,14 @@
     const fullPathNormalized = normalizeText(String(fullPath).replace(/>/g, " "));
     const stages = splitCategoryStages(fullPath);
     const finalStage = stages[stages.length - 1] ?? "";
+    const normalizedFinalStage = normalizeText(finalStage);
 
     const controlSummary = normalizeText(getControlSummaryText(control));
     if (fullPathNormalized && controlSummary.includes(fullPathNormalized)) {
       return true;
     }
 
-    if (finalStage && controlSummary.includes(finalStage)) {
+    if (normalizedFinalStage && controlSummary.includes(normalizedFinalStage)) {
       return true;
     }
 
@@ -519,7 +647,7 @@
 
     return selectedCandidates.some((candidate) => {
       const candidateText = normalizeText(getOptionText(candidate));
-      return candidateText === finalStage;
+      return candidateText === normalizedFinalStage;
     });
   }
 
@@ -560,7 +688,17 @@
   async function retrySizeAfterCategorySuccess(input) {
     const { fillSteps, stepOutcomes, usedElements, filled, needsReview, skippedForSafety } = input;
 
-    if (stepOutcomes.category !== "filled") return;
+    if (stepOutcomes.category !== "filled") {
+      if (stepOutcomes.size !== "filled") {
+        const sizeStep = fillSteps.find((step) => step.key === "size");
+        if (!sizeStep) return;
+
+        clearStepResultsFromLists(sizeStep.label, [filled, needsReview, skippedForSafety]);
+        skippedForSafety.push(`${sizeStep.label} (category not confirmed)`);
+        stepOutcomes.size = "skipped_for_safety";
+      }
+      return;
+    }
     if (stepOutcomes.size === "filled") return;
 
     const sizeStep = fillSteps.find((step) => step.key === "size");
@@ -789,6 +927,13 @@
         category: {
           controlType: "custom_select",
           allowTypedEntry: false,
+          stageOneAliases: {
+            "Clothing, Shoes & Accessories": [
+              "Clothing, Shoes and Accessories",
+              "Clothing Shoes & Accessories",
+              "Clothing Shoes and Accessories",
+            ],
+          },
           pickerContainerSelectors: [
             '[role="dialog"]',
             '[aria-modal="true"]',
