@@ -85,7 +85,7 @@
       return;
     }
 
-    const title = record.payload?.marketplaces?.ebay?.title ?? "";
+    const title = pickEbayTitle(record.payload);
     const description = record.payload?.marketplaces?.ebay?.description ?? "";
     const savedAt = record.savedAt
       ? new Date(record.savedAt).toLocaleString()
@@ -131,17 +131,15 @@
       return;
     }
 
-    const ebayTitle = payload?.marketplaces?.ebay?.title ?? "";
+    const selectors = getSelectorMap().ebay;
+    const ebayTitle = pickEbayTitle(payload);
     const ebayDescription = payload?.marketplaces?.ebay?.description ?? "";
 
     const filled = [];
     const needsReview = [];
 
     if (ebayTitle) {
-      const titleField =
-        findField(["ebay title", "title"], "input") ||
-        findInputFallback(["title", "ebay"]);
-
+      const titleField = findElementBySelectorMap(selectors.title);
       if (titleField) {
         setElementValue(titleField, ebayTitle);
         filled.push("eBay title");
@@ -153,11 +151,7 @@
     }
 
     if (ebayDescription) {
-      const descriptionField =
-        findField(["ebay description", "description"], "textarea") ||
-        findField(["ebay description", "description"], '[contenteditable="true"]') ||
-        findTextareaFallback(["description", "details"]);
-
+      const descriptionField = findElementBySelectorMap(selectors.description);
       if (descriptionField) {
         setElementValue(descriptionField, ebayDescription);
         filled.push("eBay description");
@@ -178,6 +172,62 @@
 
     reportEl.textContent = parts.join(" | ") || "Nothing changed.";
     await refreshPanel();
+  }
+
+  function getSelectorMap() {
+    return (
+      window.LPU_VENDOO_SELECTORS ?? {
+        ebay: {
+          title: {
+            labelStrategies: [{ labelTerms: ["ebay title", "title"], fieldSelector: "input" }],
+            fallbackStrategies: [{ fieldSelector: "input", keywords: ["title", "ebay"] }],
+          },
+          description: {
+            labelStrategies: [
+              { labelTerms: ["ebay description", "description"], fieldSelector: "textarea" },
+              {
+                labelTerms: ["ebay description", "description"],
+                fieldSelector: '[contenteditable="true"]',
+              },
+            ],
+            fallbackStrategies: [
+              { fieldSelector: "textarea", keywords: ["description", "details"] },
+              { fieldSelector: '[contenteditable="true"]', keywords: ["description", "details"] },
+            ],
+          },
+        },
+      }
+    );
+  }
+
+  function pickEbayTitle(payload) {
+    const title = payload?.marketplaces?.ebay?.title ?? "";
+    if (typeof title === "string" && title.trim()) {
+      return title.trim();
+    }
+
+    const titleA = payload?.marketplaces?.ebay?.titleA ?? "";
+    if (typeof titleA === "string" && titleA.trim()) {
+      return titleA.trim();
+    }
+
+    return "";
+  }
+
+  function findElementBySelectorMap(fieldConfig) {
+    const labelStrategies = fieldConfig?.labelStrategies ?? [];
+    for (const strategy of labelStrategies) {
+      const found = findField(strategy.labelTerms ?? [], strategy.fieldSelector);
+      if (found) return found;
+    }
+
+    const fallbackStrategies = fieldConfig?.fallbackStrategies ?? [];
+    for (const strategy of fallbackStrategies) {
+      const found = findFallback(strategy.keywords ?? [], strategy.fieldSelector);
+      if (found) return found;
+    }
+
+    return null;
   }
 
   function getStoredPayload() {
@@ -227,31 +277,11 @@
     return null;
   }
 
-  function findInputFallback(keywords) {
+  function findFallback(keywords, fieldSelector) {
     const terms = keywords.map(normalizeText);
-    const inputs = Array.from(document.querySelectorAll("input"));
+    const elements = Array.from(document.querySelectorAll(fieldSelector));
 
-    return (
-      inputs.find((el) => matchesElementMetadata(el, terms)) ||
-      null
-    );
-  }
-
-  function findTextareaFallback(keywords) {
-    const terms = keywords.map(normalizeText);
-
-    const textarea =
-      Array.from(document.querySelectorAll("textarea")).find((el) =>
-        matchesElementMetadata(el, terms)
-      ) || null;
-
-    if (textarea) return textarea;
-
-    return (
-      Array.from(document.querySelectorAll('[contenteditable="true"]')).find((el) =>
-        matchesElementMetadata(el, terms)
-      ) || null
-    );
+    return elements.find((el) => matchesElementMetadata(el, terms)) || null;
   }
 
   function matchesElementMetadata(el, terms) {
@@ -262,7 +292,7 @@
         el.getAttribute("placeholder"),
         el.getAttribute("aria-label"),
         el.getAttribute("data-testid"),
-        el.getAttribute("title")
+        el.getAttribute("title"),
       ]
         .filter(Boolean)
         .join(" ")
@@ -288,7 +318,7 @@
         : HTMLInputElement.prototype;
 
     const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-    descriptor.set.call(el, value);
+    descriptor?.set?.call(el, value);
 
     el.dispatchEvent(new InputEvent("input", { bubbles: true, data: value }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
