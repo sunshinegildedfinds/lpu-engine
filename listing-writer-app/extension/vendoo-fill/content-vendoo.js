@@ -85,8 +85,13 @@
       return;
     }
 
+    const ebayPayload = record.payload?.marketplaces?.ebay ?? {};
     const title = pickEbayTitle(record.payload);
-    const description = record.payload?.marketplaces?.ebay?.description ?? "";
+    const description = ebayPayload.description ?? "";
+    const category = pickEbayCategory(record.payload);
+    const brand = pickEbayBrand(record.payload);
+    const size = pickEbaySize(record.payload);
+    const color = pickEbayColor(record.payload);
     const savedAt = record.savedAt
       ? new Date(record.savedAt).toLocaleString()
       : "unknown";
@@ -95,6 +100,10 @@
       <div><strong>Stored:</strong> ${savedAt}</div>
       <div><strong>eBay title:</strong> ${title ? "ready" : "missing"}</div>
       <div><strong>eBay description:</strong> ${description ? "ready" : "missing"}</div>
+      <div><strong>eBay category:</strong> ${category ? "ready" : "missing"}</div>
+      <div><strong>eBay brand:</strong> ${brand ? "ready" : "missing"}</div>
+      <div><strong>eBay size:</strong> ${size ? "ready" : "missing"}</div>
+      <div><strong>eBay color:</strong> ${color ? "ready" : "missing"}</div>
     `;
   }
 
@@ -132,34 +141,57 @@
     }
 
     const selectors = getSelectorMap().ebay;
-    const ebayTitle = pickEbayTitle(payload);
-    const ebayDescription = payload?.marketplaces?.ebay?.description ?? "";
+
+    const fillSteps = [
+      {
+        label: "eBay title",
+        value: pickEbayTitle(payload),
+        selectorConfig: selectors.title,
+      },
+      {
+        label: "eBay description",
+        value: payload?.marketplaces?.ebay?.description ?? "",
+        selectorConfig: selectors.description,
+      },
+      {
+        label: "eBay category",
+        value: pickEbayCategory(payload),
+        selectorConfig: selectors.category,
+      },
+      {
+        label: "eBay brand",
+        value: pickEbayBrand(payload),
+        selectorConfig: selectors.brand,
+      },
+      {
+        label: "eBay size",
+        value: pickEbaySize(payload),
+        selectorConfig: selectors.size,
+      },
+      {
+        label: "eBay color",
+        value: pickEbayColor(payload),
+        selectorConfig: selectors.color,
+      },
+    ];
 
     const filled = [];
     const needsReview = [];
 
-    if (ebayTitle) {
-      const titleField = findElementBySelectorMap(selectors.title);
-      if (titleField) {
-        setElementValue(titleField, ebayTitle);
-        filled.push("eBay title");
-      } else {
-        needsReview.push("eBay title");
+    for (const step of fillSteps) {
+      const value = typeof step.value === "string" ? step.value.trim() : "";
+      if (!value) {
+        needsReview.push(`${step.label} (payload missing)`);
+        continue;
       }
-    } else {
-      needsReview.push("eBay title (payload missing)");
-    }
 
-    if (ebayDescription) {
-      const descriptionField = findElementBySelectorMap(selectors.description);
-      if (descriptionField) {
-        setElementValue(descriptionField, ebayDescription);
-        filled.push("eBay description");
+      const field = findElementBySelectorMap(step.selectorConfig);
+      if (field) {
+        setElementValue(field, value);
+        filled.push(step.label);
       } else {
-        needsReview.push("eBay description");
+        needsReview.push(step.label);
       }
-    } else {
-      needsReview.push("eBay description (payload missing)");
     }
 
     const parts = [];
@@ -175,29 +207,51 @@
   }
 
   function getSelectorMap() {
-    return (
-      window.LPU_VENDOO_SELECTORS ?? {
-        ebay: {
-          title: {
-            labelStrategies: [{ labelTerms: ["ebay title", "title"], fieldSelector: "input" }],
-            fallbackStrategies: [{ fieldSelector: "input", keywords: ["title", "ebay"] }],
-          },
-          description: {
-            labelStrategies: [
-              { labelTerms: ["ebay description", "description"], fieldSelector: "textarea" },
-              {
-                labelTerms: ["ebay description", "description"],
-                fieldSelector: '[contenteditable="true"]',
-              },
-            ],
-            fallbackStrategies: [
-              { fieldSelector: "textarea", keywords: ["description", "details"] },
-              { fieldSelector: '[contenteditable="true"]', keywords: ["description", "details"] },
-            ],
-          },
+    return window.LPU_VENDOO_SELECTORS ?? {
+      ebay: {
+        title: {
+          labelStrategies: [{ labelTerms: ["ebay title", "title"], fieldSelector: "input" }],
+          fallbackStrategies: [{ fieldSelector: "input", keywords: ["title", "ebay"] }],
         },
-      }
-    );
+        description: {
+          labelStrategies: [
+            { labelTerms: ["ebay description", "description"], fieldSelector: "textarea" },
+            {
+              labelTerms: ["ebay description", "description"],
+              fieldSelector: '[contenteditable="true"]',
+            },
+          ],
+          fallbackStrategies: [
+            { fieldSelector: "textarea", keywords: ["description", "details"] },
+            { fieldSelector: '[contenteditable="true"]', keywords: ["description", "details"] },
+          ],
+        },
+        category: {
+          labelStrategies: [
+            { labelTerms: ["ebay category", "category"], fieldSelector: "input" },
+          ],
+          fallbackStrategies: [
+            { fieldSelector: "input", keywords: ["category", "ebay"] },
+            { fieldSelector: "input", keywords: ["category"] },
+          ],
+        },
+        brand: {
+          labelStrategies: [{ labelTerms: ["brand"], fieldSelector: "input" }],
+          fallbackStrategies: [{ fieldSelector: "input", keywords: ["brand"] }],
+        },
+        size: {
+          labelStrategies: [{ labelTerms: ["size"], fieldSelector: "input" }],
+          fallbackStrategies: [{ fieldSelector: "input", keywords: ["size"] }],
+        },
+        color: {
+          labelStrategies: [{ labelTerms: ["color", "colour"], fieldSelector: "input" }],
+          fallbackStrategies: [
+            { fieldSelector: "input", keywords: ["color"] },
+            { fieldSelector: "input", keywords: ["colour"] },
+          ],
+        },
+      },
+    };
   }
 
   function pickEbayTitle(payload) {
@@ -212,6 +266,31 @@
     }
 
     return "";
+  }
+
+  function pickEbayCategory(payload) {
+    const category = payload?.marketplaces?.ebay?.category ?? "";
+    return typeof category === "string" ? category.trim() : "";
+  }
+
+  function pickEbayBrand(payload) {
+    const brand = payload?.marketplaces?.ebay?.itemSpecifics?.brand ?? payload?.marketplaces?.ebay?.brand ?? "";
+    return typeof brand === "string" ? brand.trim() : "";
+  }
+
+  function pickEbaySize(payload) {
+    const size = payload?.marketplaces?.ebay?.itemSpecifics?.size ?? payload?.marketplaces?.ebay?.size ?? "";
+    return typeof size === "string" ? size.trim() : "";
+  }
+
+  function pickEbayColor(payload) {
+    const color =
+      payload?.marketplaces?.ebay?.itemSpecifics?.color ??
+      payload?.marketplaces?.ebay?.itemSpecifics?.colour ??
+      payload?.marketplaces?.ebay?.color ??
+      "";
+
+    return typeof color === "string" ? color.trim() : "";
   }
 
   function findElementBySelectorMap(fieldConfig) {

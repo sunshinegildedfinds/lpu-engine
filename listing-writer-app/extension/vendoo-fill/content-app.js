@@ -18,7 +18,7 @@
     chrome.runtime.sendMessage(
       {
         type: "STORE_PAYLOAD",
-        payload: normalized
+        payload: normalized,
       },
       (response) => {
         const runtimeError = chrome.runtime.lastError?.message;
@@ -48,6 +48,20 @@
       ["payloadMap", "ebay", "titleA"]
     );
 
+    const titleA = pickString(
+      input,
+      ["marketplaces", "ebay", "titleA"],
+      ["ebay", "titleA"],
+      ["payloadMap", "ebay", "titleA"]
+    );
+
+    const titleB = pickString(
+      input,
+      ["marketplaces", "ebay", "titleB"],
+      ["ebay", "titleB"],
+      ["payloadMap", "ebay", "titleB"]
+    );
+
     const description = pickString(
       input,
       ["marketplaces", "ebay", "description"],
@@ -55,19 +69,66 @@
       ["payloadMap", "ebay", "description"]
     );
 
+    const category = pickString(
+      input,
+      ["marketplaces", "ebay", "category"],
+      ["ebay", "category"],
+      ["payloadMap", "ebay", "category"]
+    );
+
+    const brand = pickString(
+      input,
+      ["marketplaces", "ebay", "itemSpecifics", "brand"],
+      ["marketplaces", "ebay", "brand"],
+      ["ebay", "itemSpecifics", "brand"],
+      ["ebay", "brand"],
+      ["payloadMap", "ebay", "itemSpecifics", "brand"],
+      ["payloadMap", "ebay", "brand"]
+    );
+
+    const size = pickString(
+      input,
+      ["marketplaces", "ebay", "itemSpecifics", "size"],
+      ["marketplaces", "ebay", "size"],
+      ["ebay", "itemSpecifics", "size"],
+      ["ebay", "size"],
+      ["payloadMap", "ebay", "itemSpecifics", "size"],
+      ["payloadMap", "ebay", "size"]
+    );
+
+    const color = pickString(
+      input,
+      ["marketplaces", "ebay", "itemSpecifics", "color"],
+      ["marketplaces", "ebay", "colour"],
+      ["marketplaces", "ebay", "color"],
+      ["ebay", "itemSpecifics", "color"],
+      ["ebay", "itemSpecifics", "colour"],
+      ["ebay", "color"],
+      ["payloadMap", "ebay", "itemSpecifics", "color"],
+      ["payloadMap", "ebay", "color"]
+    );
+
     return {
       version: 1,
       meta: {
         sentAt: new Date().toISOString(),
-        sourcePage: window.location.href
+        sourcePage: window.location.href,
       },
       marketplaces: {
         ebay: {
           title,
-          description
-        }
+          titleA,
+          titleB,
+          description,
+          category,
+          itemSpecifics: {
+            brand,
+            size,
+            color,
+          },
+        },
       },
-      raw: input ?? null
+      raw: input ?? null,
     };
   }
 

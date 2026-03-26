@@ -5,6 +5,12 @@ export type VendooExtensionPayload = {
       titleA: string;
       titleB: string;
       description: string;
+      category: string;
+      itemSpecifics: {
+        brand: string;
+        size: string;
+        color: string;
+      };
     };
   };
 };
@@ -14,6 +20,12 @@ export function buildVendooExtensionPayload(input: {
   titleA: string;
   titleB: string;
   description: string;
+  category: string;
+  itemSpecifics: {
+    brand: string;
+    size: string;
+    color: string;
+  };
 }): VendooExtensionPayload {
   return {
     marketplaces: {
@@ -22,6 +34,12 @@ export function buildVendooExtensionPayload(input: {
         titleA: input.titleA.trim(),
         titleB: input.titleB.trim(),
         description: input.description.trim(),
+        category: input.category.trim(),
+        itemSpecifics: {
+          brand: input.itemSpecifics.brand.trim(),
+          size: input.itemSpecifics.size.trim(),
+          color: input.itemSpecifics.color.trim(),
+        },
       },
     },
   };

@@ -5,9 +5,11 @@ import { EbayDescriptionCard } from "@/components/ebay/EbayDescriptionCard";
 import { EbayDraftForm } from "@/components/ebay/EbayDraftForm";
 import { EbayFinalTitleCard } from "@/components/ebay/EbayFinalTitleCard";
 import { EbayGeneratedTitles } from "@/components/ebay/EbayGeneratedTitles";
+import { EbayMappedFieldsCard } from "@/components/ebay/EbayMappedFieldsCard";
 import { EbayValidationCard } from "@/components/ebay/EbayValidationCard";
 import { PayloadPreviewCard } from "@/components/vendoo/PayloadPreviewCard";
 import { ReadyToSendCard } from "@/components/vendoo/ReadyToSendCard";
+import { buildEbayFillFields } from "@/lib/ebay/buildEbayFillFields";
 import {
   buildEbayDescription,
   buildEbayTitleA,
@@ -59,6 +61,7 @@ export default function Home() {
   const titleA = useMemo(() => buildEbayTitleA(form), [form]);
   const titleB = useMemo(() => buildEbayTitleB(form), [form]);
   const description = useMemo(() => buildEbayDescription(form), [form]);
+  const mappedFields = useMemo(() => buildEbayFillFields(form), [form]);
 
   const validation = useMemo(
     () =>
@@ -96,8 +99,17 @@ export default function Home() {
         titleA,
         titleB,
         description,
+        category: mappedFields.category,
+        itemSpecifics: mappedFields.itemSpecifics,
       }),
-    [finalTitleSelection.selectedTitle, titleA, titleB, description]
+    [
+      description,
+      finalTitleSelection.selectedTitle,
+      mappedFields.category,
+      mappedFields.itemSpecifics,
+      titleA,
+      titleB,
+    ]
   );
 
   function handleSendPayload() {
@@ -154,6 +166,7 @@ export default function Home() {
             <EbayFinalTitleCard finalTitleSelection={finalTitleSelection} />
             <EbayDescriptionCard description={description} />
             <EbayValidationCard validation={validation} />
+            <EbayMappedFieldsCard mappedFields={mappedFields} />
             <PayloadPreviewCard payload={payloadMap} />
           </section>
         </div>
