@@ -73,6 +73,17 @@
           '[data-testid*="category"]',
           '.modal',
         ],
+        searchInputSelectors: [
+          'input[type="search"]',
+          'input[aria-label*="search"]',
+          'input[placeholder*="search"]',
+          'input[placeholder*="Search"]',
+        ],
+        selectedStateSelectors: [
+          '[aria-selected="true"]',
+          '[data-state="checked"]',
+          '[data-selected="true"]',
+        ],
         allowTypedEntry: false,
         labelStrategies: [
           {

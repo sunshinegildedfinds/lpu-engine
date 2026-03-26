@@ -164,22 +164,26 @@
     const needsReview = [];
     const skippedForSafety = [];
     const usedElements = new Set();
+    const stepOutcomes = {};
 
     for (const step of fillSteps) {
       const rawValue = typeof step.value === "string" ? step.value.trim() : "";
       if (!rawValue) {
         needsReview.push(`${step.label} (payload missing)`);
+        stepOutcomes[step.key] = "needs_review";
         continue;
       }
 
       const field = findElementBySelectorMap(step.selectorConfig);
       if (!field) {
         needsReview.push(step.label);
+        stepOutcomes[step.key] = "needs_review";
         continue;
       }
 
       if (usedElements.has(field)) {
         skippedForSafety.push(`${step.label} (collision prevention)`);
+        stepOutcomes[step.key] = "skipped_for_safety";
         continue;
       }
 
@@ -187,6 +191,7 @@
         const valueResult = getCustomSelectAttemptValue(step.key, rawValue);
         if (!valueResult.value) {
           needsReview.push(`${step.label} (${valueResult.reason})`);
+          stepOutcomes[step.key] = "needs_review";
           continue;
         }
 
@@ -199,20 +204,24 @@
 
         if (customSelectResult.status === "filled") {
           filled.push(step.label);
+          stepOutcomes[step.key] = "filled";
           continue;
         }
 
         if (customSelectResult.status === "needs_review") {
           needsReview.push(`${step.label} (${customSelectResult.reason})`);
+          stepOutcomes[step.key] = "needs_review";
           continue;
         }
 
         skippedForSafety.push(`${step.label} (${customSelectResult.reason})`);
+        stepOutcomes[step.key] = "skipped_for_safety";
         continue;
       }
 
       if (step.selectorConfig?.controlType === "text" && !field.matches("input")) {
         skippedForSafety.push(`${step.label} (unexpected control type)`);
+        stepOutcomes[step.key] = "skipped_for_safety";
         continue;
       }
 
@@ -221,13 +230,24 @@
         !field.matches('textarea, [contenteditable="true"]')
       ) {
         skippedForSafety.push(`${step.label} (unexpected control type)`);
+        stepOutcomes[step.key] = "skipped_for_safety";
         continue;
       }
 
       setElementValue(field, rawValue);
       usedElements.add(field);
       filled.push(step.label);
+      stepOutcomes[step.key] = "filled";
     }
+
+    await retrySizeAfterCategorySuccess({
+      fillSteps,
+      stepOutcomes,
+      usedElements,
+      filled,
+      needsReview,
+      skippedForSafety,
+    });
 
     const parts = [];
     if (filled.length) parts.push(`Filled: ${filled.join(", ")}`);
@@ -302,8 +322,22 @@
     for (let index = 0; index < stages.length; index += 1) {
       const stageLabel = stages[index];
       const pickerRoot = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
-      const options = findVisibleOptions(fieldConfig.optionSelectors ?? [], pickerRoot ?? undefined);
-      const matches = findMatchingOptions(options, stageLabel);
+      let options = findVisibleOptions(fieldConfig.optionSelectors ?? [], pickerRoot ?? undefined);
+      let matches = findMatchingOptions(options, stageLabel);
+
+      if (matches.length !== 1 && pickerRoot) {
+        const searchInput = findPickerSearchInput(
+          pickerRoot,
+          fieldConfig.searchInputSelectors ?? []
+        );
+
+        if (searchInput) {
+          setElementValue(searchInput, stageLabel);
+          await wait(140);
+          options = findVisibleOptions(fieldConfig.optionSelectors ?? [], pickerRoot);
+          matches = findMatchingOptions(options, stageLabel);
+        }
+      }
 
       if (matches.length !== 1) {
         return {
@@ -314,6 +348,16 @@
 
       clickElement(matches[0]);
       await wait(180);
+    }
+
+    const completionConfirmed = isCategoryCompletionConfirmed({
+      control,
+      fullPath: value,
+      fieldConfig,
+    });
+
+    if (!completionConfirmed) {
+      return { status: "needs_review", reason: "completion not confirmed" };
     }
 
     return { status: "filled" };
@@ -333,6 +377,38 @@
       const candidates = Array.from(document.querySelectorAll(selector));
       const visible = candidates.find((candidate) => isVisible(candidate));
       if (visible) return visible;
+    }
+
+    return null;
+  }
+
+  function findPickerSearchInput(pickerRoot, searchInputSelectors) {
+    const selectors = searchInputSelectors.length
+      ? searchInputSelectors
+      : ['input[type="search"]', 'input[aria-label*="search"]', 'input[placeholder*="search"]'];
+
+    for (const selector of selectors) {
+      const candidates = Array.from(pickerRoot.querySelectorAll(selector));
+      const safeInput = candidates.find((candidate) => {
+        if (!(candidate instanceof Element)) return false;
+        if (!candidate.matches("input")) return false;
+        if (!isVisible(candidate)) return false;
+
+        const metadata = normalizeText(
+          [
+            candidate.getAttribute("aria-label"),
+            candidate.getAttribute("placeholder"),
+            candidate.getAttribute("title"),
+            candidate.getAttribute("name"),
+          ]
+            .filter(Boolean)
+            .join(" ")
+        );
+
+        return metadata.includes("search");
+      });
+
+      if (safeInput) return safeInput;
     }
 
     return null;
@@ -404,6 +480,138 @@
       .split(">")
       .map((part) => normalizeText(part))
       .filter(Boolean);
+  }
+
+  function isCategoryCompletionConfirmed(input) {
+    const { control, fullPath, fieldConfig } = input;
+    const fullPathNormalized = normalizeText(String(fullPath).replace(/>/g, " "));
+    const stages = splitCategoryStages(fullPath);
+    const finalStage = stages[stages.length - 1] ?? "";
+
+    const controlSummary = normalizeText(getControlSummaryText(control));
+    if (fullPathNormalized && controlSummary.includes(fullPathNormalized)) {
+      return true;
+    }
+
+    if (finalStage && controlSummary.includes(finalStage)) {
+      return true;
+    }
+
+    const pickerRoot = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
+    if (!pickerRoot) {
+      return false;
+    }
+
+    const selectedCandidates = findVisibleSelectedCategoryOptions(
+      pickerRoot,
+      fieldConfig.selectedStateSelectors ?? []
+    );
+
+    return selectedCandidates.some((candidate) => {
+      const candidateText = normalizeText(getOptionText(candidate));
+      return candidateText === finalStage;
+    });
+  }
+
+  function getControlSummaryText(control) {
+    return [
+      control.textContent,
+      control.getAttribute("value"),
+      control.getAttribute("aria-label"),
+      control.getAttribute("title"),
+      control.getAttribute("data-value"),
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  function findVisibleSelectedCategoryOptions(pickerRoot, selectedStateSelectors) {
+    const selectors = selectedStateSelectors.length
+      ? selectedStateSelectors
+      : ['[aria-selected="true"]', '[data-state="checked"]', '[data-selected="true"]'];
+
+    const seen = new Set();
+    const selected = [];
+
+    for (const selector of selectors) {
+      const candidates = Array.from(pickerRoot.querySelectorAll(selector));
+      for (const candidate of candidates) {
+        if (!(candidate instanceof Element)) continue;
+        if (!isVisible(candidate)) continue;
+        if (seen.has(candidate)) continue;
+        seen.add(candidate);
+        selected.push(candidate);
+      }
+    }
+
+    return selected;
+  }
+
+  async function retrySizeAfterCategorySuccess(input) {
+    const { fillSteps, stepOutcomes, usedElements, filled, needsReview, skippedForSafety } = input;
+
+    if (stepOutcomes.category !== "filled") return;
+    if (stepOutcomes.size === "filled") return;
+
+    const sizeStep = fillSteps.find((step) => step.key === "size");
+    if (!sizeStep) return;
+
+    clearStepResultsFromLists(sizeStep.label, [filled, needsReview, skippedForSafety]);
+
+    const rawValue = typeof sizeStep.value === "string" ? sizeStep.value.trim() : "";
+    if (!rawValue) {
+      needsReview.push(`${sizeStep.label} (payload missing)`);
+      stepOutcomes.size = "needs_review";
+      return;
+    }
+
+    await wait(220);
+
+    const field = findElementBySelectorMap(sizeStep.selectorConfig);
+    if (!field) {
+      needsReview.push(`${sizeStep.label} (retry: field not found)`);
+      stepOutcomes.size = "needs_review";
+      return;
+    }
+
+    if (usedElements.has(field)) {
+      skippedForSafety.push(`${sizeStep.label} (retry: collision prevention)`);
+      stepOutcomes.size = "skipped_for_safety";
+      return;
+    }
+
+    const customSelectResult = await tryFillCustomSelect({
+      step: sizeStep,
+      value: rawValue,
+      control: field,
+      usedElements,
+    });
+
+    if (customSelectResult.status === "filled") {
+      filled.push(sizeStep.label);
+      stepOutcomes.size = "filled";
+      return;
+    }
+
+    if (customSelectResult.status === "needs_review") {
+      needsReview.push(`${sizeStep.label} (retry: ${customSelectResult.reason})`);
+      stepOutcomes.size = "needs_review";
+      return;
+    }
+
+    skippedForSafety.push(`${sizeStep.label} (retry: ${customSelectResult.reason})`);
+    stepOutcomes.size = "skipped_for_safety";
+  }
+
+  function clearStepResultsFromLists(stepLabel, lists) {
+    for (const list of lists) {
+      for (let index = list.length - 1; index >= 0; index -= 1) {
+        const entry = String(list[index] ?? "");
+        if (entry === stepLabel || entry.startsWith(`${stepLabel} (`)) {
+          list.splice(index, 1);
+        }
+      }
+    }
   }
 
   function extractSafeBaseColor(value) {
@@ -555,6 +763,17 @@
             '[data-radix-dialog-content]',
             '[data-testid*="category"]',
             ".modal",
+          ],
+          searchInputSelectors: [
+            'input[type="search"]',
+            'input[aria-label*="search"]',
+            'input[placeholder*="search"]',
+            'input[placeholder*="Search"]',
+          ],
+          selectedStateSelectors: [
+            '[aria-selected="true"]',
+            '[data-state="checked"]',
+            '[data-selected="true"]',
           ],
           optionSelectors: [
             '[role="option"]',
