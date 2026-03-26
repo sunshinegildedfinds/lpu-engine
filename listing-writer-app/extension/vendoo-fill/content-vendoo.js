@@ -27,6 +27,9 @@
         <button id="lpu-vendoo-clear" type="button">Clear</button>
       </div>
       <div id="lpu-vendoo-report" style="font-size:12px;line-height:1.4;margin-top:10px;color:#111827;"></div>
+      <div id="lpu-vendoo-last-run" style="font-size:12px;line-height:1.4;margin-top:10px;color:#111827;white-space:pre-line;border-top:1px solid #e5e7eb;padding-top:8px;">
+        Last run: none yet.
+      </div>
     `;
 
     panel.style.position = "fixed";
@@ -88,7 +91,8 @@
     const ebayPayload = record.payload?.marketplaces?.ebay ?? {};
     const title = pickEbayTitle(record.payload);
     const description = ebayPayload.description ?? "";
-    const category = pickEbayCategory(record.payload);
+    const category = pickEbayCategoryPath(record.payload);
+    const canonicalCategory = pickEbayCanonicalCategoryPath(record.payload);
     const brand = pickEbayBrand(record.payload);
     const size = pickEbaySize(record.payload);
     const color = pickEbayColor(record.payload);
@@ -101,6 +105,7 @@
       <div><strong>eBay title:</strong> ${title ? "ready" : "missing"}</div>
       <div><strong>eBay description:</strong> ${description ? "ready" : "missing"}</div>
       <div><strong>eBay category:</strong> ${category ? "ready" : "missing"}</div>
+      <div><strong>Canonical category path:</strong> ${canonicalCategory ? "ready" : "missing"}</div>
       <div><strong>eBay brand:</strong> ${brand ? "ready" : "missing"}</div>
       <div><strong>eBay size:</strong> ${size ? "ready" : "missing"}</div>
       <div><strong>eBay color:</strong> ${color ? "ready" : "missing"}</div>
@@ -152,7 +157,7 @@
       {
         key: "category",
         label: "eBay category",
-        value: pickEbayCategory(payload),
+        value: pickEbayCategoryPath(payload),
         selectorConfig: selectors.category,
       },
       { key: "brand", label: "eBay brand", value: pickEbayBrand(payload), selectorConfig: selectors.brand },
@@ -256,7 +261,12 @@
       parts.push(`Skipped for safety: ${skippedForSafety.join(", ")}`);
     }
 
-    reportEl.textContent = parts.join(" | ") || "Nothing changed.";
+    reportEl.textContent = "Fill run completed.";
+    renderLastRunResults({
+      filled,
+      needsReview,
+      skippedForSafety,
+    });
     await refreshPanel();
   }
 
@@ -614,6 +624,28 @@
     }
   }
 
+  function renderLastRunResults(input) {
+    const { filled, needsReview, skippedForSafety } = input;
+    const lastRunEl = document.getElementById("lpu-vendoo-last-run");
+    if (!lastRunEl) return;
+
+    const lines = [];
+    lines.push(`Last run: ${new Date().toLocaleString()}`);
+    lines.push(filled.length ? `Filled: ${filled.join(", ")}` : "Filled: none");
+    lines.push(
+      needsReview.length
+        ? `Needs review: ${needsReview.join(", ")}`
+        : "Needs review: none"
+    );
+    lines.push(
+      skippedForSafety.length
+        ? `Skipped for safety: ${skippedForSafety.join(", ")}`
+        : "Skipped for safety: none"
+    );
+
+    lastRunEl.textContent = lines.join("\n");
+  }
+
   function extractSafeBaseColor(value) {
     const normalized = normalizeText(value);
     if (!normalized) return null;
@@ -909,6 +941,15 @@
   function pickEbayCategory(payload) {
     const category = payload?.marketplaces?.ebay?.category ?? "";
     return typeof category === "string" ? category.trim() : "";
+  }
+
+  function pickEbayCanonicalCategoryPath(payload) {
+    const canonicalPath = payload?.marketplaces?.ebay?.canonicalVendooCategoryPath ?? "";
+    return typeof canonicalPath === "string" ? canonicalPath.trim() : "";
+  }
+
+  function pickEbayCategoryPath(payload) {
+    return pickEbayCanonicalCategoryPath(payload) || pickEbayCategory(payload);
   }
 
   function pickEbayBrand(payload) {

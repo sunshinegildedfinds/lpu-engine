@@ -19,6 +19,7 @@ import {
 import { selectFinalEbayTitle } from "@/lib/ebay/selectFinalTitle";
 import { validateEbayDraft } from "@/lib/ebay/validateDraft";
 import { sendVendooPayloadToExtension } from "@/lib/sendVendooPayloadToExtension";
+import { buildVendooCategoryPath } from "@/lib/vendoo/buildVendooCategoryPath";
 import { getReadyToSendState } from "@/lib/vendoo/getReadyToSendState";
 import { buildVendooExtensionPayload } from "@/lib/vendoo/extensionPayload";
 
@@ -63,6 +64,14 @@ export default function Home() {
   const description = useMemo(() => buildEbayDescription(form), [form]);
   const mappedFields = useMemo(() => buildEbayFillFields(form), [form]);
 
+  const canonicalVendooCategoryPath = useMemo(
+    () =>
+      buildVendooCategoryPath({
+        simpleCategory: mappedFields.category,
+      }),
+    [mappedFields.category]
+  );
+
   const validation = useMemo(
     () =>
       validateEbayDraft({
@@ -100,9 +109,11 @@ export default function Home() {
         titleB,
         description,
         category: mappedFields.category,
+        canonicalVendooCategoryPath,
         itemSpecifics: mappedFields.itemSpecifics,
       }),
     [
+      canonicalVendooCategoryPath,
       description,
       finalTitleSelection.selectedTitle,
       mappedFields.category,

@@ -76,6 +76,13 @@
       ["payloadMap", "ebay", "category"]
     );
 
+    const canonicalVendooCategoryPath = pickString(
+      input,
+      ["marketplaces", "ebay", "canonicalVendooCategoryPath"],
+      ["ebay", "canonicalVendooCategoryPath"],
+      ["payloadMap", "ebay", "canonicalVendooCategoryPath"]
+    );
+
     const brand = pickString(
       input,
       ["marketplaces", "ebay", "itemSpecifics", "brand"],
@@ -121,6 +128,7 @@
           titleB,
           description,
           category,
+          canonicalVendooCategoryPath,
           itemSpecifics: {
             brand,
             size,

@@ -6,6 +6,7 @@ export type VendooExtensionPayload = {
       titleB: string;
       description: string;
       category: string;
+      canonicalVendooCategoryPath?: string;
       itemSpecifics: {
         brand: string;
         size: string;
@@ -21,12 +22,15 @@ export function buildVendooExtensionPayload(input: {
   titleB: string;
   description: string;
   category: string;
+  canonicalVendooCategoryPath?: string | null;
   itemSpecifics: {
     brand: string;
     size: string;
     color: string;
   };
 }): VendooExtensionPayload {
+  const canonicalVendooCategoryPath = input.canonicalVendooCategoryPath?.trim();
+
   return {
     marketplaces: {
       ebay: {
@@ -35,6 +39,9 @@ export function buildVendooExtensionPayload(input: {
         titleB: input.titleB.trim(),
         description: input.description.trim(),
         category: input.category.trim(),
+        ...(canonicalVendooCategoryPath
+          ? { canonicalVendooCategoryPath }
+          : {}),
         itemSpecifics: {
           brand: input.itemSpecifics.brand.trim(),
           size: input.itemSpecifics.size.trim(),
