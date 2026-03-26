@@ -1,6 +1,17 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useMemo, useState } from "react";
+import {
+  buildCopyMap,
+  buildPayloadMap,
+  buildPayloadSummary,
+} from "@/lib/lpu/payloadMap";
+import type { PlatformKey } from "@/lib/lpu/payloadMap";
+import {
+  buildVendooResolvedFieldMap,
+  getVendooPlatformRequiredFieldStatus,
+} from "@/lib/vendoo/fieldMap";
+import { buildVendooActionPreview } from "@/lib/vendoo/actionPreview";
 
 type ImagePayload = {
   name: string;
@@ -29,15 +40,10 @@ type ValidationResult = {
   issues: ValidationIssue[];
   parsed: {
     raw: string;
-    sections: Partial<
-      Record<"ebay" | "depop" | "poshmark" | "mercari" | "etsy", string>
-    >;
+    sections: Partial<Record<PlatformKey, string>>;
     unknownBlocks: string[];
   };
-  platformResults: Record<
-    "ebay" | "depop" | "poshmark" | "mercari" | "etsy",
-    PlatformValidationResult
-  >;
+  platformResults: Record<PlatformKey, PlatformValidationResult>;
   metrics: {
     expectedFooterType: string;
     platformsPassed: number;
@@ -46,42 +52,6 @@ type ValidationResult = {
 };
 
 type WorkflowStatus = "ready" | "generating" | "pass" | "needs-review";
-type PlatformKey = "ebay" | "depop" | "poshmark" | "mercari" | "etsy";
-
-const FIELD_LABELS = {
-  ebay: {
-    titleA: ["Title A"],
-    titleB: ["Title B"],
-    description: ["Description"],
-  },
-  depop: {
-    listing: ["Listing"],
-    hashtags: ["Hashtags"],
-    optionalBrandHashtags: ["Optional Brand Hashtags"],
-  },
-  poshmark: {
-    title: ["Title"],
-    description: ["Description"],
-  },
-  mercari: {
-    title: ["Title"],
-    description: ["Description"],
-    hashtags: ["Hashtags"],
-  },
-  etsy: {
-    title: ["Title"],
-    tags: ["Tags"],
-    description: ["Description"],
-  },
-} as const;
-
-const KNOWN_LABELS = Array.from(
-  new Set(
-    Object.values(FIELD_LABELS).flatMap((platformLabels) =>
-      Object.values(platformLabels).flatMap((labels) => labels)
-    )
-  )
-);
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -111,49 +81,13 @@ function formatMetricValue(value: unknown): string {
   return String(value);
 }
 
-function normalizeLabelLine(line: string): string {
-  return line.trim().replace(/:$/, "");
-}
+function previewValue(value: string, max = 120): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
 
-function lineMatchesAnyLabel(line: string, labels: readonly string[]): boolean {
-  const trimmed = line.trim();
-  const normalized = normalizeLabelLine(trimmed);
+  if (!normalized) return "—";
+  if (normalized.length <= max) return normalized;
 
-  return labels.some((label) => normalized === label || trimmed.startsWith(`${label}:`));
-}
-
-function isKnownLabelLine(line: string): boolean {
-  return lineMatchesAnyLabel(line, KNOWN_LABELS);
-}
-
-function extractLabeledBlock(section: string, labels: readonly string[]): string {
-  if (!section?.trim()) return "";
-
-  const lines = section.replace(/\r\n/g, "\n").split("\n");
-  const startIndex = lines.findIndex((line) => lineMatchesAnyLabel(line, labels));
-
-  if (startIndex === -1) return "";
-
-  const startLine = lines[startIndex].trim();
-  const colonIndex = startLine.indexOf(":");
-  const firstValue = colonIndex >= 0 ? startLine.slice(colonIndex + 1).trim() : "";
-
-  const collected: string[] = [];
-  if (firstValue) {
-    collected.push(firstValue);
-  }
-
-  for (let i = startIndex + 1; i < lines.length; i += 1) {
-    const currentLine = lines[i];
-
-    if (isKnownLabelLine(currentLine)) {
-      break;
-    }
-
-    collected.push(currentLine);
-  }
-
-  return collected.join("\n").trim();
+  return `${normalized.slice(0, max)}…`;
 }
 
 function StatusBadge({ pass }: { pass: boolean }) {
@@ -327,73 +261,89 @@ export default function LpuPage() {
 
   const workflow = getWorkflowStatus(isLoading, error, validation);
 
-  const sectionCopies = useMemo(
-    () => ({
-      full: output,
-      ebay: validation?.parsed.sections.ebay ?? "",
-      depop: validation?.parsed.sections.depop ?? "",
-      poshmark: validation?.parsed.sections.poshmark ?? "",
-      mercari: validation?.parsed.sections.mercari ?? "",
-      etsy: validation?.parsed.sections.etsy ?? "",
-    }),
+  const payloadMap = useMemo(
+    () => buildPayloadMap(output, validation?.parsed.sections),
     [output, validation]
   );
 
-  const fieldCopies = useMemo(
-    () => ({
-      "ebay-title-a": extractLabeledBlock(sectionCopies.ebay, FIELD_LABELS.ebay.titleA),
-      "ebay-title-b": extractLabeledBlock(sectionCopies.ebay, FIELD_LABELS.ebay.titleB),
-      "ebay-description": extractLabeledBlock(
-        sectionCopies.ebay,
-        FIELD_LABELS.ebay.description
-      ),
+  const copyMap = useMemo(() => buildCopyMap(payloadMap), [payloadMap]);
 
-      "depop-listing": extractLabeledBlock(sectionCopies.depop, FIELD_LABELS.depop.listing),
-      "depop-hashtags": extractLabeledBlock(
-        sectionCopies.depop,
-        FIELD_LABELS.depop.hashtags
-      ),
-      "depop-brand-hashtags": extractLabeledBlock(
-        sectionCopies.depop,
-        FIELD_LABELS.depop.optionalBrandHashtags
-      ),
-
-      "poshmark-title": extractLabeledBlock(
-        sectionCopies.poshmark,
-        FIELD_LABELS.poshmark.title
-      ),
-      "poshmark-description": extractLabeledBlock(
-        sectionCopies.poshmark,
-        FIELD_LABELS.poshmark.description
-      ),
-
-      "mercari-title": extractLabeledBlock(sectionCopies.mercari, FIELD_LABELS.mercari.title),
-      "mercari-description": extractLabeledBlock(
-        sectionCopies.mercari,
-        FIELD_LABELS.mercari.description
-      ),
-      "mercari-hashtags": extractLabeledBlock(
-        sectionCopies.mercari,
-        FIELD_LABELS.mercari.hashtags
-      ),
-
-      "etsy-title": extractLabeledBlock(sectionCopies.etsy, FIELD_LABELS.etsy.title),
-      "etsy-tags": extractLabeledBlock(sectionCopies.etsy, FIELD_LABELS.etsy.tags),
-      "etsy-description": extractLabeledBlock(
-        sectionCopies.etsy,
-        FIELD_LABELS.etsy.description
-      ),
-    }),
-    [sectionCopies]
+  const payloadSummary = useMemo(
+    () => buildPayloadSummary(payloadMap),
+    [payloadMap]
   );
 
-  const copyMap = useMemo(
-    () => ({
-      ...sectionCopies,
-      ...fieldCopies,
-    }),
-    [sectionCopies, fieldCopies]
+  const vendooResolvedMap = useMemo(
+    () => buildVendooResolvedFieldMap(payloadMap),
+    [payloadMap]
   );
+
+  const vendooStatus = useMemo(
+    () => ({
+      ebay: getVendooPlatformRequiredFieldStatus(payloadMap, "ebay"),
+      depop: getVendooPlatformRequiredFieldStatus(payloadMap, "depop"),
+      poshmark: getVendooPlatformRequiredFieldStatus(payloadMap, "poshmark"),
+      mercari: getVendooPlatformRequiredFieldStatus(payloadMap, "mercari"),
+      etsy: getVendooPlatformRequiredFieldStatus(payloadMap, "etsy"),
+    }),
+    [payloadMap]
+  );
+
+  const vendooTotals = useMemo(() => {
+    let requiredFields = 0;
+    let readyRequiredFields = 0;
+    let platformsReady = 0;
+
+    for (const platform of platformOrder) {
+      requiredFields += vendooStatus[platform].requiredFields;
+      readyRequiredFields += vendooStatus[platform].readyRequiredFields;
+
+      if (vendooStatus[platform].allRequiredReady) {
+        platformsReady += 1;
+      }
+    }
+
+    return {
+      requiredFields,
+      readyRequiredFields,
+      platformsReady,
+      platformsNeedingReview: platformOrder.length - platformsReady,
+    };
+  }, [platformOrder, vendooStatus]);
+
+  const vendooActionPreview = useMemo(
+    () => buildVendooActionPreview(payloadMap),
+    [payloadMap]
+  );
+
+  const vendooActionTotals = useMemo(() => {
+    let totalSteps = 0;
+    let readySteps = 0;
+    let totalRequiredSteps = 0;
+    let readyRequiredSteps = 0;
+    let actionReadyPlatforms = 0;
+
+    for (const platform of platformOrder) {
+      const preview = vendooActionPreview[platform];
+      totalSteps += preview.totalSteps;
+      readySteps += preview.readySteps;
+      totalRequiredSteps += preview.totalRequiredSteps;
+      readyRequiredSteps += preview.readyRequiredSteps;
+
+      if (preview.canRun) {
+        actionReadyPlatforms += 1;
+      }
+    }
+
+    return {
+      totalSteps,
+      readySteps,
+      totalRequiredSteps,
+      readyRequiredSteps,
+      actionReadyPlatforms,
+      actionReviewPlatforms: platformOrder.length - actionReadyPlatforms,
+    };
+  }, [platformOrder, vendooActionPreview]);
 
   async function handleCopy(target: string) {
     const text = copyMap[target];
@@ -526,37 +476,37 @@ export default function LpuPage() {
               <CopyButton
                 label="Copy Full Output"
                 onClick={() => handleCopy("full")}
-                disabled={!sectionCopies.full?.trim()}
+                disabled={!copyMap.full?.trim()}
                 copied={copiedTarget === "full"}
               />
               <CopyButton
                 label="Copy eBay"
                 onClick={() => handleCopy("ebay")}
-                disabled={!sectionCopies.ebay?.trim()}
+                disabled={!copyMap.ebay?.trim()}
                 copied={copiedTarget === "ebay"}
               />
               <CopyButton
                 label="Copy Depop"
                 onClick={() => handleCopy("depop")}
-                disabled={!sectionCopies.depop?.trim()}
+                disabled={!copyMap.depop?.trim()}
                 copied={copiedTarget === "depop"}
               />
               <CopyButton
                 label="Copy Poshmark"
                 onClick={() => handleCopy("poshmark")}
-                disabled={!sectionCopies.poshmark?.trim()}
+                disabled={!copyMap.poshmark?.trim()}
                 copied={copiedTarget === "poshmark"}
               />
               <CopyButton
                 label="Copy Mercari"
                 onClick={() => handleCopy("mercari")}
-                disabled={!sectionCopies.mercari?.trim()}
+                disabled={!copyMap.mercari?.trim()}
                 copied={copiedTarget === "mercari"}
               />
               <CopyButton
                 label="Copy Etsy"
                 onClick={() => handleCopy("etsy")}
-                disabled={!sectionCopies.etsy?.trim()}
+                disabled={!copyMap.etsy?.trim()}
                 copied={copiedTarget === "etsy"}
               />
             </div>
@@ -574,19 +524,19 @@ export default function LpuPage() {
                   <CopyButton
                     label="Copy Title A"
                     onClick={() => handleCopy("ebay-title-a")}
-                    disabled={!fieldCopies["ebay-title-a"]?.trim()}
+                    disabled={!copyMap["ebay-title-a"]?.trim()}
                     copied={copiedTarget === "ebay-title-a"}
                   />
                   <CopyButton
                     label="Copy Title B"
                     onClick={() => handleCopy("ebay-title-b")}
-                    disabled={!fieldCopies["ebay-title-b"]?.trim()}
+                    disabled={!copyMap["ebay-title-b"]?.trim()}
                     copied={copiedTarget === "ebay-title-b"}
                   />
                   <CopyButton
                     label="Copy Description"
                     onClick={() => handleCopy("ebay-description")}
-                    disabled={!fieldCopies["ebay-description"]?.trim()}
+                    disabled={!copyMap["ebay-description"]?.trim()}
                     copied={copiedTarget === "ebay-description"}
                   />
                 </div>
@@ -598,19 +548,19 @@ export default function LpuPage() {
                   <CopyButton
                     label="Copy Listing"
                     onClick={() => handleCopy("depop-listing")}
-                    disabled={!fieldCopies["depop-listing"]?.trim()}
+                    disabled={!copyMap["depop-listing"]?.trim()}
                     copied={copiedTarget === "depop-listing"}
                   />
                   <CopyButton
                     label="Copy Hashtags"
                     onClick={() => handleCopy("depop-hashtags")}
-                    disabled={!fieldCopies["depop-hashtags"]?.trim()}
+                    disabled={!copyMap["depop-hashtags"]?.trim()}
                     copied={copiedTarget === "depop-hashtags"}
                   />
                   <CopyButton
                     label="Copy Brand Hashtags"
                     onClick={() => handleCopy("depop-brand-hashtags")}
-                    disabled={!fieldCopies["depop-brand-hashtags"]?.trim()}
+                    disabled={!copyMap["depop-brand-hashtags"]?.trim()}
                     copied={copiedTarget === "depop-brand-hashtags"}
                   />
                 </div>
@@ -622,13 +572,13 @@ export default function LpuPage() {
                   <CopyButton
                     label="Copy Title"
                     onClick={() => handleCopy("poshmark-title")}
-                    disabled={!fieldCopies["poshmark-title"]?.trim()}
+                    disabled={!copyMap["poshmark-title"]?.trim()}
                     copied={copiedTarget === "poshmark-title"}
                   />
                   <CopyButton
                     label="Copy Description"
                     onClick={() => handleCopy("poshmark-description")}
-                    disabled={!fieldCopies["poshmark-description"]?.trim()}
+                    disabled={!copyMap["poshmark-description"]?.trim()}
                     copied={copiedTarget === "poshmark-description"}
                   />
                 </div>
@@ -640,19 +590,19 @@ export default function LpuPage() {
                   <CopyButton
                     label="Copy Title"
                     onClick={() => handleCopy("mercari-title")}
-                    disabled={!fieldCopies["mercari-title"]?.trim()}
+                    disabled={!copyMap["mercari-title"]?.trim()}
                     copied={copiedTarget === "mercari-title"}
                   />
                   <CopyButton
                     label="Copy Description"
                     onClick={() => handleCopy("mercari-description")}
-                    disabled={!fieldCopies["mercari-description"]?.trim()}
+                    disabled={!copyMap["mercari-description"]?.trim()}
                     copied={copiedTarget === "mercari-description"}
                   />
                   <CopyButton
                     label="Copy Hashtags"
                     onClick={() => handleCopy("mercari-hashtags")}
-                    disabled={!fieldCopies["mercari-hashtags"]?.trim()}
+                    disabled={!copyMap["mercari-hashtags"]?.trim()}
                     copied={copiedTarget === "mercari-hashtags"}
                   />
                 </div>
@@ -664,21 +614,63 @@ export default function LpuPage() {
                   <CopyButton
                     label="Copy Title"
                     onClick={() => handleCopy("etsy-title")}
-                    disabled={!fieldCopies["etsy-title"]?.trim()}
+                    disabled={!copyMap["etsy-title"]?.trim()}
                     copied={copiedTarget === "etsy-title"}
                   />
                   <CopyButton
                     label="Copy Tags"
                     onClick={() => handleCopy("etsy-tags")}
-                    disabled={!fieldCopies["etsy-tags"]?.trim()}
+                    disabled={!copyMap["etsy-tags"]?.trim()}
                     copied={copiedTarget === "etsy-tags"}
                   />
                   <CopyButton
                     label="Copy Description"
                     onClick={() => handleCopy("etsy-description")}
-                    disabled={!fieldCopies["etsy-description"]?.trim()}
+                    disabled={!copyMap["etsy-description"]?.trim()}
                     copied={copiedTarget === "etsy-description"}
                   />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-3 text-sm font-semibold text-gray-700">
+              Payload Map
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="rounded-xl border p-4">
+                <div className="text-sm font-semibold uppercase">eBay</div>
+                <div className="mt-2 text-sm text-gray-700">
+                  Ready fields: {payloadSummary.ebay} / 4
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-sm font-semibold uppercase">Depop</div>
+                <div className="mt-2 text-sm text-gray-700">
+                  Ready fields: {payloadSummary.depop} / 4
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-sm font-semibold uppercase">Poshmark</div>
+                <div className="mt-2 text-sm text-gray-700">
+                  Ready fields: {payloadSummary.poshmark} / 3
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-sm font-semibold uppercase">Mercari</div>
+                <div className="mt-2 text-sm text-gray-700">
+                  Ready fields: {payloadSummary.mercari} / 4
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-sm font-semibold uppercase">Etsy</div>
+                <div className="mt-2 text-sm text-gray-700">
+                  Ready fields: {payloadSummary.etsy} / 4
                 </div>
               </div>
             </div>
@@ -694,6 +686,246 @@ export default function LpuPage() {
             </p>
           )}
         </div>
+      </section>
+
+      <section className="mt-8 rounded-2xl border p-6">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="text-2xl font-semibold">Vendoo Field Map</h2>
+          <StatusBadge pass={vendooTotals.platformsNeedingReview === 0} />
+        </div>
+
+        {!validation ? (
+          <p className="text-sm text-gray-500">
+            Vendoo field readiness will appear here after generation.
+          </p>
+        ) : (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-xl border p-4">
+                <div className="text-xs uppercase tracking-wide text-gray-500">
+                  Platforms Ready
+                </div>
+                <div className="mt-2 text-lg font-semibold">
+                  {vendooTotals.platformsReady}
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-xs uppercase tracking-wide text-gray-500">
+                  Platforms Needing Review
+                </div>
+                <div className="mt-2 text-lg font-semibold">
+                  {vendooTotals.platformsNeedingReview}
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-xs uppercase tracking-wide text-gray-500">
+                  Required Fields Ready
+                </div>
+                <div className="mt-2 text-lg font-semibold">
+                  {vendooTotals.readyRequiredFields} / {vendooTotals.requiredFields}
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-xs uppercase tracking-wide text-gray-500">
+                  Validation Status
+                </div>
+                <div className="mt-2 text-lg font-semibold">
+                  {validation.pass ? "Passing" : "Needs Review"}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {platformOrder.map((platformKey) => {
+                const resolved = vendooResolvedMap[platformKey];
+                const status = vendooStatus[platformKey];
+
+                return (
+                  <div key={platformKey} className="rounded-xl border p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-base font-semibold uppercase">
+                        {platformKey}
+                      </div>
+                      <StatusBadge pass={status.allRequiredReady} />
+                    </div>
+
+                    <div className="mb-4 text-sm text-gray-600">
+                      Required ready: {status.readyRequiredFields} / {status.requiredFields}
+                    </div>
+
+                    <div className="space-y-3">
+                      {resolved.fields.map((field) => (
+                        <div key={field.key} className="rounded-lg border p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="font-medium text-sm">{field.label}</div>
+
+                            <div className="flex gap-2">
+                              <span
+                                className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                                  field.required
+                                    ? "bg-gray-100 text-gray-700"
+                                    : "bg-slate-100 text-slate-700"
+                                }`}
+                              >
+                                {field.required ? "Required" : "Optional"}
+                              </span>
+
+                              <span
+                                className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                                  field.ready
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}
+                              >
+                                {field.ready ? "Ready" : "Missing"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 text-xs text-gray-700">
+                            {previewValue(field.value)}
+                          </div>
+
+                          {field.notes ? (
+                            <div className="mt-2 text-[11px] text-gray-500">
+                              {field.notes}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="mt-8 rounded-2xl border p-6">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="text-2xl font-semibold">Vendoo Action Preview</h2>
+          <StatusBadge pass={vendooActionTotals.actionReviewPlatforms === 0} />
+        </div>
+
+        {!validation ? (
+          <p className="text-sm text-gray-500">
+            Vendoo action preview will appear here after generation.
+          </p>
+        ) : (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-xl border p-4">
+                <div className="text-xs uppercase tracking-wide text-gray-500">
+                  Platforms Action-Ready
+                </div>
+                <div className="mt-2 text-lg font-semibold">
+                  {vendooActionTotals.actionReadyPlatforms}
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-xs uppercase tracking-wide text-gray-500">
+                  Platforms Needing Review
+                </div>
+                <div className="mt-2 text-lg font-semibold">
+                  {vendooActionTotals.actionReviewPlatforms}
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-xs uppercase tracking-wide text-gray-500">
+                  Required Steps Ready
+                </div>
+                <div className="mt-2 text-lg font-semibold">
+                  {vendooActionTotals.readyRequiredSteps} / {vendooActionTotals.totalRequiredSteps}
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="text-xs uppercase tracking-wide text-gray-500">
+                  All Steps Ready
+                </div>
+                <div className="mt-2 text-lg font-semibold">
+                  {vendooActionTotals.readySteps} / {vendooActionTotals.totalSteps}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {platformOrder.map((platformKey) => {
+                const preview = vendooActionPreview[platformKey];
+
+                return (
+                  <div key={platformKey} className="rounded-xl border p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-base font-semibold uppercase">
+                        {platformKey}
+                      </div>
+                      <StatusBadge pass={preview.canRun} />
+                    </div>
+
+                    <div className="mb-4 text-sm text-gray-600">
+                      Ready steps: {preview.readySteps} / {preview.totalSteps}
+                    </div>
+
+                    <div className="space-y-3">
+                      {preview.steps.map((step) => (
+                        <div key={`${platformKey}-${step.fieldKey}`} className="rounded-lg border p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-xs uppercase tracking-wide text-gray-500">
+                                Step {step.order}
+                              </div>
+                              <div className="mt-1 font-medium text-sm">
+                                {step.actionLabel}
+                              </div>
+                            </div>
+
+                            <div className="flex gap-2">
+                              <span
+                                className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                                  step.required
+                                    ? "bg-gray-100 text-gray-700"
+                                    : "bg-slate-100 text-slate-700"
+                                }`}
+                              >
+                                {step.required ? "Required" : "Optional"}
+                              </span>
+
+                              <span
+                                className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                                  step.ready
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}
+                              >
+                                {step.ready ? "Ready" : "Missing"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 text-xs text-gray-700">
+                            {previewValue(step.value)}
+                          </div>
+
+                          {step.notes ? (
+                            <div className="mt-2 text-[11px] text-gray-500">
+                              {step.notes}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="mt-8 rounded-2xl border p-6">
