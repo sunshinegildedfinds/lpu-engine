@@ -166,8 +166,8 @@
     const usedElements = new Set();
 
     for (const step of fillSteps) {
-      const value = typeof step.value === "string" ? step.value.trim() : "";
-      if (!value) {
+      const rawValue = typeof step.value === "string" ? step.value.trim() : "";
+      if (!rawValue) {
         needsReview.push(`${step.label} (payload missing)`);
         continue;
       }
@@ -184,9 +184,15 @@
       }
 
       if (step.selectorConfig?.controlType === "custom_select") {
+        const valueResult = getCustomSelectAttemptValue(step.key, rawValue);
+        if (!valueResult.value) {
+          needsReview.push(`${step.label} (${valueResult.reason})`);
+          continue;
+        }
+
         const customSelectResult = await tryFillCustomSelect({
           step,
-          value,
+          value: valueResult.value,
           control: field,
           usedElements,
         });
@@ -218,7 +224,7 @@
         continue;
       }
 
-      setElementValue(field, value);
+      setElementValue(field, rawValue);
       usedElements.add(field);
       filled.push(step.label);
     }
@@ -242,6 +248,20 @@
       return { status: "skipped_for_safety", reason: "unexpected control type" };
     }
 
+    if (step.key === "category") {
+      const stagedCategoryResult = await tryFillCategoryByStages({
+        value,
+        control,
+        fieldConfig,
+      });
+
+      if (stagedCategoryResult.status === "filled") {
+        usedElements.add(control);
+      }
+
+      return stagedCategoryResult;
+    }
+
     openCustomSelectControl(control);
     await wait(140);
 
@@ -258,10 +278,6 @@
       return { status: "needs_review", reason: "multiple matching options" };
     }
 
-    if (step.key === "category" && normalizeText(value).includes(">")) {
-      return { status: "needs_review", reason: "category likely requires multi-step selection" };
-    }
-
     if (fieldConfig.allowTypedEntry) {
       const typedEntry = tryTypedEntry(control, value);
       if (typedEntry) {
@@ -273,6 +289,36 @@
     return { status: "needs_review", reason: "no safe visible option match" };
   }
 
+  async function tryFillCategoryByStages(input) {
+    const { value, control, fieldConfig } = input;
+    const stages = splitCategoryStages(value);
+    if (!stages.length) {
+      return { status: "needs_review", reason: "no category stages found" };
+    }
+
+    openCustomSelectControl(control);
+    await wait(150);
+
+    for (let index = 0; index < stages.length; index += 1) {
+      const stageLabel = stages[index];
+      const pickerRoot = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
+      const options = findVisibleOptions(fieldConfig.optionSelectors ?? [], pickerRoot ?? undefined);
+      const matches = findMatchingOptions(options, stageLabel);
+
+      if (matches.length !== 1) {
+        return {
+          status: "needs_review",
+          reason: `stopped at stage ${index + 1}`,
+        };
+      }
+
+      clickElement(matches[0]);
+      await wait(180);
+    }
+
+    return { status: "filled" };
+  }
+
   function isSafeCustomSelectControl(control) {
     return control.matches('button, [role="combobox"], input[type="text"], input:not([type])');
   }
@@ -282,7 +328,17 @@
     clickElement(control);
   }
 
-  function findVisibleOptions(optionSelectors) {
+  function findVisibleCategoryPicker(pickerContainerSelectors) {
+    for (const selector of pickerContainerSelectors) {
+      const candidates = Array.from(document.querySelectorAll(selector));
+      const visible = candidates.find((candidate) => isVisible(candidate));
+      if (visible) return visible;
+    }
+
+    return null;
+  }
+
+  function findVisibleOptions(optionSelectors, root) {
     const selectors = optionSelectors.length
       ? optionSelectors
       : [
@@ -295,8 +351,9 @@
     const seen = new Set();
     const options = [];
 
+    const scope = root ?? document;
     for (const selector of selectors) {
-      const candidates = Array.from(document.querySelectorAll(selector));
+      const candidates = Array.from(scope.querySelectorAll(selector));
       for (const candidate of candidates) {
         if (!(candidate instanceof Element)) continue;
         if (!isVisible(candidate)) continue;
@@ -327,6 +384,69 @@
     ]
       .filter(Boolean)
       .join(" ");
+  }
+
+  function getCustomSelectAttemptValue(fieldKey, value) {
+    if (fieldKey !== "color") {
+      return { value, reason: "" };
+    }
+
+    const baseColor = extractSafeBaseColor(value);
+    if (!baseColor) {
+      return { value: null, reason: "no safe base color" };
+    }
+
+    return { value: baseColor, reason: "" };
+  }
+
+  function splitCategoryStages(value) {
+    return value
+      .split(">")
+      .map((part) => normalizeText(part))
+      .filter(Boolean);
+  }
+
+  function extractSafeBaseColor(value) {
+    const normalized = normalizeText(value);
+    if (!normalized) return null;
+
+    if (normalized.includes("multicolor") || normalized.includes("multi color")) {
+      return null;
+    }
+
+    if (normalized.includes("navy")) {
+      return null;
+    }
+
+    const allowedBaseColors = [
+      "black",
+      "blue",
+      "brown",
+      "gray",
+      "green",
+      "orange",
+      "pink",
+      "purple",
+      "red",
+      "white",
+      "yellow",
+      "beige",
+      "tan",
+      "ivory",
+      "cream",
+      "gold",
+      "silver",
+    ];
+
+    const matchedColors = allowedBaseColors.filter((color) =>
+      normalized.split(" ").includes(color)
+    );
+
+    if (matchedColors.length !== 1) {
+      return null;
+    }
+
+    return matchedColors[0];
   }
 
   function tryTypedEntry(control, value) {
@@ -429,6 +549,13 @@
         category: {
           controlType: "custom_select",
           allowTypedEntry: false,
+          pickerContainerSelectors: [
+            '[role="dialog"]',
+            '[aria-modal="true"]',
+            '[data-radix-dialog-content]',
+            '[data-testid*="category"]',
+            ".modal",
+          ],
           optionSelectors: [
             '[role="option"]',
             '[role="listbox"] [role="button"]',

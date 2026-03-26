@@ -66,6 +66,13 @@
       category: {
         controlType: "custom_select",
         optionSelectors: DEFAULT_OPTION_SELECTORS,
+        pickerContainerSelectors: [
+          '[role="dialog"]',
+          '[aria-modal="true"]',
+          '[data-radix-dialog-content]',
+          '[data-testid*="category"]',
+          '.modal',
+        ],
         allowTypedEntry: false,
         labelStrategies: [
           {
