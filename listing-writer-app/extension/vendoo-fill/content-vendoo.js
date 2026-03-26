@@ -141,7 +141,6 @@
     }
 
     const selectors = getSelectorMap().ebay;
-
     const fillSteps = [
       {
         label: "eBay title",
@@ -177,6 +176,8 @@
 
     const filled = [];
     const needsReview = [];
+    const skippedForSafety = [];
+    const usedElements = new Set();
 
     for (const step of fillSteps) {
       const value = typeof step.value === "string" ? step.value.trim() : "";
@@ -186,20 +187,44 @@
       }
 
       const field = findElementBySelectorMap(step.selectorConfig);
-      if (field) {
-        setElementValue(field, value);
-        filled.push(step.label);
-      } else {
+      if (!field) {
         needsReview.push(step.label);
+        continue;
       }
+
+      if (usedElements.has(field)) {
+        skippedForSafety.push(`${step.label} (collision prevention)`);
+        continue;
+      }
+
+      if (step.selectorConfig?.controlType === "custom_select") {
+        skippedForSafety.push(`${step.label} (custom select safety)`);
+        continue;
+      }
+
+      if (step.selectorConfig?.controlType === "text" && !field.matches("input")) {
+        skippedForSafety.push(`${step.label} (unexpected control type)`);
+        continue;
+      }
+
+      if (
+        step.selectorConfig?.controlType === "textarea" &&
+        !field.matches('textarea, [contenteditable="true"]')
+      ) {
+        skippedForSafety.push(`${step.label} (unexpected control type)`);
+        continue;
+      }
+
+      setElementValue(field, value);
+      usedElements.add(field);
+      filled.push(step.label);
     }
 
     const parts = [];
-    if (filled.length) {
-      parts.push(`Filled: ${filled.join(", ")}`);
-    }
-    if (needsReview.length) {
-      parts.push(`Needs review: ${needsReview.join(", ")}`);
+    if (filled.length) parts.push(`Filled: ${filled.join(", ")}`);
+    if (needsReview.length) parts.push(`Needs review: ${needsReview.join(", ")}`);
+    if (skippedForSafety.length) {
+      parts.push(`Skipped for safety: ${skippedForSafety.join(", ")}`);
     }
 
     reportEl.textContent = parts.join(" | ") || "Nothing changed.";
@@ -210,44 +235,122 @@
     return window.LPU_VENDOO_SELECTORS ?? {
       ebay: {
         title: {
-          labelStrategies: [{ labelTerms: ["ebay title", "title"], fieldSelector: "input" }],
-          fallbackStrategies: [{ fieldSelector: "input", keywords: ["title", "ebay"] }],
-        },
-        description: {
+          controlType: "text",
           labelStrategies: [
-            { labelTerms: ["ebay description", "description"], fieldSelector: "textarea" },
             {
-              labelTerms: ["ebay description", "description"],
-              fieldSelector: '[contenteditable="true"]',
+              labelTerms: ["ebay title", "title"],
+              elementSelector: 'input[type="text"], input:not([type])',
+              metadataIncludes: ["title"],
+              metadataExcludes: ["category", "brand", "size", "color", "colour"],
             },
           ],
           fallbackStrategies: [
-            { fieldSelector: "textarea", keywords: ["description", "details"] },
-            { fieldSelector: '[contenteditable="true"]', keywords: ["description", "details"] },
+            {
+              elementSelector: 'input[type="text"], input:not([type])',
+              metadataIncludes: ["title"],
+              metadataExcludes: ["category", "brand", "size", "color", "colour"],
+            },
+          ],
+        },
+        description: {
+          controlType: "textarea",
+          labelStrategies: [
+            {
+              labelTerms: ["ebay description", "description"],
+              elementSelector: "textarea",
+              metadataIncludes: ["description"],
+              metadataExcludes: ["title", "category"],
+            },
+            {
+              labelTerms: ["ebay description", "description", "details"],
+              elementSelector: '[contenteditable="true"]',
+              metadataIncludes: ["description", "details"],
+              metadataExcludes: ["title", "category"],
+            },
+          ],
+          fallbackStrategies: [
+            {
+              elementSelector: "textarea",
+              metadataIncludes: ["description", "details"],
+              metadataExcludes: ["title", "category"],
+            },
+            {
+              elementSelector: '[contenteditable="true"]',
+              metadataIncludes: ["description", "details"],
+              metadataExcludes: ["title", "category"],
+            },
           ],
         },
         category: {
+          controlType: "custom_select",
           labelStrategies: [
-            { labelTerms: ["ebay category", "category"], fieldSelector: "input" },
+            {
+              labelTerms: ["ebay category", "category"],
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["category"],
+              metadataExcludes: ["title", "brand", "size", "color", "colour"],
+            },
           ],
           fallbackStrategies: [
-            { fieldSelector: "input", keywords: ["category", "ebay"] },
-            { fieldSelector: "input", keywords: ["category"] },
+            {
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["category"],
+              metadataExcludes: ["title", "brand", "size", "color", "colour"],
+            },
           ],
         },
         brand: {
-          labelStrategies: [{ labelTerms: ["brand"], fieldSelector: "input" }],
-          fallbackStrategies: [{ fieldSelector: "input", keywords: ["brand"] }],
+          controlType: "custom_select",
+          labelStrategies: [
+            {
+              labelTerms: ["brand"],
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["brand"],
+              metadataExcludes: ["title", "category", "size", "color", "colour"],
+            },
+          ],
+          fallbackStrategies: [
+            {
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["brand"],
+              metadataExcludes: ["title", "category", "size", "color", "colour"],
+            },
+          ],
         },
         size: {
-          labelStrategies: [{ labelTerms: ["size"], fieldSelector: "input" }],
-          fallbackStrategies: [{ fieldSelector: "input", keywords: ["size"] }],
+          controlType: "custom_select",
+          labelStrategies: [
+            {
+              labelTerms: ["size"],
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["size"],
+              metadataExcludes: ["title", "category", "brand", "color", "colour"],
+            },
+          ],
+          fallbackStrategies: [
+            {
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["size"],
+              metadataExcludes: ["title", "category", "brand", "color", "colour"],
+            },
+          ],
         },
         color: {
-          labelStrategies: [{ labelTerms: ["color", "colour"], fieldSelector: "input" }],
+          controlType: "custom_select",
+          labelStrategies: [
+            {
+              labelTerms: ["color", "colour"],
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["color", "colour"],
+              metadataExcludes: ["title", "category", "brand", "size"],
+            },
+          ],
           fallbackStrategies: [
-            { fieldSelector: "input", keywords: ["color"] },
-            { fieldSelector: "input", keywords: ["colour"] },
+            {
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["color", "colour"],
+              metadataExcludes: ["title", "category", "brand", "size"],
+            },
           ],
         },
       },
@@ -274,12 +377,18 @@
   }
 
   function pickEbayBrand(payload) {
-    const brand = payload?.marketplaces?.ebay?.itemSpecifics?.brand ?? payload?.marketplaces?.ebay?.brand ?? "";
+    const brand =
+      payload?.marketplaces?.ebay?.itemSpecifics?.brand ??
+      payload?.marketplaces?.ebay?.brand ??
+      "";
     return typeof brand === "string" ? brand.trim() : "";
   }
 
   function pickEbaySize(payload) {
-    const size = payload?.marketplaces?.ebay?.itemSpecifics?.size ?? payload?.marketplaces?.ebay?.size ?? "";
+    const size =
+      payload?.marketplaces?.ebay?.itemSpecifics?.size ??
+      payload?.marketplaces?.ebay?.size ??
+      "";
     return typeof size === "string" ? size.trim() : "";
   }
 
@@ -296,13 +405,13 @@
   function findElementBySelectorMap(fieldConfig) {
     const labelStrategies = fieldConfig?.labelStrategies ?? [];
     for (const strategy of labelStrategies) {
-      const found = findField(strategy.labelTerms ?? [], strategy.fieldSelector);
+      const found = findByLabelStrategy(strategy);
       if (found) return found;
     }
 
     const fallbackStrategies = fieldConfig?.fallbackStrategies ?? [];
     for (const strategy of fallbackStrategies) {
-      const found = findFallback(strategy.keywords ?? [], strategy.fieldSelector);
+      const found = findByFallbackStrategy(strategy);
       if (found) return found;
     }
 
@@ -323,48 +432,68 @@
     });
   }
 
-  function findField(labelTerms, fieldSelector) {
-    const terms = labelTerms.map(normalizeText);
+  function findByLabelStrategy(strategy) {
+    const terms = (strategy?.labelTerms ?? []).map(normalizeText);
+    if (!terms.length) return null;
 
     const labels = Array.from(document.querySelectorAll("label"));
     for (const label of labels) {
       const labelText = normalizeText(label.textContent);
       if (!terms.some((term) => labelText.includes(term))) continue;
 
-      const forId = label.getAttribute("for");
-      if (forId) {
-        const linked = document.getElementById(forId);
-        if (linked && linked.matches(fieldSelector)) return linked;
-      }
-
-      const insideLabel = label.querySelector(fieldSelector);
-      if (insideLabel) return insideLabel;
-
-      const parent = label.parentElement;
-      if (parent) {
-        const nearby = parent.querySelector(fieldSelector);
-        if (nearby) return nearby;
-      }
-
-      const container = label.closest("div, section, form");
-      if (container) {
-        const nearby = container.querySelector(fieldSelector);
-        if (nearby) return nearby;
-      }
+      const candidates = collectLabelCandidates(label, strategy.elementSelector);
+      const matched = candidates.find((el) => matchesStrategy(el, strategy));
+      if (matched) return matched;
     }
 
     return null;
   }
 
-  function findFallback(keywords, fieldSelector) {
-    const terms = keywords.map(normalizeText);
-    const elements = Array.from(document.querySelectorAll(fieldSelector));
+  function collectLabelCandidates(label, elementSelector) {
+    const selector = elementSelector || "input, textarea, [contenteditable='true'], button";
+    const seen = new Set();
+    const candidates = [];
 
-    return elements.find((el) => matchesElementMetadata(el, terms)) || null;
+    function addCandidate(el) {
+      if (!el || !(el instanceof Element) || seen.has(el)) return;
+      seen.add(el);
+      candidates.push(el);
+    }
+
+    const forId = label.getAttribute("for");
+    if (forId) {
+      const linked = document.getElementById(forId);
+      if (linked?.matches(selector)) addCandidate(linked);
+    }
+
+    label.querySelectorAll(selector).forEach(addCandidate);
+
+    const parent = label.parentElement;
+    if (parent) {
+      parent.querySelectorAll(selector).forEach(addCandidate);
+    }
+
+    const container = label.closest("div, section, form");
+    if (container) {
+      container.querySelectorAll(selector).forEach(addCandidate);
+    }
+
+    return candidates;
   }
 
-  function matchesElementMetadata(el, terms) {
-    const haystack = normalizeText(
+  function findByFallbackStrategy(strategy) {
+    const selector = strategy?.elementSelector;
+    if (!selector) return null;
+
+    const elements = Array.from(document.querySelectorAll(selector));
+    return elements.find((el) => matchesStrategy(el, strategy)) || null;
+  }
+
+  function matchesStrategy(el, strategy) {
+    const includes = strategy?.metadataIncludes ?? [];
+    const excludes = strategy?.metadataExcludes ?? [];
+
+    const metadata = normalizeText(
       [
         el.getAttribute("name"),
         el.getAttribute("id"),
@@ -372,12 +501,22 @@
         el.getAttribute("aria-label"),
         el.getAttribute("data-testid"),
         el.getAttribute("title"),
+        el.getAttribute("role"),
+        el.className,
       ]
         .filter(Boolean)
         .join(" ")
     );
 
-    return terms.some((term) => haystack.includes(term));
+    if (includes.length && !includes.some((term) => metadata.includes(normalizeText(term)))) {
+      return false;
+    }
+
+    if (excludes.some((term) => metadata.includes(normalizeText(term)))) {
+      return false;
+    }
+
+    return true;
   }
 
   function setElementValue(el, value) {

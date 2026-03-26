@@ -4,49 +4,131 @@
   window.LPU_VENDOO_SELECTORS = {
     ebay: {
       title: {
-        labelStrategies: [{ labelTerms: ["ebay title", "title"], fieldSelector: "input" }],
-        fallbackStrategies: [{ fieldSelector: "input", keywords: ["title", "ebay"] }],
-      },
-      description: {
+        controlType: "text",
         labelStrategies: [
-          { labelTerms: ["ebay description", "description"], fieldSelector: "textarea" },
           {
-            labelTerms: ["ebay description", "description"],
-            fieldSelector: '[contenteditable="true"]',
+            labelTerms: ["ebay title", "title"],
+            elementSelector: 'input[type="text"], input:not([type])',
+            metadataIncludes: ["title"],
+            metadataExcludes: ["category", "brand", "size", "color", "colour"],
           },
         ],
         fallbackStrategies: [
-          { fieldSelector: "textarea", keywords: ["description", "details"] },
-          { fieldSelector: '[contenteditable="true"]', keywords: ["description", "details"] },
+          {
+            elementSelector: 'input[type="text"], input:not([type])',
+            metadataIncludes: ["title"],
+            metadataExcludes: ["category", "brand", "size", "color", "colour"],
+          },
         ],
       },
-      category: {
-        labelStrategies: [{ labelTerms: ["ebay category", "category"], fieldSelector: "input" }],
-        fallbackStrategies: [
-          { fieldSelector: "input", keywords: ["category", "ebay"] },
-          { fieldSelector: "input", keywords: ["category"] },
-        ],
-      },
-      brand: {
-        labelStrategies: [{ labelTerms: ["brand"], fieldSelector: "input" }],
-        fallbackStrategies: [{ fieldSelector: "input", keywords: ["brand"] }],
-      },
-      size: {
-        labelStrategies: [{ labelTerms: ["size"], fieldSelector: "input" }],
-        fallbackStrategies: [{ fieldSelector: "input", keywords: ["size"] }],
-      },
-      color: {
+
+      description: {
+        controlType: "textarea",
         labelStrategies: [
-          { labelTerms: ["color", "colour"], fieldSelector: "input" },
+          {
+            labelTerms: ["ebay description", "description"],
+            elementSelector: "textarea",
+            metadataIncludes: ["description"],
+            metadataExcludes: ["title", "category"],
+          },
+          {
+            labelTerms: ["ebay description", "description", "details"],
+            elementSelector: '[contenteditable="true"]',
+            metadataIncludes: ["description", "details"],
+            metadataExcludes: ["title", "category"],
+          },
         ],
         fallbackStrategies: [
-          { fieldSelector: "input", keywords: ["color"] },
-          { fieldSelector: "input", keywords: ["colour"] },
+          {
+            elementSelector: "textarea",
+            metadataIncludes: ["description", "details"],
+            metadataExcludes: ["title", "category"],
+          },
+          {
+            elementSelector: '[contenteditable="true"]',
+            metadataIncludes: ["description", "details"],
+            metadataExcludes: ["title", "category"],
+          },
+        ],
+      },
+
+      category: {
+        controlType: "custom_select",
+        labelStrategies: [
+          {
+            labelTerms: ["ebay category", "category"],
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["category"],
+            metadataExcludes: ["title", "brand", "size", "color", "colour"],
+          },
+        ],
+        fallbackStrategies: [
+          {
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["category"],
+            metadataExcludes: ["title", "brand", "size", "color", "colour"],
+          },
+        ],
+      },
+
+      brand: {
+        controlType: "custom_select",
+        labelStrategies: [
+          {
+            labelTerms: ["brand"],
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["brand"],
+            metadataExcludes: ["title", "category", "size", "color", "colour"],
+          },
+        ],
+        fallbackStrategies: [
+          {
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["brand"],
+            metadataExcludes: ["title", "category", "size", "color", "colour"],
+          },
+        ],
+      },
+
+      size: {
+        controlType: "custom_select",
+        labelStrategies: [
+          {
+            labelTerms: ["size"],
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["size"],
+            metadataExcludes: ["title", "category", "brand", "color", "colour"],
+          },
+        ],
+        fallbackStrategies: [
+          {
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["size"],
+            metadataExcludes: ["title", "category", "brand", "color", "colour"],
+          },
+        ],
+      },
+
+      color: {
+        controlType: "custom_select",
+        labelStrategies: [
+          {
+            labelTerms: ["color", "colour"],
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["color", "colour"],
+            metadataExcludes: ["title", "category", "brand", "size"],
+          },
+        ],
+        fallbackStrategies: [
+          {
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["color", "colour"],
+            metadataExcludes: ["title", "category", "brand", "size"],
+          },
         ],
       },
     },
 
-    // Placeholder maps for easy future expansion.
     depop: {},
     poshmark: {},
     mercari: {},
