@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useState } from "react";
+import { ChangeEvent, FormEvent, useMemo, useState } from "react";
 
 type ImagePayload = {
   name: string;
@@ -29,7 +29,9 @@ type ValidationResult = {
   issues: ValidationIssue[];
   parsed: {
     raw: string;
-    sections: Partial<Record<"ebay" | "depop" | "poshmark" | "mercari" | "etsy", string>>;
+    sections: Partial<
+      Record<"ebay" | "depop" | "poshmark" | "mercari" | "etsy", string>
+    >;
     unknownBlocks: string[];
   };
   platformResults: Record<
@@ -44,6 +46,42 @@ type ValidationResult = {
 };
 
 type WorkflowStatus = "ready" | "generating" | "pass" | "needs-review";
+type PlatformKey = "ebay" | "depop" | "poshmark" | "mercari" | "etsy";
+
+const FIELD_LABELS = {
+  ebay: {
+    titleA: ["Title A"],
+    titleB: ["Title B"],
+    description: ["Description"],
+  },
+  depop: {
+    listing: ["Listing"],
+    hashtags: ["Hashtags"],
+    optionalBrandHashtags: ["Optional Brand Hashtags"],
+  },
+  poshmark: {
+    title: ["Title"],
+    description: ["Description"],
+  },
+  mercari: {
+    title: ["Title"],
+    description: ["Description"],
+    hashtags: ["Hashtags"],
+  },
+  etsy: {
+    title: ["Title"],
+    tags: ["Tags"],
+    description: ["Description"],
+  },
+} as const;
+
+const KNOWN_LABELS = Array.from(
+  new Set(
+    Object.values(FIELD_LABELS).flatMap((platformLabels) =>
+      Object.values(platformLabels).flatMap((labels) => labels)
+    )
+  )
+);
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -73,13 +111,56 @@ function formatMetricValue(value: unknown): string {
   return String(value);
 }
 
+function normalizeLabelLine(line: string): string {
+  return line.trim().replace(/:$/, "");
+}
+
+function lineMatchesAnyLabel(line: string, labels: readonly string[]): boolean {
+  const trimmed = line.trim();
+  const normalized = normalizeLabelLine(trimmed);
+
+  return labels.some((label) => normalized === label || trimmed.startsWith(`${label}:`));
+}
+
+function isKnownLabelLine(line: string): boolean {
+  return lineMatchesAnyLabel(line, KNOWN_LABELS);
+}
+
+function extractLabeledBlock(section: string, labels: readonly string[]): string {
+  if (!section?.trim()) return "";
+
+  const lines = section.replace(/\r\n/g, "\n").split("\n");
+  const startIndex = lines.findIndex((line) => lineMatchesAnyLabel(line, labels));
+
+  if (startIndex === -1) return "";
+
+  const startLine = lines[startIndex].trim();
+  const colonIndex = startLine.indexOf(":");
+  const firstValue = colonIndex >= 0 ? startLine.slice(colonIndex + 1).trim() : "";
+
+  const collected: string[] = [];
+  if (firstValue) {
+    collected.push(firstValue);
+  }
+
+  for (let i = startIndex + 1; i < lines.length; i += 1) {
+    const currentLine = lines[i];
+
+    if (isKnownLabelLine(currentLine)) {
+      break;
+    }
+
+    collected.push(currentLine);
+  }
+
+  return collected.join("\n").trim();
+}
+
 function StatusBadge({ pass }: { pass: boolean }) {
   return (
     <span
       className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-        pass
-          ? "bg-green-100 text-green-800"
-          : "bg-red-100 text-red-800"
+        pass ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
       }`}
     >
       {pass ? "Pass" : "Fail"}
@@ -102,7 +183,8 @@ function getWorkflowStatus(
     return {
       status: "generating",
       title: "Generating",
-      description: "Layer 1 is generating LP-U output and Layer 2 will validate it automatically.",
+      description:
+        "Layer 1 is generating LP-U output and Layer 2 will validate it automatically.",
       containerClassName: "border-blue-200 bg-blue-50",
       badgeClassName: "bg-blue-100 text-blue-800",
     };
@@ -147,6 +229,33 @@ function getWorkflowStatus(
   };
 }
 
+function CopyButton({
+  label,
+  onClick,
+  disabled,
+  copied,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  copied?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-xl border px-4 py-2 text-sm font-medium transition ${
+        copied
+          ? "border-green-300 bg-green-50 text-green-800"
+          : "border-gray-300 bg-white text-gray-800 hover:bg-gray-50"
+      } disabled:cursor-not-allowed disabled:opacity-50`}
+    >
+      {copied ? `Copied: ${label}` : label}
+    </button>
+  );
+}
+
 export default function LpuPage() {
   const [notes, setNotes] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -154,6 +263,7 @@ export default function LpuPage() {
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files ?? []);
@@ -165,6 +275,7 @@ export default function LpuPage() {
     setError("");
     setOutput("");
     setValidation(null);
+    setCopiedTarget(null);
     setIsLoading(true);
 
     try {
@@ -200,12 +311,13 @@ export default function LpuPage() {
         err instanceof Error ? err.message : "Failed to generate output.";
       setError(message);
       setValidation(null);
+      setCopiedTarget(null);
     } finally {
       setIsLoading(false);
     }
   }
 
-  const platformOrder: Array<"ebay" | "depop" | "poshmark" | "mercari" | "etsy"> = [
+  const platformOrder: PlatformKey[] = [
     "ebay",
     "depop",
     "poshmark",
@@ -214,6 +326,90 @@ export default function LpuPage() {
   ];
 
   const workflow = getWorkflowStatus(isLoading, error, validation);
+
+  const sectionCopies = useMemo(
+    () => ({
+      full: output,
+      ebay: validation?.parsed.sections.ebay ?? "",
+      depop: validation?.parsed.sections.depop ?? "",
+      poshmark: validation?.parsed.sections.poshmark ?? "",
+      mercari: validation?.parsed.sections.mercari ?? "",
+      etsy: validation?.parsed.sections.etsy ?? "",
+    }),
+    [output, validation]
+  );
+
+  const fieldCopies = useMemo(
+    () => ({
+      "ebay-title-a": extractLabeledBlock(sectionCopies.ebay, FIELD_LABELS.ebay.titleA),
+      "ebay-title-b": extractLabeledBlock(sectionCopies.ebay, FIELD_LABELS.ebay.titleB),
+      "ebay-description": extractLabeledBlock(
+        sectionCopies.ebay,
+        FIELD_LABELS.ebay.description
+      ),
+
+      "depop-listing": extractLabeledBlock(sectionCopies.depop, FIELD_LABELS.depop.listing),
+      "depop-hashtags": extractLabeledBlock(
+        sectionCopies.depop,
+        FIELD_LABELS.depop.hashtags
+      ),
+      "depop-brand-hashtags": extractLabeledBlock(
+        sectionCopies.depop,
+        FIELD_LABELS.depop.optionalBrandHashtags
+      ),
+
+      "poshmark-title": extractLabeledBlock(
+        sectionCopies.poshmark,
+        FIELD_LABELS.poshmark.title
+      ),
+      "poshmark-description": extractLabeledBlock(
+        sectionCopies.poshmark,
+        FIELD_LABELS.poshmark.description
+      ),
+
+      "mercari-title": extractLabeledBlock(sectionCopies.mercari, FIELD_LABELS.mercari.title),
+      "mercari-description": extractLabeledBlock(
+        sectionCopies.mercari,
+        FIELD_LABELS.mercari.description
+      ),
+      "mercari-hashtags": extractLabeledBlock(
+        sectionCopies.mercari,
+        FIELD_LABELS.mercari.hashtags
+      ),
+
+      "etsy-title": extractLabeledBlock(sectionCopies.etsy, FIELD_LABELS.etsy.title),
+      "etsy-tags": extractLabeledBlock(sectionCopies.etsy, FIELD_LABELS.etsy.tags),
+      "etsy-description": extractLabeledBlock(
+        sectionCopies.etsy,
+        FIELD_LABELS.etsy.description
+      ),
+    }),
+    [sectionCopies]
+  );
+
+  const copyMap = useMemo(
+    () => ({
+      ...sectionCopies,
+      ...fieldCopies,
+    }),
+    [sectionCopies, fieldCopies]
+  );
+
+  async function handleCopy(target: string) {
+    const text = copyMap[target];
+
+    if (!text?.trim()) return;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedTarget(target);
+      window.setTimeout(() => {
+        setCopiedTarget((current) => (current === target ? null : current));
+      }, 1800);
+    } catch {
+      setError("Failed to copy to clipboard.");
+    }
+  }
 
   return (
     <main className="mx-auto max-w-6xl p-6">
@@ -317,15 +513,187 @@ export default function LpuPage() {
       </form>
 
       <section className="mt-8 rounded-2xl border p-6">
-        <h2 className="mb-4 text-2xl font-semibold">Output</h2>
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="text-2xl font-semibold">Output</h2>
+        </div>
 
-        {output ? (
-          <div className="whitespace-pre-wrap text-sm leading-7">{output}</div>
-        ) : (
-          <p className="text-sm text-gray-500">
-            Your generated LP-U output will appear here.
-          </p>
-        )}
+        <div className="space-y-5">
+          <div>
+            <div className="mb-3 text-sm font-semibold text-gray-700">
+              Section Copy Actions
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <CopyButton
+                label="Copy Full Output"
+                onClick={() => handleCopy("full")}
+                disabled={!sectionCopies.full?.trim()}
+                copied={copiedTarget === "full"}
+              />
+              <CopyButton
+                label="Copy eBay"
+                onClick={() => handleCopy("ebay")}
+                disabled={!sectionCopies.ebay?.trim()}
+                copied={copiedTarget === "ebay"}
+              />
+              <CopyButton
+                label="Copy Depop"
+                onClick={() => handleCopy("depop")}
+                disabled={!sectionCopies.depop?.trim()}
+                copied={copiedTarget === "depop"}
+              />
+              <CopyButton
+                label="Copy Poshmark"
+                onClick={() => handleCopy("poshmark")}
+                disabled={!sectionCopies.poshmark?.trim()}
+                copied={copiedTarget === "poshmark"}
+              />
+              <CopyButton
+                label="Copy Mercari"
+                onClick={() => handleCopy("mercari")}
+                disabled={!sectionCopies.mercari?.trim()}
+                copied={copiedTarget === "mercari"}
+              />
+              <CopyButton
+                label="Copy Etsy"
+                onClick={() => handleCopy("etsy")}
+                disabled={!sectionCopies.etsy?.trim()}
+                copied={copiedTarget === "etsy"}
+              />
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-3 text-sm font-semibold text-gray-700">
+              Field Copy Actions
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="rounded-xl border p-4">
+                <div className="mb-3 text-sm font-semibold uppercase">eBay</div>
+                <div className="flex flex-wrap gap-2">
+                  <CopyButton
+                    label="Copy Title A"
+                    onClick={() => handleCopy("ebay-title-a")}
+                    disabled={!fieldCopies["ebay-title-a"]?.trim()}
+                    copied={copiedTarget === "ebay-title-a"}
+                  />
+                  <CopyButton
+                    label="Copy Title B"
+                    onClick={() => handleCopy("ebay-title-b")}
+                    disabled={!fieldCopies["ebay-title-b"]?.trim()}
+                    copied={copiedTarget === "ebay-title-b"}
+                  />
+                  <CopyButton
+                    label="Copy Description"
+                    onClick={() => handleCopy("ebay-description")}
+                    disabled={!fieldCopies["ebay-description"]?.trim()}
+                    copied={copiedTarget === "ebay-description"}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="mb-3 text-sm font-semibold uppercase">Depop</div>
+                <div className="flex flex-wrap gap-2">
+                  <CopyButton
+                    label="Copy Listing"
+                    onClick={() => handleCopy("depop-listing")}
+                    disabled={!fieldCopies["depop-listing"]?.trim()}
+                    copied={copiedTarget === "depop-listing"}
+                  />
+                  <CopyButton
+                    label="Copy Hashtags"
+                    onClick={() => handleCopy("depop-hashtags")}
+                    disabled={!fieldCopies["depop-hashtags"]?.trim()}
+                    copied={copiedTarget === "depop-hashtags"}
+                  />
+                  <CopyButton
+                    label="Copy Brand Hashtags"
+                    onClick={() => handleCopy("depop-brand-hashtags")}
+                    disabled={!fieldCopies["depop-brand-hashtags"]?.trim()}
+                    copied={copiedTarget === "depop-brand-hashtags"}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="mb-3 text-sm font-semibold uppercase">Poshmark</div>
+                <div className="flex flex-wrap gap-2">
+                  <CopyButton
+                    label="Copy Title"
+                    onClick={() => handleCopy("poshmark-title")}
+                    disabled={!fieldCopies["poshmark-title"]?.trim()}
+                    copied={copiedTarget === "poshmark-title"}
+                  />
+                  <CopyButton
+                    label="Copy Description"
+                    onClick={() => handleCopy("poshmark-description")}
+                    disabled={!fieldCopies["poshmark-description"]?.trim()}
+                    copied={copiedTarget === "poshmark-description"}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="mb-3 text-sm font-semibold uppercase">Mercari</div>
+                <div className="flex flex-wrap gap-2">
+                  <CopyButton
+                    label="Copy Title"
+                    onClick={() => handleCopy("mercari-title")}
+                    disabled={!fieldCopies["mercari-title"]?.trim()}
+                    copied={copiedTarget === "mercari-title"}
+                  />
+                  <CopyButton
+                    label="Copy Description"
+                    onClick={() => handleCopy("mercari-description")}
+                    disabled={!fieldCopies["mercari-description"]?.trim()}
+                    copied={copiedTarget === "mercari-description"}
+                  />
+                  <CopyButton
+                    label="Copy Hashtags"
+                    onClick={() => handleCopy("mercari-hashtags")}
+                    disabled={!fieldCopies["mercari-hashtags"]?.trim()}
+                    copied={copiedTarget === "mercari-hashtags"}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="mb-3 text-sm font-semibold uppercase">Etsy</div>
+                <div className="flex flex-wrap gap-2">
+                  <CopyButton
+                    label="Copy Title"
+                    onClick={() => handleCopy("etsy-title")}
+                    disabled={!fieldCopies["etsy-title"]?.trim()}
+                    copied={copiedTarget === "etsy-title"}
+                  />
+                  <CopyButton
+                    label="Copy Tags"
+                    onClick={() => handleCopy("etsy-tags")}
+                    disabled={!fieldCopies["etsy-tags"]?.trim()}
+                    copied={copiedTarget === "etsy-tags"}
+                  />
+                  <CopyButton
+                    label="Copy Description"
+                    onClick={() => handleCopy("etsy-description")}
+                    disabled={!fieldCopies["etsy-description"]?.trim()}
+                    copied={copiedTarget === "etsy-description"}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          {output ? (
+            <div className="whitespace-pre-wrap text-sm leading-7">{output}</div>
+          ) : (
+            <p className="text-sm text-gray-500">
+              Your generated LP-U output will appear here.
+            </p>
+          )}
+        </div>
       </section>
 
       <section className="mt-8 rounded-2xl border p-6">
@@ -429,9 +797,7 @@ export default function LpuPage() {
                           </ul>
                         </div>
                       ) : (
-                        <div className="mt-4 text-sm text-green-700">
-                          No issues
-                        </div>
+                        <div className="mt-4 text-sm text-green-700">No issues</div>
                       )}
                     </div>
                   );
