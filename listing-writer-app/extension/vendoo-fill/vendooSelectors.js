@@ -1,6 +1,17 @@
 (() => {
   if (window.LPU_VENDOO_SELECTORS) return;
 
+  const DEFAULT_OPTION_SELECTORS = [
+    '[role="option"]',
+    '[role="listbox"] [role="button"]',
+    '[role="listbox"] button',
+    '[data-radix-select-content] [data-radix-collection-item]',
+    '[data-radix-popper-content-wrapper] [data-radix-collection-item]',
+    '.select__option',
+    '.option',
+    'li[role="option"]',
+  ];
+
   window.LPU_VENDOO_SELECTORS = {
     ebay: {
       title: {
@@ -54,6 +65,8 @@
 
       category: {
         controlType: "custom_select",
+        optionSelectors: DEFAULT_OPTION_SELECTORS,
+        allowTypedEntry: false,
         labelStrategies: [
           {
             labelTerms: ["ebay category", "category"],
@@ -73,6 +86,8 @@
 
       brand: {
         controlType: "custom_select",
+        optionSelectors: DEFAULT_OPTION_SELECTORS,
+        allowTypedEntry: true,
         labelStrategies: [
           {
             labelTerms: ["brand"],
@@ -92,6 +107,8 @@
 
       size: {
         controlType: "custom_select",
+        optionSelectors: DEFAULT_OPTION_SELECTORS,
+        allowTypedEntry: false,
         labelStrategies: [
           {
             labelTerms: ["size"],
@@ -111,6 +128,8 @@
 
       color: {
         controlType: "custom_select",
+        optionSelectors: DEFAULT_OPTION_SELECTORS,
+        allowTypedEntry: false,
         labelStrategies: [
           {
             labelTerms: ["color", "colour"],

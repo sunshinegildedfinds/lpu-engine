@@ -142,36 +142,22 @@
 
     const selectors = getSelectorMap().ebay;
     const fillSteps = [
+      { key: "title", label: "eBay title", value: pickEbayTitle(payload), selectorConfig: selectors.title },
       {
-        label: "eBay title",
-        value: pickEbayTitle(payload),
-        selectorConfig: selectors.title,
-      },
-      {
+        key: "description",
         label: "eBay description",
         value: payload?.marketplaces?.ebay?.description ?? "",
         selectorConfig: selectors.description,
       },
       {
+        key: "category",
         label: "eBay category",
         value: pickEbayCategory(payload),
         selectorConfig: selectors.category,
       },
-      {
-        label: "eBay brand",
-        value: pickEbayBrand(payload),
-        selectorConfig: selectors.brand,
-      },
-      {
-        label: "eBay size",
-        value: pickEbaySize(payload),
-        selectorConfig: selectors.size,
-      },
-      {
-        label: "eBay color",
-        value: pickEbayColor(payload),
-        selectorConfig: selectors.color,
-      },
+      { key: "brand", label: "eBay brand", value: pickEbayBrand(payload), selectorConfig: selectors.brand },
+      { key: "size", label: "eBay size", value: pickEbaySize(payload), selectorConfig: selectors.size },
+      { key: "color", label: "eBay color", value: pickEbayColor(payload), selectorConfig: selectors.color },
     ];
 
     const filled = [];
@@ -198,7 +184,24 @@
       }
 
       if (step.selectorConfig?.controlType === "custom_select") {
-        skippedForSafety.push(`${step.label} (custom select safety)`);
+        const customSelectResult = await tryFillCustomSelect({
+          step,
+          value,
+          control: field,
+          usedElements,
+        });
+
+        if (customSelectResult.status === "filled") {
+          filled.push(step.label);
+          continue;
+        }
+
+        if (customSelectResult.status === "needs_review") {
+          needsReview.push(`${step.label} (${customSelectResult.reason})`);
+          continue;
+        }
+
+        skippedForSafety.push(`${step.label} (${customSelectResult.reason})`);
         continue;
       }
 
@@ -229,6 +232,148 @@
 
     reportEl.textContent = parts.join(" | ") || "Nothing changed.";
     await refreshPanel();
+  }
+
+  async function tryFillCustomSelect(input) {
+    const { step, value, control, usedElements } = input;
+    const fieldConfig = step.selectorConfig ?? {};
+
+    if (!isSafeCustomSelectControl(control)) {
+      return { status: "skipped_for_safety", reason: "unexpected control type" };
+    }
+
+    openCustomSelectControl(control);
+    await wait(140);
+
+    const options = findVisibleOptions(fieldConfig.optionSelectors ?? []);
+    const matchingOptions = findMatchingOptions(options, value);
+
+    if (matchingOptions.length === 1) {
+      clickElement(matchingOptions[0]);
+      usedElements.add(control);
+      return { status: "filled" };
+    }
+
+    if (matchingOptions.length > 1) {
+      return { status: "needs_review", reason: "multiple matching options" };
+    }
+
+    if (step.key === "category" && normalizeText(value).includes(">")) {
+      return { status: "needs_review", reason: "category likely requires multi-step selection" };
+    }
+
+    if (fieldConfig.allowTypedEntry) {
+      const typedEntry = tryTypedEntry(control, value);
+      if (typedEntry) {
+        usedElements.add(control);
+        return { status: "filled" };
+      }
+    }
+
+    return { status: "needs_review", reason: "no safe visible option match" };
+  }
+
+  function isSafeCustomSelectControl(control) {
+    return control.matches('button, [role="combobox"], input[type="text"], input:not([type])');
+  }
+
+  function openCustomSelectControl(control) {
+    control.focus();
+    clickElement(control);
+  }
+
+  function findVisibleOptions(optionSelectors) {
+    const selectors = optionSelectors.length
+      ? optionSelectors
+      : [
+          '[role="option"]',
+          '[data-radix-collection-item]',
+          '.select__option',
+          'li[role="option"]',
+        ];
+
+    const seen = new Set();
+    const options = [];
+
+    for (const selector of selectors) {
+      const candidates = Array.from(document.querySelectorAll(selector));
+      for (const candidate of candidates) {
+        if (!(candidate instanceof Element)) continue;
+        if (!isVisible(candidate)) continue;
+        if (seen.has(candidate)) continue;
+
+        seen.add(candidate);
+        options.push(candidate);
+      }
+    }
+
+    return options;
+  }
+
+  function findMatchingOptions(options, value) {
+    const normalizedValue = normalizeText(value);
+    if (!normalizedValue) return [];
+
+    return options.filter((option) => normalizeText(getOptionText(option)) === normalizedValue);
+  }
+
+  function getOptionText(option) {
+    return [
+      option.textContent,
+      option.getAttribute("aria-label"),
+      option.getAttribute("title"),
+      option.getAttribute("data-value"),
+      option.getAttribute("value"),
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  function tryTypedEntry(control, value) {
+    if (!control.matches('input[type="text"], input:not([type])')) {
+      return false;
+    }
+
+    const metadata = normalizeText(
+      [
+        control.getAttribute("placeholder"),
+        control.getAttribute("aria-label"),
+        control.getAttribute("title"),
+        control.getAttribute("data-testid"),
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+    if (!metadata.includes("write your own") && !metadata.includes("select or write your own")) {
+      return false;
+    }
+
+    setElementValue(control, value);
+    control.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    control.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+    return true;
+  }
+
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function clickElement(el) {
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    el.click();
+  }
+
+  function isVisible(el) {
+    if (!(el instanceof Element)) return false;
+
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      return false;
+    }
+
+    return el.getClientRects().length > 0;
   }
 
   function getSelectorMap() {
@@ -283,6 +428,17 @@
         },
         category: {
           controlType: "custom_select",
+          allowTypedEntry: false,
+          optionSelectors: [
+            '[role="option"]',
+            '[role="listbox"] [role="button"]',
+            '[role="listbox"] button',
+            '[data-radix-select-content] [data-radix-collection-item]',
+            '[data-radix-popper-content-wrapper] [data-radix-collection-item]',
+            '.select__option',
+            '.option',
+            'li[role="option"]',
+          ],
           labelStrategies: [
             {
               labelTerms: ["ebay category", "category"],
@@ -301,6 +457,17 @@
         },
         brand: {
           controlType: "custom_select",
+          allowTypedEntry: true,
+          optionSelectors: [
+            '[role="option"]',
+            '[role="listbox"] [role="button"]',
+            '[role="listbox"] button',
+            '[data-radix-select-content] [data-radix-collection-item]',
+            '[data-radix-popper-content-wrapper] [data-radix-collection-item]',
+            '.select__option',
+            '.option',
+            'li[role="option"]',
+          ],
           labelStrategies: [
             {
               labelTerms: ["brand"],
@@ -319,6 +486,17 @@
         },
         size: {
           controlType: "custom_select",
+          allowTypedEntry: false,
+          optionSelectors: [
+            '[role="option"]',
+            '[role="listbox"] [role="button"]',
+            '[role="listbox"] button',
+            '[data-radix-select-content] [data-radix-collection-item]',
+            '[data-radix-popper-content-wrapper] [data-radix-collection-item]',
+            '.select__option',
+            '.option',
+            'li[role="option"]',
+          ],
           labelStrategies: [
             {
               labelTerms: ["size"],
@@ -337,6 +515,17 @@
         },
         color: {
           controlType: "custom_select",
+          allowTypedEntry: false,
+          optionSelectors: [
+            '[role="option"]',
+            '[role="listbox"] [role="button"]',
+            '[role="listbox"] button',
+            '[data-radix-select-content] [data-radix-collection-item]',
+            '[data-radix-popper-content-wrapper] [data-radix-collection-item]',
+            '.select__option',
+            '.option',
+            'li[role="option"]',
+          ],
           labelStrategies: [
             {
               labelTerms: ["color", "colour"],
