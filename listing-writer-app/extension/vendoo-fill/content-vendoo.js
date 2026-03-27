@@ -301,22 +301,48 @@
     if (matchingOptions.length === 1) {
       clickElement(matchingOptions[0].clickTarget);
       usedElements.add(control);
-      return { status: "filled" };
+      return {
+        status: "filled",
+        diagnostics: {
+          visibleSample: optionDiscovery.visibleSample || "none",
+          exactMatchFound: true,
+        },
+      };
     }
 
     if (matchingOptions.length > 1) {
-      return { status: "needs_review", reason: "multiple matching options" };
+      return {
+        status: "needs_review",
+        reason: "multiple matching options",
+        diagnostics: {
+          visibleSample: optionDiscovery.visibleSample || "none",
+          exactMatchFound: true,
+        },
+      };
     }
 
     if (fieldConfig.allowTypedEntry) {
       const typedEntry = tryTypedEntry(control, value);
       if (typedEntry) {
         usedElements.add(control);
-        return { status: "filled" };
+        return {
+          status: "filled",
+          diagnostics: {
+            visibleSample: optionDiscovery.visibleSample || "none",
+            exactMatchFound: false,
+          },
+        };
       }
     }
 
-    return { status: "needs_review", reason: "no safe visible option match" };
+    return {
+      status: "needs_review",
+      reason: "no safe visible option match",
+      diagnostics: {
+        visibleSample: optionDiscovery.visibleSample || "none",
+        exactMatchFound: false,
+      },
+    };
   }
 
   async function tryFillCategoryByStages(input) {
@@ -1000,9 +1026,12 @@
 
     await wait(220);
 
-    const field = findElementBySelectorMap(sizeStep.selectorConfig);
+    const sizeDiscovery = await findPostCategorySizeField(sizeStep.selectorConfig);
+    const field = sizeDiscovery.field;
     if (!field) {
-      needsReview.push(`${sizeStep.label} (retry: field not found)`);
+      needsReview.push(
+        `${sizeStep.label} (retry: specifics found: ${sizeDiscovery.specificsFound ? "yes" : "no"}; size control found: no)`
+      );
       stepOutcomes.size = "needs_review";
       return;
     }
@@ -1027,13 +1056,77 @@
     }
 
     if (customSelectResult.status === "needs_review") {
-      needsReview.push(`${sizeStep.label} (retry: ${customSelectResult.reason})`);
+      needsReview.push(
+        `${sizeStep.label} (retry: specifics found: yes; size control found: yes; ` +
+          `visible options: ${customSelectResult.diagnostics?.visibleSample || "none"}; ` +
+          `exact match found: ${customSelectResult.diagnostics?.exactMatchFound ? "yes" : "no"})`
+      );
       stepOutcomes.size = "needs_review";
       return;
     }
 
     skippedForSafety.push(`${sizeStep.label} (retry: ${customSelectResult.reason})`);
     stepOutcomes.size = "skipped_for_safety";
+  }
+
+  async function findPostCategorySizeField(sizeConfig) {
+    const selectors = sizeConfig?.postCategorySpecificsContainerSelectors ?? [];
+    let specificsFound = false;
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const specificsContainer = findVisibleSpecificsContainer(selectors);
+      if (specificsContainer) {
+        specificsFound = true;
+        const sizeField = findElementBySelectorMap(sizeConfig, specificsContainer);
+        if (sizeField) {
+          return {
+            field: sizeField,
+            specificsFound: true,
+          };
+        }
+      }
+
+      await wait(180);
+    }
+
+    return {
+      field: null,
+      specificsFound,
+    };
+  }
+
+  function findVisibleSpecificsContainer(selectors) {
+    const selectorsToUse = selectors.length
+      ? selectors
+      : [
+          '[data-testid*="specific"]',
+          '[data-testid*="item-specific"]',
+          '[aria-label*="specific"]',
+          'section[class*="specific"]',
+          'div[class*="specific"]',
+        ];
+
+    const candidates = [];
+    const seen = new Set();
+    for (const selector of selectorsToUse) {
+      const elements = Array.from(document.querySelectorAll(selector));
+      for (const element of elements) {
+        if (!(element instanceof Element)) continue;
+        if (!isVisible(element)) continue;
+        if (seen.has(element)) continue;
+        seen.add(element);
+        candidates.push(element);
+      }
+    }
+
+    for (const candidate of candidates) {
+      const text = normalizeText(candidate.innerText || candidate.textContent || "");
+      if (text.includes("size")) {
+        return candidate;
+      }
+    }
+
+    return candidates[0] ?? null;
   }
 
   function clearStepResultsFromLists(stepLabel, lists) {
@@ -1290,6 +1383,13 @@
         size: {
           controlType: "custom_select",
           allowTypedEntry: false,
+          postCategorySpecificsContainerSelectors: [
+            '[data-testid*="specific"]',
+            '[data-testid*="item-specific"]',
+            '[aria-label*="specific"]',
+            'section[class*="specific"]',
+            'div[class*="specific"]',
+          ],
           optionSelectors: [
             '[role="option"]',
             '[role="listbox"] [role="button"]',
@@ -1403,16 +1503,16 @@
     return typeof color === "string" ? color.trim() : "";
   }
 
-  function findElementBySelectorMap(fieldConfig) {
+  function findElementBySelectorMap(fieldConfig, root) {
     const labelStrategies = fieldConfig?.labelStrategies ?? [];
     for (const strategy of labelStrategies) {
-      const found = findByLabelStrategy(strategy);
+      const found = findByLabelStrategy(strategy, root);
       if (found) return found;
     }
 
     const fallbackStrategies = fieldConfig?.fallbackStrategies ?? [];
     for (const strategy of fallbackStrategies) {
-      const found = findByFallbackStrategy(strategy);
+      const found = findByFallbackStrategy(strategy, root);
       if (found) return found;
     }
 
@@ -1433,16 +1533,17 @@
     });
   }
 
-  function findByLabelStrategy(strategy) {
+  function findByLabelStrategy(strategy, root) {
     const terms = (strategy?.labelTerms ?? []).map(normalizeText);
     if (!terms.length) return null;
 
-    const labels = Array.from(document.querySelectorAll("label"));
+    const searchRoot = root instanceof Element ? root : document;
+    const labels = Array.from(searchRoot.querySelectorAll("label"));
     for (const label of labels) {
       const labelText = normalizeText(label.textContent);
       if (!terms.some((term) => labelText.includes(term))) continue;
 
-      const candidates = collectLabelCandidates(label, strategy.elementSelector);
+      const candidates = collectLabelCandidates(label, strategy.elementSelector, searchRoot);
       const matched = candidates.find((el) => matchesStrategy(el, strategy));
       if (matched) return matched;
     }
@@ -1450,7 +1551,7 @@
     return null;
   }
 
-  function collectLabelCandidates(label, elementSelector) {
+  function collectLabelCandidates(label, elementSelector, root) {
     const selector = elementSelector || "input, textarea, [contenteditable='true'], button";
     const seen = new Set();
     const candidates = [];
@@ -1464,7 +1565,9 @@
     const forId = label.getAttribute("for");
     if (forId) {
       const linked = document.getElementById(forId);
-      if (linked?.matches(selector)) addCandidate(linked);
+      if (linked?.matches(selector) && (!root || root.contains(linked))) {
+        addCandidate(linked);
+      }
     }
 
     label.querySelectorAll(selector).forEach(addCandidate);
@@ -1482,11 +1585,12 @@
     return candidates;
   }
 
-  function findByFallbackStrategy(strategy) {
+  function findByFallbackStrategy(strategy, root) {
     const selector = strategy?.elementSelector;
     if (!selector) return null;
 
-    const elements = Array.from(document.querySelectorAll(selector));
+    const searchRoot = root instanceof Element ? root : document;
+    const elements = Array.from(searchRoot.querySelectorAll(selector));
     return elements.find((el) => matchesStrategy(el, strategy)) || null;
   }
 

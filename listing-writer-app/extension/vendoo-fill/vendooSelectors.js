@@ -138,6 +138,13 @@
         controlType: "custom_select",
         optionSelectors: DEFAULT_OPTION_SELECTORS,
         allowTypedEntry: false,
+        postCategorySpecificsContainerSelectors: [
+          '[data-testid*="specific"]',
+          '[data-testid*="item-specific"]',
+          '[aria-label*="specific"]',
+          'section[class*="specific"]',
+          'div[class*="specific"]',
+        ],
         labelStrategies: [
           {
             labelTerms: ["size"],
