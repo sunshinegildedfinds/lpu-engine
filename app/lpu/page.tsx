@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useMemo, useState } from "react";
+import { ExtensionPanel } from "@/components/layer3/ExtensionPanel";
 import {
   buildCopyMap,
   buildPayloadMap,
@@ -1064,6 +1065,19 @@ export default function LpuPage() {
           </div>
         )}
       </section>
+
+      <ExtensionPanel
+        key={[
+          payloadMap.platforms.ebay.titleA,
+          payloadMap.platforms.ebay.titleB,
+          payloadMap.platforms.ebay.description,
+        ].join("|")}
+        seed={{
+          titleA: payloadMap.platforms.ebay.titleA,
+          titleB: payloadMap.platforms.ebay.titleB,
+          description: payloadMap.platforms.ebay.description,
+        }}
+      />
     </main>
   );
 }
