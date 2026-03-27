@@ -295,8 +295,8 @@
     openCustomSelectControl(control);
     await wait(140);
 
-    const optionEntries = findVisibleOptionEntries(fieldConfig.optionSelectors ?? []);
-    const matchingOptions = findMatchingOptions(optionEntries, value);
+    const optionDiscovery = findVisibleOptionEntries(fieldConfig.optionSelectors ?? []);
+    const matchingOptions = findMatchingOptions(optionDiscovery.entries, value);
 
     if (matchingOptions.length === 1) {
       clickElement(matchingOptions[0].clickTarget);
@@ -333,43 +333,88 @@
     for (let index = 0; index < stages.length; index += 1) {
       const stageLabel = stages[index];
       const stageLabelsToTry = getStageLabelsForMatch(stageLabel, index, fieldConfig);
-      const pickerRoot = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
-      let optionEntries = findVisibleOptionEntries(
-        fieldConfig.optionSelectors ?? [],
-        pickerRoot ?? undefined
+      const pickerInfo = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
+      if (!pickerInfo?.element) {
+        return {
+          status: "needs_review",
+          reason: `stopped at stage ${index + 1}: picker not found`,
+        };
+      }
+
+      const pickerScope = resolveCategoryOptionScope(
+        pickerInfo.element,
+        fieldConfig.optionSelectors ?? []
       );
+
+      let optionDiscovery = findVisibleOptionEntries(
+        fieldConfig.optionSelectors ?? [],
+        pickerScope ?? pickerInfo.element,
+        "picker_inner_scope"
+      );
+      let optionEntries = optionDiscovery.entries;
       let matches = findMatchingOptionsForStage(optionEntries, stageLabelsToTry);
 
-      if (matches.length !== 1 && pickerRoot) {
+      if (matches.length !== 1) {
         const searchInput = findPickerSearchInput(
-          pickerRoot,
+          pickerScope ?? pickerInfo.element,
           fieldConfig.searchInputSelectors ?? []
         );
 
         if (searchInput) {
           setElementValue(searchInput, stageLabel);
           await wait(140);
-          optionEntries = findVisibleOptionEntries(fieldConfig.optionSelectors ?? [], pickerRoot);
+          optionDiscovery = findVisibleOptionEntries(
+            fieldConfig.optionSelectors ?? [],
+            pickerScope ?? pickerInfo.element,
+            "picker_inner_scope"
+          );
+          optionEntries = optionDiscovery.entries;
           matches = findMatchingOptionsForStage(optionEntries, stageLabelsToTry);
         }
       }
 
       if (matches.length !== 1) {
-        const visiblePreview = buildVisibleOptionsPreview(optionEntries, 3);
-        const stageDiagnostics =
-          index === 0 ? buildStageOneOptionDiagnostics(optionEntries, 10) : "";
         const wanted = stageLabelsToTry[0] ?? stageLabel;
-        const detail = visiblePreview
-          ? `stopped at stage ${index + 1}: wanted "${wanted}"; visible: ${visiblePreview}`
-          : `stopped at stage ${index + 1}: wanted "${wanted}"`;
+        const visiblePreview = buildVisibleOptionsPreview(optionEntries, 8);
+        const aliasTried = index === 0 && stageLabelsToTry.length > 1 ? "yes" : "no";
+        const exactMatchFound = matches.length > 0 ? "yes" : "no";
+        const stageDiagnostics =
+          index === 0 ? buildStageOneOptionDiagnostics(optionEntries, 8) : "";
+        const pickerStatus = pickerInfo?.element ? "found" : "not found";
+        const pickerSelector = pickerInfo?.selector ?? "none";
+
+        const detail =
+          `stopped at stage ${index + 1}: wanted "${wanted}"; ` +
+          `picker: ${pickerStatus} (${pickerSelector}); ` +
+          `raw candidates: ${optionDiscovery.rawCount}; visible candidates: ${optionDiscovery.visibleCount}; ` +
+          `raw sample: ${optionDiscovery.rawSample || "none"}; visible sample: ${optionDiscovery.visibleSample || "none"}; ` +
+          `scope: ${optionDiscovery.scopeMode}; ` +
+          `visible: ${visiblePreview || "none"}; ` +
+          `alias tried: ${aliasTried}; exact match found: ${exactMatchFound}`;
+
         const withDiagnostics =
-          stageDiagnostics && index === 0
-            ? `${detail}; diag: ${stageDiagnostics}`
-            : detail;
+          stageDiagnostics && index === 0 ? `${detail}; nodes: ${stageDiagnostics}` : detail;
         const withChosen =
           stageOneChosenDebug && index > 0
             ? `${withDiagnostics}; stage1 click: ${stageOneChosenDebug}`
             : withDiagnostics;
+
+        console.debug("[LPU Vendoo] Category stage diagnostics", {
+          stageIndex: index + 1,
+          wanted,
+          aliasesTried: stageLabelsToTry,
+          pickerStatus,
+          pickerSelector,
+          scopeMode: optionDiscovery.scopeMode,
+          rawCandidates: optionDiscovery.rawCount,
+          visibleCandidates: optionDiscovery.visibleCount,
+          rawSample: optionDiscovery.rawSample,
+          visibleSample: optionDiscovery.visibleSample,
+          visiblePreview,
+          exactMatchFound: matches.length > 0,
+          stageOneNodes: index === 0 ? stageDiagnostics : "",
+          stageOneClick: stageOneChosenDebug,
+        });
 
         return {
           status: "needs_review",
@@ -411,7 +456,12 @@
     for (const selector of pickerContainerSelectors) {
       const candidates = Array.from(document.querySelectorAll(selector));
       const visible = candidates.find((candidate) => isVisible(candidate));
-      if (visible) return visible;
+      if (visible) {
+        return {
+          element: visible,
+          selector,
+        };
+      }
     }
 
     return null;
@@ -449,7 +499,40 @@
     return null;
   }
 
-  function findVisibleOptionEntries(optionSelectors, root) {
+  function resolveCategoryOptionScope(pickerRoot, optionSelectors) {
+    const selectorsToTry = [
+      '[role="listbox"]',
+      '[data-radix-select-viewport]',
+      '[data-testid*="category"] [class*="list"]',
+      '[data-testid*="category"] [class*="menu"]',
+      '[data-testid*="category"] [class*="option"]',
+      '[data-testid*="category"] [class*="content"]',
+    ];
+
+    let bestScope = pickerRoot;
+    let bestCount = 0;
+
+    for (const selector of selectorsToTry) {
+      const candidates = Array.from(pickerRoot.querySelectorAll(selector));
+      for (const candidate of candidates) {
+        if (!(candidate instanceof Element)) continue;
+        if (!isVisible(candidate)) continue;
+
+        const count = candidate.querySelectorAll(
+          optionSelectors.join(",")
+        ).length;
+
+        if (count > bestCount) {
+          bestCount = count;
+          bestScope = candidate;
+        }
+      }
+    }
+
+    return bestScope;
+  }
+
+  function findVisibleOptionEntries(optionSelectors, root, scopeModeOverride) {
     const selectors = optionSelectors.length
       ? optionSelectors
       : [
@@ -459,20 +542,16 @@
           'li[role="option"]',
         ];
 
-    const seenClickTargets = new Set();
-    const optionEntries = [];
+    const rawEntries = [];
 
     const scope = root ?? document;
+    const scopeMode = scopeModeOverride ?? (root ? "picker_scope" : "document_scope");
     for (const selector of selectors) {
       const candidates = Array.from(scope.querySelectorAll(selector));
       for (const candidate of candidates) {
         if (!(candidate instanceof Element)) continue;
-        if (!isVisible(candidate)) continue;
         const clickTarget = resolveOptionClickTarget(candidate);
-        if (seenClickTargets.has(clickTarget)) continue;
-
-        seenClickTargets.add(clickTarget);
-        optionEntries.push({
+        rawEntries.push({
           element: candidate,
           selector,
           clickTarget,
@@ -480,15 +559,34 @@
       }
     }
 
-    return optionEntries;
+    const seenClickTargets = new Set();
+    const optionEntries = [];
+
+    for (const entry of rawEntries) {
+      const visibleEntry = isVisible(entry.clickTarget) || isVisible(entry.element);
+      if (!visibleEntry) continue;
+      if (seenClickTargets.has(entry.clickTarget)) continue;
+
+      seenClickTargets.add(entry.clickTarget);
+      optionEntries.push(entry);
+    }
+
+    return {
+      entries: optionEntries,
+      rawCount: rawEntries.length,
+      visibleCount: optionEntries.length,
+      rawSample: buildVisibleOptionsPreview(rawEntries, 6),
+      visibleSample: buildVisibleOptionsPreview(optionEntries, 6),
+      scopeMode,
+    };
   }
 
   function findMatchingOptions(optionEntries, value) {
     const normalizedValue = normalizeText(value);
     if (!normalizedValue) return [];
 
-    return optionEntries.filter(
-      (entry) => normalizeText(getOptionTextFromEntry(entry)) === normalizedValue
+    return optionEntries.filter((entry) =>
+      getOptionTextCandidates(entry).some((candidate) => normalizeText(candidate) === normalizedValue)
     );
   }
 
@@ -500,7 +598,9 @@
     if (!normalizedCandidates.length) return [];
 
     return optionEntries.filter((entry) =>
-      normalizedCandidates.includes(normalizeText(getOptionTextFromEntry(entry)))
+      getOptionTextCandidates(entry).some((candidate) =>
+        normalizedCandidates.includes(normalizeText(candidate))
+      )
     );
   }
 
@@ -509,6 +609,36 @@
     if (directText) return directText;
 
     return cleanCategoryStage(getOptionText(entry.clickTarget));
+  }
+
+  function getOptionTextCandidates(entry) {
+    const candidates = [];
+    const seen = new Set();
+
+    function addCandidate(text) {
+      const cleaned = cleanCategoryStage(text);
+      const normalized = normalizeText(cleaned);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push(cleaned);
+    }
+
+    addCandidate(getOptionText(entry.element));
+    addCandidate(getOptionText(entry.clickTarget));
+
+    const labelLikeChildren = Array.from(
+      entry.clickTarget.querySelectorAll("span, div, p, strong, label")
+    );
+
+    for (const child of labelLikeChildren) {
+      if (!(child instanceof Element)) continue;
+      if (!isVisible(child)) continue;
+      const childText = cleanCategoryStage(child.textContent ?? "");
+      if (!childText || childText.length > 90) continue;
+      addCandidate(childText);
+    }
+
+    return candidates;
   }
 
   function getOptionText(option) {
@@ -581,9 +711,10 @@
 
   function describeOptionEntry(entry) {
     const label = cleanCategoryStage(getOptionTextFromEntry(entry));
+    const alternatives = getOptionTextCandidates(entry).slice(0, 3).join(" / ");
     const nodeType = detectOptionNodeType(entry.element);
     const clickType = detectOptionNodeType(entry.clickTarget);
-    return `sel:${entry.selector} node:${nodeType} text:"${label}" click:${clickType}`;
+    return `sel:${entry.selector} node:${nodeType} text:"${label}" alt:"${alternatives}" click:${clickType}`;
   }
 
   function detectOptionNodeType(node) {
@@ -635,13 +766,13 @@
       return true;
     }
 
-    const pickerRoot = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
-    if (!pickerRoot) {
+    const pickerInfo = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
+    if (!pickerInfo?.element) {
       return false;
     }
 
     const selectedCandidates = findVisibleSelectedCategoryOptions(
-      pickerRoot,
+      pickerInfo.element,
       fieldConfig.selectedStateSelectors ?? []
     );
 
@@ -954,6 +1085,17 @@
           ],
           optionSelectors: [
             '[role="option"]',
+            '[data-testid*="category"] button',
+            '[data-testid*="category"] [role="button"]',
+            '[data-testid*="category"] [data-testid*="row"]',
+            '[data-testid*="category"] [data-testid*="item"]',
+            '[data-testid*="category"] li',
+            '[data-testid*="category"] [tabindex]',
+            '[role="treeitem"]',
+            '[role="menuitemradio"]',
+            '[role="listitem"] [role="button"]',
+            'button',
+            '[role="button"]',
             '[role="listbox"] [role="button"]',
             '[role="listbox"] button',
             '[data-radix-select-content] [data-radix-collection-item]',

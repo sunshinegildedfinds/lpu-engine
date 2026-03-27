@@ -65,7 +65,20 @@
 
       category: {
         controlType: "custom_select",
-        optionSelectors: DEFAULT_OPTION_SELECTORS,
+        optionSelectors: [
+          ...DEFAULT_OPTION_SELECTORS,
+          '[data-testid*="category"] button',
+          '[data-testid*="category"] [role="button"]',
+          '[data-testid*="category"] [data-testid*="row"]',
+          '[data-testid*="category"] [data-testid*="item"]',
+          '[data-testid*="category"] li',
+          '[data-testid*="category"] [tabindex]',
+          '[role="treeitem"]',
+          '[role="menuitemradio"]',
+          '[role="listitem"] [role="button"]',
+          'button',
+          '[role="button"]',
+        ],
         stageOneAliases: {
           "Clothing, Shoes & Accessories": [
             "Clothing, Shoes and Accessories",
