@@ -8,6 +8,32 @@ export type ReadyToSendState = {
   summaryLabel: string;
 };
 
+export const STANDARD_FOOTER =
+  "Ships within one day after payment is received. Please see all pictures before purchasing. Stock photo is for reference only and may differ slightly from the actual item.";
+export const JEWELRY_FOOTER =
+  "Ships within one business day after purchase. Displays & boxes shown are not included.";
+
+function normalizeForFooterCheck(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function isJewelryLike(value: string): boolean {
+  const normalized = normalizeForFooterCheck(value);
+  const keywords = [
+    "brooch",
+    "bracelet",
+    "earrings",
+    "necklace",
+    "ring",
+    "pin",
+    "pendant",
+    "jewelry",
+    "parure",
+  ];
+
+  return keywords.some((keyword) => normalized.includes(keyword));
+}
+
 function hasPassedCheck(validation: EbayValidationResult, label: string): boolean {
   const check = validation.checks.find((item) => item.label === label);
   return check?.pass ?? false;
@@ -16,6 +42,7 @@ function hasPassedCheck(validation: EbayValidationResult, label: string): boolea
 export function getReadyToSendState(input: {
   finalTitleSelection: FinalTitleSelection;
   validation: EbayValidationResult;
+  description: string;
 }): ReadyToSendState {
   const reasons: string[] = [];
   const blockingIssues: string[] = [];
@@ -53,11 +80,19 @@ export function getReadyToSendState(input: {
     blockingIssues.push("Measurements block is missing.");
   }
 
-  const footerExists = hasPassedCheck(input.validation, "Standard footer exists");
-  if (footerExists) {
-    reasons.push("Standard footer exists.");
+  const footerSource = `${input.finalTitleSelection.titleA.title ?? ""} ${
+    input.finalTitleSelection.titleB.title ?? ""
+  } ${input.description ?? ""}`;
+  const jewelryItem = isJewelryLike(footerSource);
+  const expectedFooter = jewelryItem ? JEWELRY_FOOTER : STANDARD_FOOTER;
+  const hasExpectedFooter = normalizeForFooterCheck(input.description ?? "").includes(
+    normalizeForFooterCheck(expectedFooter)
+  );
+
+  if (hasExpectedFooter) {
+    reasons.push(jewelryItem ? "Jewelry footer exists." : "Standard footer exists.");
   } else {
-    blockingIssues.push("Standard footer is missing.");
+    blockingIssues.push(jewelryItem ? "Jewelry footer is missing." : "Standard footer is missing.");
   }
 
   const isReadyToSend = blockingIssues.length === 0;

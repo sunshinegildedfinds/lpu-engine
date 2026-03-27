@@ -78,8 +78,9 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       getReadyToSendState({
         finalTitleSelection,
         validation,
+        description: seed.description,
       }),
-    [finalTitleSelection, validation]
+    [finalTitleSelection, seed.description, validation]
   );
 
   const canonicalVendooCategoryPath = useMemo(
