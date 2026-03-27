@@ -330,6 +330,7 @@
     await wait(150);
 
     let stageOneChosenDebug = "";
+    const confirmedStages = [];
     for (let index = 0; index < stages.length; index += 1) {
       const stageLabel = stages[index];
       const stageLabelsToTry = getStageLabelsForMatch(stageLabel, index, fieldConfig);
@@ -348,11 +349,17 @@
 
       let optionDiscovery = findVisibleOptionEntries(
         fieldConfig.optionSelectors ?? [],
-        pickerScope ?? pickerInfo.element,
-        "picker_inner_scope"
+        pickerScope,
+        "category_modal_scope"
       );
       let optionEntries = optionDiscovery.entries;
-      let matches = findMatchingOptionsForStage(optionEntries, stageLabelsToTry);
+      let stageMatchResult = findCategoryStageMatches({
+        optionEntries,
+        stageLabelsToTry,
+        stageIndex: index,
+        confirmedStages,
+      });
+      let matches = stageMatchResult.matches;
 
       if (matches.length !== 1) {
         const searchInput = findPickerSearchInput(
@@ -365,11 +372,17 @@
           await wait(140);
           optionDiscovery = findVisibleOptionEntries(
             fieldConfig.optionSelectors ?? [],
-            pickerScope ?? pickerInfo.element,
-            "picker_inner_scope"
+            pickerScope,
+            "category_modal_scope"
           );
           optionEntries = optionDiscovery.entries;
-          matches = findMatchingOptionsForStage(optionEntries, stageLabelsToTry);
+          stageMatchResult = findCategoryStageMatches({
+            optionEntries,
+            stageLabelsToTry,
+            stageIndex: index,
+            confirmedStages,
+          });
+          matches = stageMatchResult.matches;
         }
       }
 
@@ -382,15 +395,20 @@
           index === 0 ? buildStageOneOptionDiagnostics(optionEntries, 8) : "";
         const pickerStatus = pickerInfo?.element ? "found" : "not found";
         const pickerSelector = pickerInfo?.selector ?? "none";
+        const breadcrumbMode = stageMatchResult.breadcrumbMode ? "yes" : "no";
+        const confirmedPrefix = stageMatchResult.confirmedPrefix || "none";
+        const safeCandidateFound = matches.length > 0 ? "yes" : "no";
 
         const detail =
           `stopped at stage ${index + 1}: wanted "${wanted}"; ` +
+          `prefix "${confirmedPrefix}"; breadcrumb mode: ${breadcrumbMode}; ` +
           `picker: ${pickerStatus} (${pickerSelector}); ` +
           `raw candidates: ${optionDiscovery.rawCount}; visible candidates: ${optionDiscovery.visibleCount}; ` +
           `raw sample: ${optionDiscovery.rawSample || "none"}; visible sample: ${optionDiscovery.visibleSample || "none"}; ` +
           `scope: ${optionDiscovery.scopeMode}; ` +
           `visible: ${visiblePreview || "none"}; ` +
-          `alias tried: ${aliasTried}; exact match found: ${exactMatchFound}`;
+          `alias tried: ${aliasTried}; exact match found: ${exactMatchFound}; ` +
+          `safe candidate found: ${safeCandidateFound}`;
 
         const withDiagnostics =
           stageDiagnostics && index === 0 ? `${detail}; nodes: ${stageDiagnostics}` : detail;
@@ -411,7 +429,10 @@
           rawSample: optionDiscovery.rawSample,
           visibleSample: optionDiscovery.visibleSample,
           visiblePreview,
+          breadcrumbMode: stageMatchResult.breadcrumbMode,
+          confirmedPrefix: stageMatchResult.confirmedPrefix,
           exactMatchFound: matches.length > 0,
+          safeCandidateFound: matches.length > 0,
           stageOneNodes: index === 0 ? stageDiagnostics : "",
           stageOneClick: stageOneChosenDebug,
         });
@@ -427,6 +448,7 @@
       }
 
       clickElement(matches[0].clickTarget);
+      confirmedStages.push(stageLabel);
       await wait(180);
     }
 
@@ -500,13 +522,20 @@
   }
 
   function resolveCategoryOptionScope(pickerRoot, optionSelectors) {
+    const directCategoryRows = pickerRoot.querySelectorAll(
+      'div[data-testid="category-option-dropdown"][role="option"]'
+    ).length;
+    if (directCategoryRows > 0) {
+      return pickerRoot;
+    }
+
     const selectorsToTry = [
       '[role="listbox"]',
       '[data-radix-select-viewport]',
-      '[data-testid*="category"] [class*="list"]',
-      '[data-testid*="category"] [class*="menu"]',
-      '[data-testid*="category"] [class*="option"]',
-      '[data-testid*="category"] [class*="content"]',
+      '[role="document"]',
+      '[class*="list"]',
+      '[class*="menu"]',
+      '[class*="content"]',
     ];
 
     let bestScope = pickerRoot;
@@ -604,7 +633,101 @@
     );
   }
 
+  function findCategoryStageMatches(input) {
+    const { optionEntries, stageLabelsToTry, stageIndex, confirmedStages } = input;
+    const confirmedPrefix = confirmedStages.join(" > ");
+
+    if (stageIndex === 0) {
+      return {
+        matches: findMatchingOptionsForStage(optionEntries, stageLabelsToTry),
+        breadcrumbMode: false,
+        confirmedPrefix,
+      };
+    }
+
+    const breadcrumbMode = isBreadcrumbResultMode(optionEntries);
+    if (!breadcrumbMode) {
+      return {
+        matches: findMatchingOptionsForStage(optionEntries, stageLabelsToTry),
+        breadcrumbMode: false,
+        confirmedPrefix,
+      };
+    }
+
+    return {
+      matches: findBreadcrumbStageMatches({
+        optionEntries,
+        stageLabelsToTry,
+        confirmedStages,
+      }),
+      breadcrumbMode: true,
+      confirmedPrefix,
+    };
+  }
+
+  function isBreadcrumbResultMode(optionEntries) {
+    let breadcrumbLikeCount = 0;
+    for (const entry of optionEntries) {
+      const label = getOptionTextFromEntry(entry);
+      if (cleanCategoryStage(label).includes(">")) {
+        breadcrumbLikeCount += 1;
+      }
+      if (breadcrumbLikeCount >= 1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function findBreadcrumbStageMatches(input) {
+    const { optionEntries, stageLabelsToTry, confirmedStages } = input;
+    const normalizedWanted = stageLabelsToTry.map((label) => normalizeText(label)).filter(Boolean);
+    const normalizedPrefix = confirmedStages.map((stage) => normalizeText(stage)).filter(Boolean);
+    if (!normalizedWanted.length || !normalizedPrefix.length) return [];
+
+    return optionEntries.filter((entry) => {
+      const candidates = getOptionTextCandidates(entry);
+      return candidates.some((candidate) => {
+        const breadcrumbStages = splitCategoryStages(candidate)
+          .map((stage) => normalizeText(stage))
+          .filter(Boolean);
+
+        if (breadcrumbStages.length <= normalizedPrefix.length) return false;
+
+        const prefixStart = findStageSequenceStart(breadcrumbStages, normalizedPrefix);
+        if (prefixStart < 0) return false;
+
+        const nextIndex = prefixStart + normalizedPrefix.length;
+        if (nextIndex >= breadcrumbStages.length) return false;
+
+        return normalizedWanted.includes(breadcrumbStages[nextIndex]);
+      });
+    });
+  }
+
+  function findStageSequenceStart(haystackStages, needleStages) {
+    if (!needleStages.length) return -1;
+    const maxStart = haystackStages.length - needleStages.length;
+    for (let start = 0; start <= maxStart; start += 1) {
+      let allMatch = true;
+      for (let index = 0; index < needleStages.length; index += 1) {
+        if (haystackStages[start + index] !== needleStages[index]) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) return start;
+    }
+    return -1;
+  }
+
   function getOptionTextFromEntry(entry) {
+    const categoryRow = resolveCategoryOptionRow(entry.element) ?? resolveCategoryOptionRow(entry.clickTarget);
+    if (categoryRow) {
+      const rowLabel = getCategoryOptionRowLabel(categoryRow);
+      if (rowLabel) return rowLabel;
+    }
+
     const directText = cleanCategoryStage(getOptionText(entry.element));
     if (directText) return directText;
 
@@ -1097,10 +1220,10 @@
             ],
           },
           pickerContainerSelectors: [
+            '[aria-label*="Category Selector"]',
             '[role="dialog"]',
             '[aria-modal="true"]',
             '[data-radix-dialog-content]',
-            '[data-testid*="category"]',
             ".modal",
           ],
           searchInputSelectors: [

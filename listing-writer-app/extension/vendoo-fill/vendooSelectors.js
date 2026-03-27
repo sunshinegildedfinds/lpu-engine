@@ -78,10 +78,10 @@
           ],
         },
         pickerContainerSelectors: [
+          '[aria-label*="Category Selector"]',
           '[role="dialog"]',
           '[aria-modal="true"]',
           '[data-radix-dialog-content]',
-          '[data-testid*="category"]',
           '.modal',
         ],
         searchInputSelectors: [
