@@ -22,7 +22,13 @@
     },
     {
       "matches": ["https://web.vendoo.co/*"],
-      "js": ["vendooSelectors.js", "content-vendoo.js"],
+      "js": [
+        "vendooSelectors.js",
+        "vendooActionModel.js",
+        "vendooFieldDefinitions.js",
+        "vendooAdapters.js",
+        "content-vendoo.js"
+      ],
       "run_at": "document_idle"
     }
   ]

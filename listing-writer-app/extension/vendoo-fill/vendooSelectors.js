@@ -16,6 +16,7 @@
     ebay: {
       title: {
         controlType: "text",
+        adapterType: "text_input",
         labelStrategies: [
           {
             labelTerms: ["ebay title", "title"],
@@ -35,6 +36,7 @@
 
       description: {
         controlType: "textarea",
+        adapterType: "textarea",
         labelStrategies: [
           {
             labelTerms: ["ebay description", "description"],
@@ -65,6 +67,7 @@
 
       category: {
         controlType: "custom_select",
+        adapterType: "modal_picker",
         optionSelectors: [
           'div[data-testid="category-option-dropdown"][role="option"]',
           'div[data-testid="category-option-dropdown"]',
@@ -115,6 +118,7 @@
 
       brand: {
         controlType: "custom_select",
+        adapterType: "react_select",
         optionSelectors: DEFAULT_OPTION_SELECTORS,
         allowTypedEntry: true,
         labelStrategies: [
@@ -136,6 +140,7 @@
 
       size: {
         controlType: "custom_select",
+        adapterType: "react_select",
         optionSelectors: DEFAULT_OPTION_SELECTORS,
         allowTypedEntry: false,
         postCategorySpecificsContainerSelectors: [
@@ -172,6 +177,7 @@
 
       color: {
         controlType: "custom_select",
+        adapterType: "react_select",
         optionSelectors: DEFAULT_OPTION_SELECTORS,
         allowTypedEntry: false,
         labelStrategies: [

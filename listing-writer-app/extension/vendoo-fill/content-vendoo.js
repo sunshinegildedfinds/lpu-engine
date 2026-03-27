@@ -146,126 +146,86 @@
     }
 
     const selectors = getSelectorMap().ebay;
-    const fillSteps = [
-      { key: "title", label: "eBay title", value: pickEbayTitle(payload), selectorConfig: selectors.title },
-      {
-        key: "description",
-        label: "eBay description",
-        value: payload?.marketplaces?.ebay?.description ?? "",
-        selectorConfig: selectors.description,
-      },
-      {
-        key: "category",
-        label: "eBay category",
-        value: pickEbayCategoryPath(payload),
-        selectorConfig: selectors.category,
-      },
-      { key: "brand", label: "eBay brand", value: pickEbayBrand(payload), selectorConfig: selectors.brand },
-      { key: "size", label: "eBay size", value: pickEbaySize(payload), selectorConfig: selectors.size },
-      { key: "color", label: "eBay color", value: pickEbayColor(payload), selectorConfig: selectors.color },
-    ];
+    const actionModel = getActionModel();
+    const fieldDefinitions = getFieldDefinitions();
+    const adapters = getAdapters();
 
-    const filled = [];
-    const needsReview = [];
-    const skippedForSafety = [];
+    const fillSteps = fieldDefinitions
+      .buildEbayFieldDefinitions(payload, selectors, {
+        pickEbayTitle,
+        pickEbayCategoryPath,
+        pickEbayBrand,
+        pickEbaySize,
+        pickEbayColor,
+      })
+      .map((definition) => {
+        const action = actionModel.createFieldAction(definition);
+        return {
+          ...action,
+          value: action.payloadValue,
+        };
+      });
+
+    const runState = actionModel.createRunState();
     const usedElements = new Set();
-    const stepOutcomes = {};
 
     for (const step of fillSteps) {
-      const rawValue = typeof step.value === "string" ? step.value.trim() : "";
-      if (!rawValue) {
-        needsReview.push(`${step.label} (payload missing)`);
-        stepOutcomes[step.key] = "needs_review";
-        continue;
-      }
+      const result = await adapters.runVendooFieldAction(step, {
+        resolveField(action) {
+          return findElementBySelectorMap(action.selectorConfig);
+        },
+        isUsed(field) {
+          return usedElements.has(field);
+        },
+        markUsed(field) {
+          usedElements.add(field);
+        },
+        setValue(field, value) {
+          setElementValue(field, value);
+        },
+        normalizeCustomSelectValue(action, value) {
+          return getCustomSelectAttemptValue(action.key, value);
+        },
+        async fillReactSelect(action, control, value) {
+          return tryFillCustomSelect({
+            step: action,
+            value,
+            control,
+            usedElements,
+          });
+        },
+        async fillModalPicker(action, control, value) {
+          const result = await tryFillCategoryByStages({
+            value,
+            control,
+            fieldConfig: action.selectorConfig ?? {},
+          });
 
-      const field = findElementBySelectorMap(step.selectorConfig);
-      if (!field) {
-        needsReview.push(step.label);
-        stepOutcomes[step.key] = "needs_review";
-        continue;
-      }
+          if (result.status === "filled") {
+            usedElements.add(control);
+          }
 
-      if (usedElements.has(field)) {
-        skippedForSafety.push(`${step.label} (collision prevention)`);
-        stepOutcomes[step.key] = "skipped_for_safety";
-        continue;
-      }
+          return result;
+        },
+      });
 
-      if (step.selectorConfig?.controlType === "custom_select") {
-        const valueResult = getCustomSelectAttemptValue(step.key, rawValue);
-        if (!valueResult.value) {
-          needsReview.push(`${step.label} (${valueResult.reason})`);
-          stepOutcomes[step.key] = "needs_review";
-          continue;
-        }
-
-        const customSelectResult = await tryFillCustomSelect({
-          step,
-          value: valueResult.value,
-          control: field,
-          usedElements,
-        });
-
-        if (customSelectResult.status === "filled") {
-          filled.push(step.label);
-          stepOutcomes[step.key] = "filled";
-          continue;
-        }
-
-        if (customSelectResult.status === "needs_review") {
-          needsReview.push(`${step.label} (${customSelectResult.reason})`);
-          stepOutcomes[step.key] = "needs_review";
-          continue;
-        }
-
-        skippedForSafety.push(`${step.label} (${customSelectResult.reason})`);
-        stepOutcomes[step.key] = "skipped_for_safety";
-        continue;
-      }
-
-      if (step.selectorConfig?.controlType === "text" && !field.matches("input")) {
-        skippedForSafety.push(`${step.label} (unexpected control type)`);
-        stepOutcomes[step.key] = "skipped_for_safety";
-        continue;
-      }
-
-      if (
-        step.selectorConfig?.controlType === "textarea" &&
-        !field.matches('textarea, [contenteditable="true"]')
-      ) {
-        skippedForSafety.push(`${step.label} (unexpected control type)`);
-        stepOutcomes[step.key] = "skipped_for_safety";
-        continue;
-      }
-
-      setElementValue(field, rawValue);
-      usedElements.add(field);
-      filled.push(step.label);
-      stepOutcomes[step.key] = "filled";
+      actionModel.applyActionResult(runState, step, result);
     }
 
     await retrySizeAfterCategorySuccess({
       fillSteps,
-      stepOutcomes,
+      stepOutcomes: runState.stepOutcomes,
       usedElements,
-      filled,
-      needsReview,
-      skippedForSafety,
+      filled: runState.filled,
+      needsReview: runState.needsReview,
+      skippedForSafety: runState.skippedForSafety,
     });
-
-    const parts = [];
-    if (filled.length) parts.push(`Filled: ${filled.join(", ")}`);
-    if (needsReview.length) parts.push(`Needs review: ${needsReview.join(", ")}`);
-    if (skippedForSafety.length) {
-      parts.push(`Skipped for safety: ${skippedForSafety.join(", ")}`);
-    }
 
     reportEl.textContent = "Fill run completed.";
     renderLastRunResults({
-      filled,
-      needsReview,
-      skippedForSafety,
+      filled: runState.filled,
+      needsReview: runState.needsReview,
+      skippedForSafety: runState.skippedForSafety,
     });
     await refreshPanel();
   }
@@ -671,7 +631,7 @@
       };
     }
 
-    const breadcrumbMode = isBreadcrumbResultMode(optionEntries);
+    const breadcrumbMode = isBreadcrumbResultMode(optionEntries, confirmedStages);
     if (!breadcrumbMode) {
       return {
         matches: findMatchingOptionsForStage(optionEntries, stageLabelsToTry),
@@ -691,17 +651,35 @@
     };
   }
 
-  function isBreadcrumbResultMode(optionEntries) {
-    let breadcrumbLikeCount = 0;
+  function isBreadcrumbResultMode(optionEntries, confirmedStages) {
+    const normalizedConfirmedPrefix = normalizeText(confirmedStages.join(" > "));
+
     for (const entry of optionEntries) {
-      const label = getOptionTextFromEntry(entry);
-      if (cleanCategoryStage(label).includes(">")) {
-        breadcrumbLikeCount += 1;
-      }
-      if (breadcrumbLikeCount >= 1) {
-        return true;
+      const candidates = getOptionTextCandidates(entry);
+      for (const candidate of candidates) {
+        const cleaned = cleanCategoryStage(candidate);
+        const normalized = normalizeText(cleaned);
+        if (!normalized) continue;
+
+        if (containsBreadcrumbSeparator(cleaned)) {
+          return true;
+        }
+
+        const segments = splitCategoryPathSegments(cleaned);
+        if (segments.length >= 3) {
+          return true;
+        }
+
+        if (
+          normalizedConfirmedPrefix &&
+          normalized.includes(normalizedConfirmedPrefix) &&
+          normalized !== normalizedConfirmedPrefix
+        ) {
+          return true;
+        }
       }
     }
+
     return false;
   }
 
@@ -714,7 +692,7 @@
     return optionEntries.filter((entry) => {
       const candidates = getOptionTextCandidates(entry);
       return candidates.some((candidate) => {
-        const breadcrumbStages = splitCategoryStages(candidate)
+        const breadcrumbStages = splitCategoryPathSegments(candidate)
           .map((stage) => normalizeText(stage))
           .filter(Boolean);
 
@@ -729,6 +707,17 @@
         return normalizedWanted.includes(breadcrumbStages[nextIndex]);
       });
     });
+  }
+
+  function splitCategoryPathSegments(value) {
+    const normalized = String(value ?? "")
+      .replace(/[›»]/g, ">")
+      .replace(/\s*>\s*/g, " > ");
+    return splitCategoryStages(normalized);
+  }
+
+  function containsBreadcrumbSeparator(value) {
+    return /[>›»]/.test(String(value ?? ""));
   }
 
   function findStageSequenceStart(haystackStages, needleStages) {
@@ -750,6 +739,14 @@
   function getOptionTextFromEntry(entry) {
     const categoryRow = resolveCategoryOptionRow(entry.element) ?? resolveCategoryOptionRow(entry.clickTarget);
     if (categoryRow) {
+      const rowCandidates = getOptionTextCandidates(entry);
+      const breadcrumbCandidate = rowCandidates.find((candidate) =>
+        containsBreadcrumbSeparator(candidate)
+      );
+      if (breadcrumbCandidate) {
+        return cleanCategoryStage(breadcrumbCandidate);
+      }
+
       const rowLabel = getCategoryOptionRowLabel(categoryRow);
       if (rowLabel) return rowLabel;
     }
@@ -1503,11 +1500,172 @@
     return el.getClientRects().length > 0;
   }
 
+  function getActionModel() {
+    return window.LPU_VENDOO_ACTION_MODEL ?? {
+      createFieldAction(input) {
+        const selectorConfig = input.selectorConfig ?? {};
+        const controlType = selectorConfig.controlType ?? "text";
+        return {
+          marketplace: input.marketplace,
+          key: input.key,
+          label: input.label,
+          payloadValue: input.payloadValue,
+          selectorConfig,
+          controlType,
+          adapterType: selectorConfig.adapterType ?? controlType,
+        };
+      },
+      createRunState() {
+        return {
+          filled: [],
+          needsReview: [],
+          skippedForSafety: [],
+          stepOutcomes: {},
+          diagnosticsByField: {},
+        };
+      },
+      applyActionResult(runState, action, result) {
+        const status = result?.status ?? "needs_review";
+        const reason = result?.reason ? ` (${result.reason})` : "";
+        runState.stepOutcomes[action.key] = status;
+        runState.diagnosticsByField[action.key] = result?.diagnostics ?? null;
+
+        if (status === "filled") {
+          runState.filled.push(action.label);
+          return;
+        }
+
+        if (status === "skipped_for_safety") {
+          runState.skippedForSafety.push(`${action.label}${reason}`);
+          return;
+        }
+
+        runState.needsReview.push(`${action.label}${reason}`);
+      },
+    };
+  }
+
+  function getFieldDefinitions() {
+    return window.LPU_VENDOO_FIELD_DEFINITIONS ?? {
+      buildEbayFieldDefinitions(payload, selectors, valuePickers) {
+        return [
+          {
+            marketplace: "ebay",
+            key: "title",
+            label: "eBay title",
+            payloadValue: valuePickers.pickEbayTitle(payload),
+            selectorConfig: selectors.title,
+          },
+          {
+            marketplace: "ebay",
+            key: "description",
+            label: "eBay description",
+            payloadValue: payload?.marketplaces?.ebay?.description ?? "",
+            selectorConfig: selectors.description,
+          },
+          {
+            marketplace: "ebay",
+            key: "category",
+            label: "eBay category",
+            payloadValue: valuePickers.pickEbayCategoryPath(payload),
+            selectorConfig: selectors.category,
+          },
+          {
+            marketplace: "ebay",
+            key: "brand",
+            label: "eBay brand",
+            payloadValue: valuePickers.pickEbayBrand(payload),
+            selectorConfig: selectors.brand,
+          },
+          {
+            marketplace: "ebay",
+            key: "size",
+            label: "eBay size",
+            payloadValue: valuePickers.pickEbaySize(payload),
+            selectorConfig: selectors.size,
+          },
+          {
+            marketplace: "ebay",
+            key: "color",
+            label: "eBay color",
+            payloadValue: valuePickers.pickEbayColor(payload),
+            selectorConfig: selectors.color,
+          },
+        ];
+      },
+    };
+  }
+
+  function getAdapters() {
+    return window.LPU_VENDOO_ADAPTERS ?? {
+      async runVendooFieldAction(action, context) {
+        const rawValue = typeof action.payloadValue === "string" ? action.payloadValue.trim() : "";
+        if (!rawValue) {
+          return { status: "needs_review", reason: "payload missing" };
+        }
+
+        const adapterType =
+          action.adapterType ?? action.selectorConfig?.adapterType ?? action.controlType;
+
+        if (adapterType === "textarea") {
+          const field = context.resolveField(action);
+          if (!field) return { status: "needs_review", reason: "field not found" };
+          if (context.isUsed(field)) {
+            return { status: "skipped_for_safety", reason: "collision prevention" };
+          }
+          if (!field.matches('textarea, [contenteditable="true"]')) {
+            return { status: "skipped_for_safety", reason: "unexpected control type" };
+          }
+          context.setValue(field, rawValue);
+          context.markUsed(field);
+          return { status: "filled" };
+        }
+
+        if (adapterType === "text" || adapterType === "text_input") {
+          const field = context.resolveField(action);
+          if (!field) return { status: "needs_review", reason: "field not found" };
+          if (context.isUsed(field)) {
+            return { status: "skipped_for_safety", reason: "collision prevention" };
+          }
+          if (!field.matches("input")) {
+            return { status: "skipped_for_safety", reason: "unexpected control type" };
+          }
+          context.setValue(field, rawValue);
+          context.markUsed(field);
+          return { status: "filled" };
+        }
+
+        if (adapterType === "modal_picker") {
+          const field = context.resolveField(action);
+          if (!field) return { status: "needs_review", reason: "field not found" };
+          if (context.isUsed(field)) {
+            return { status: "skipped_for_safety", reason: "collision prevention" };
+          }
+          return context.fillModalPicker(action, field, rawValue);
+        }
+
+        const field = context.resolveField(action);
+        if (!field) return { status: "needs_review", reason: "field not found" };
+        if (context.isUsed(field)) {
+          return { status: "skipped_for_safety", reason: "collision prevention" };
+        }
+
+        const valueResult = context.normalizeCustomSelectValue(action, rawValue);
+        if (!valueResult.value) {
+          return { status: "needs_review", reason: valueResult.reason || "invalid value" };
+        }
+
+        return context.fillReactSelect(action, field, valueResult.value);
+      },
+    };
+  }
+
   function getSelectorMap() {
     return window.LPU_VENDOO_SELECTORS ?? {
       ebay: {
         title: {
           controlType: "text",
+          adapterType: "text_input",
           labelStrategies: [
             {
               labelTerms: ["ebay title", "title"],
@@ -1526,6 +1684,7 @@
         },
         description: {
           controlType: "textarea",
+          adapterType: "textarea",
           labelStrategies: [
             {
               labelTerms: ["ebay description", "description"],
@@ -1555,6 +1714,7 @@
         },
         category: {
           controlType: "custom_select",
+          adapterType: "modal_picker",
           allowTypedEntry: false,
           stageOneAliases: {
             "Clothing, Shoes & Accessories": [
@@ -1604,6 +1764,7 @@
         },
         brand: {
           controlType: "custom_select",
+          adapterType: "react_select",
           allowTypedEntry: true,
           optionSelectors: [
             '[role="option"]',
@@ -1633,6 +1794,7 @@
         },
         size: {
           controlType: "custom_select",
+          adapterType: "react_select",
           allowTypedEntry: false,
           postCategorySpecificsContainerSelectors: [
             '[data-testid*="specific"]',
@@ -1677,6 +1839,7 @@
         },
         color: {
           controlType: "custom_select",
+          adapterType: "react_select",
           allowTypedEntry: false,
           optionSelectors: [
             '[role="option"]',
