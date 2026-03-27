@@ -1027,61 +1027,84 @@
     await wait(220);
 
     const sizeDiscovery = await findPostCategorySizeField(sizeStep.selectorConfig);
-    const field = sizeDiscovery.field;
-    if (!field) {
+    if (!sizeDiscovery.sizeControl) {
       needsReview.push(
-        `${sizeStep.label} (retry: specifics found: ${sizeDiscovery.specificsFound ? "yes" : "no"}; size control found: no)`
+        `${sizeStep.label} (retry: specifics found: ${sizeDiscovery.specificsFound ? "yes" : "no"}; ` +
+          `size field found: ${sizeDiscovery.sizeFieldFound ? "yes" : "no"}; size control found: no)`
       );
       stepOutcomes.size = "needs_review";
       return;
     }
 
-    if (usedElements.has(field)) {
+    if (usedElements.has(sizeDiscovery.sizeControl)) {
       skippedForSafety.push(`${sizeStep.label} (retry: collision prevention)`);
       stepOutcomes.size = "skipped_for_safety";
       return;
     }
 
-    const customSelectResult = await tryFillCustomSelect({
-      step: sizeStep,
+    const sizeFillResult = await tryFillSizeReactSelect({
       value: rawValue,
-      control: field,
-      usedElements,
+      sizeDiscovery,
+      sizeConfig: sizeStep.selectorConfig ?? {},
     });
 
-    if (customSelectResult.status === "filled") {
+    if (sizeFillResult.status === "filled") {
+      usedElements.add(sizeDiscovery.sizeControl);
       filled.push(sizeStep.label);
       stepOutcomes.size = "filled";
       return;
     }
 
-    if (customSelectResult.status === "needs_review") {
+    if (sizeFillResult.status === "needs_review") {
       needsReview.push(
-        `${sizeStep.label} (retry: specifics found: yes; size control found: yes; ` +
-          `visible options: ${customSelectResult.diagnostics?.visibleSample || "none"}; ` +
-          `exact match found: ${customSelectResult.diagnostics?.exactMatchFound ? "yes" : "no"})`
+        `${sizeStep.label} (retry: specifics found: ${sizeDiscovery.specificsFound ? "yes" : "no"}; ` +
+          `size field found: ${sizeDiscovery.sizeFieldFound ? "yes" : "no"}; size control found: yes; ` +
+          `listbox found: ${sizeFillResult.diagnostics?.listboxFound ? "yes" : "no"}; ` +
+          `visible options: ${sizeFillResult.diagnostics?.visibleOptionsSample || "none"}; ` +
+          `exact match found: ${sizeFillResult.diagnostics?.exactMatchFound ? "yes" : "no"})`
       );
       stepOutcomes.size = "needs_review";
       return;
     }
 
-    skippedForSafety.push(`${sizeStep.label} (retry: ${customSelectResult.reason})`);
+    skippedForSafety.push(`${sizeStep.label} (retry: ${sizeFillResult.reason})`);
     stepOutcomes.size = "skipped_for_safety";
   }
 
   async function findPostCategorySizeField(sizeConfig) {
     const selectors = sizeConfig?.postCategorySpecificsContainerSelectors ?? [];
     let specificsFound = false;
+    let sizeFieldFound = false;
 
     for (let attempt = 0; attempt < 6; attempt += 1) {
       const specificsContainer = findVisibleSpecificsContainer(selectors);
       if (specificsContainer) {
         specificsFound = true;
-        const sizeField = findElementBySelectorMap(sizeConfig, specificsContainer);
-        if (sizeField) {
+
+        const sizeFieldBlock = findSizeFieldBlock(specificsContainer, sizeConfig);
+        if (sizeFieldBlock) {
+          sizeFieldFound = true;
+          const sizeControl = findSizeReactSelectControl(sizeFieldBlock, sizeConfig);
+          const sizeHiddenInput = findSizeHiddenInput(sizeFieldBlock, sizeConfig);
+          if (sizeControl) {
+            return {
+              specificsFound: true,
+              sizeFieldFound: true,
+              sizeFieldBlock,
+              sizeControl,
+              sizeHiddenInput,
+            };
+          }
+        }
+
+        const fallbackField = findElementBySelectorMap(sizeConfig, specificsContainer);
+        if (fallbackField) {
           return {
-            field: sizeField,
             specificsFound: true,
+            sizeFieldFound,
+            sizeFieldBlock: sizeFieldBlock ?? null,
+            sizeControl: fallbackField,
+            sizeHiddenInput: null,
           };
         }
       }
@@ -1090,8 +1113,82 @@
     }
 
     return {
-      field: null,
       specificsFound,
+      sizeFieldFound,
+      sizeFieldBlock: null,
+      sizeControl: null,
+      sizeHiddenInput: null,
+    };
+  }
+
+  async function tryFillSizeReactSelect(input) {
+    const { value, sizeDiscovery, sizeConfig } = input;
+    const sizeControl = sizeDiscovery.sizeControl;
+    const sizeHiddenInput = sizeDiscovery.sizeHiddenInput;
+    const sizeFieldBlock = sizeDiscovery.sizeFieldBlock;
+    const normalizedValue = normalizeText(value);
+
+    if (!normalizedValue) {
+      return { status: "needs_review", reason: "payload missing", diagnostics: {} };
+    }
+
+    openCustomSelectControl(sizeControl);
+    await wait(160);
+
+    const listboxInfo = findSizeListbox(sizeControl, sizeFieldBlock, sizeConfig);
+    if (!listboxInfo.element) {
+      return {
+        status: "needs_review",
+        reason: "size listbox not found",
+        diagnostics: {
+          listboxFound: false,
+          visibleOptionsSample: "none",
+          exactMatchFound: false,
+        },
+      };
+    }
+
+    const options = findVisibleSizeOptions(listboxInfo.element, sizeConfig);
+    const matchingOptions = options.filter(
+      (option) => normalizeText(option.label) === normalizedValue
+    );
+
+    if (matchingOptions.length !== 1) {
+      return {
+        status: "needs_review",
+        reason: matchingOptions.length > 1 ? "multiple exact size matches" : "no exact size match",
+        diagnostics: {
+          listboxFound: true,
+          visibleOptionsSample: buildSizeOptionsSample(options, 6),
+          exactMatchFound: matchingOptions.length > 0,
+        },
+      };
+    }
+
+    clickElement(matchingOptions[0].clickTarget);
+    await wait(140);
+
+    const confirmedValue = readSizeSelectionValue(sizeControl, sizeHiddenInput);
+    const isConfirmed = normalizeText(confirmedValue) === normalizedValue;
+    if (!isConfirmed) {
+      return {
+        status: "needs_review",
+        reason: "size selection not confirmed",
+        diagnostics: {
+          listboxFound: true,
+          visibleOptionsSample: buildSizeOptionsSample(options, 6),
+          exactMatchFound: true,
+        },
+      };
+    }
+
+    return {
+      status: "filled",
+      diagnostics: {
+        listboxFound: true,
+        visibleOptionsSample: buildSizeOptionsSample(options, 6),
+        exactMatchFound: true,
+      },
     };
   }
 
@@ -1127,6 +1224,160 @@
     }
 
     return candidates[0] ?? null;
+  }
+
+  function findSizeFieldBlock(specificsContainer, sizeConfig) {
+    const hiddenInput = findSizeHiddenInput(specificsContainer, sizeConfig);
+    if (hiddenInput) {
+      const hiddenBlock = hiddenInput.closest("div, section, fieldset");
+      if (hiddenBlock instanceof Element) return hiddenBlock;
+    }
+
+    const labels = Array.from(specificsContainer.querySelectorAll("label"));
+    const sizeLabel = labels.find((label) => {
+      const text = normalizeText(label.innerText || label.textContent || "");
+      return text === "size" || (text.startsWith("size ") && !text.includes("type"));
+    });
+
+    if (sizeLabel) {
+      const labelBlock = sizeLabel.closest("div, section, fieldset");
+      if (labelBlock instanceof Element) return labelBlock;
+    }
+
+    const blocks = Array.from(specificsContainer.querySelectorAll("div, section, fieldset"));
+    return (
+      blocks.find((block) => {
+        if (!(block instanceof Element)) return false;
+        const text = normalizeText(block.innerText || block.textContent || "");
+        if (!text.includes("size") || text.includes("size type")) return false;
+        return !!block.querySelector(".react-select__control");
+      }) ?? null
+    );
+  }
+
+  function findSizeHiddenInput(root, sizeConfig) {
+    if (!(root instanceof Element)) return null;
+    const includes = (sizeConfig?.sizeHiddenInputNameIncludes ?? ["_size"]).map((term) =>
+      normalizeText(term)
+    );
+    const inputs = Array.from(root.querySelectorAll("input[name]"));
+    return (
+      inputs.find((input) => {
+        if (!(input instanceof HTMLInputElement)) return false;
+        const name = normalizeText(input.name || "");
+        if (!name) return false;
+        if (name.includes("size type") || name.includes("_size_type")) return false;
+        return includes.some((term) => name.includes(term));
+      }) ?? null
+    );
+  }
+
+  function findSizeReactSelectControl(sizeFieldBlock, sizeConfig) {
+    if (!(sizeFieldBlock instanceof Element)) return null;
+    const selectors = sizeConfig?.reactSelectControlSelectors ?? [".react-select__control"];
+    for (const selector of selectors) {
+      const control = sizeFieldBlock.querySelector(selector);
+      if (control instanceof Element && isVisible(control)) {
+        return control;
+      }
+    }
+    return null;
+  }
+
+  function findSizeListbox(sizeControl, sizeFieldBlock, sizeConfig) {
+    const textInput = sizeControl.querySelector("input[aria-controls], input[aria-owns]");
+    const controlledId =
+      textInput?.getAttribute("aria-controls") || textInput?.getAttribute("aria-owns") || "";
+    if (controlledId) {
+      const controlledElement = document.getElementById(controlledId);
+      if (controlledElement instanceof Element && isVisible(controlledElement)) {
+        return { element: controlledElement, source: "aria-controls" };
+      }
+    }
+
+    const selectors = sizeConfig?.reactSelectMenuSelectors ?? [
+      ".react-select__menu [role='listbox']",
+      ".react-select__menu",
+      "[id$='-listbox']",
+    ];
+
+    const inField = findFirstVisibleBySelectors(sizeFieldBlock, selectors);
+    if (inField) return { element: inField, source: "field-scope" };
+
+    const inDocument = findAllVisibleBySelectors(document, selectors);
+    if (inDocument.length === 1) {
+      return { element: inDocument[0], source: "document-single" };
+    }
+
+    return { element: null, source: "none" };
+  }
+
+  function findVisibleSizeOptions(listbox, sizeConfig) {
+    if (!(listbox instanceof Element)) return [];
+    const selectors = sizeConfig?.reactSelectOptionSelectors ?? ["[role='option']", ".react-select__option"];
+    const candidates = [];
+    const seen = new Set();
+    for (const selector of selectors) {
+      const elements = Array.from(listbox.querySelectorAll(selector));
+      for (const element of elements) {
+        if (!(element instanceof Element)) continue;
+        if (!isVisible(element)) continue;
+        const clickTarget = element.closest("[role='option'], .react-select__option") ?? element;
+        if (seen.has(clickTarget)) continue;
+        seen.add(clickTarget);
+        const label = cleanCategoryStage(
+          (clickTarget.innerText || clickTarget.textContent || "").trim()
+        );
+        if (!label) continue;
+        candidates.push({ clickTarget, label });
+      }
+    }
+    return candidates;
+  }
+
+  function readSizeSelectionValue(sizeControl, sizeHiddenInput) {
+    if (sizeHiddenInput instanceof HTMLInputElement && sizeHiddenInput.value) {
+      return sizeHiddenInput.value;
+    }
+
+    const singleValue = sizeControl.querySelector(".react-select__single-value");
+    if (singleValue instanceof Element) {
+      const text = cleanCategoryStage(singleValue.innerText || singleValue.textContent || "");
+      if (text) return text;
+    }
+
+    return cleanCategoryStage(sizeControl.innerText || sizeControl.textContent || "");
+  }
+
+  function buildSizeOptionsSample(options, maxItems) {
+    if (!options.length) return "none";
+    const values = [];
+    for (let index = 0; index < options.length && values.length < maxItems; index += 1) {
+      values.push(`"${options[index].label}"`);
+    }
+    return values.join(", ");
+  }
+
+  function findFirstVisibleBySelectors(root, selectors) {
+    if (!(root instanceof Element) && root !== document) return null;
+    const visible = findAllVisibleBySelectors(root, selectors);
+    return visible[0] ?? null;
+  }
+
+  function findAllVisibleBySelectors(root, selectors) {
+    const visible = [];
+    const seen = new Set();
+    for (const selector of selectors) {
+      const elements = Array.from(root.querySelectorAll(selector));
+      for (const element of elements) {
+        if (!(element instanceof Element)) continue;
+        if (!isVisible(element)) continue;
+        if (seen.has(element)) continue;
+        seen.add(element);
+        visible.push(element);
+      }
+    }
+    return visible;
   }
 
   function clearStepResultsFromLists(stepLabel, lists) {
@@ -1390,6 +1641,14 @@
             'section[class*="specific"]',
             'div[class*="specific"]',
           ],
+          reactSelectControlSelectors: [".react-select__control"],
+          reactSelectMenuSelectors: [
+            ".react-select__menu [role='listbox']",
+            ".react-select__menu",
+            "[id$='-listbox']",
+          ],
+          reactSelectOptionSelectors: ["[role='option']", ".react-select__option"],
+          sizeHiddenInputNameIncludes: ["_size"],
           optionSelectors: [
             '[role="option"]',
             '[role="listbox"] [role="button"]',

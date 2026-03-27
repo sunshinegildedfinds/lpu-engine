@@ -145,6 +145,14 @@
           'section[class*="specific"]',
           'div[class*="specific"]',
         ],
+        reactSelectControlSelectors: [".react-select__control"],
+        reactSelectMenuSelectors: [
+          ".react-select__menu [role='listbox']",
+          ".react-select__menu",
+          "[id$='-listbox']",
+        ],
+        reactSelectOptionSelectors: ["[role='option']", ".react-select__option"],
+        sizeHiddenInputNameIncludes: ["_size"],
         labelStrategies: [
           {
             labelTerms: ["size"],
