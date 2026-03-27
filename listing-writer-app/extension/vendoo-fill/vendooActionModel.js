@@ -10,6 +10,7 @@
       key: input.key,
       label: input.label,
       payloadValue: input.payloadValue,
+      valuePolicy: input.valuePolicy ?? null,
       selectorConfig,
       controlType,
       adapterType: selectorConfig.adapterType ?? controlType,

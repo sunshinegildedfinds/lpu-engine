@@ -143,6 +143,8 @@
         adapterType: "react_select",
         optionSelectors: DEFAULT_OPTION_SELECTORS,
         allowTypedEntry: false,
+        allowValueAdaptation: true,
+        valueAdaptationType: "alpha_apparel_size",
         postCategorySpecificsContainerSelectors: [
           '[data-testid*="specific"]',
           '[data-testid*="item-specific"]',

@@ -37,6 +37,10 @@
         label: "eBay size",
         payloadValue: valuePickers.pickEbaySize(payload),
         selectorConfig: selectors.size,
+        valuePolicy: {
+          allowValueAdaptation: true,
+          valueAdaptationType: "alpha_apparel_size",
+        },
       },
       {
         marketplace: "ebay",

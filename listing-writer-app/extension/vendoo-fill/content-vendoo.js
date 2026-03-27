@@ -1092,6 +1092,7 @@
 
     const sizeFillResult = await tryFillSizeReactSelect({
       value: rawValue,
+      sizeAction: sizeStep,
       sizeDiscovery,
       sizeConfig: sizeStep.selectorConfig ?? {},
     });
@@ -1107,6 +1108,8 @@
       needsReview.push(
         `${sizeStep.label} (retry: specifics found: ${sizeDiscovery.specificsFound ? "yes" : "no"}; ` +
           `size field found: ${sizeDiscovery.sizeFieldFound ? "yes" : "no"}; size control found: yes; ` +
+          `raw: "${sizeFillResult.diagnostics?.rawValue ?? rawValue}"; ` +
+          `adapted target: ${sizeFillResult.diagnostics?.adaptedTarget || "none"}; ` +
           `listbox found: ${sizeFillResult.diagnostics?.listboxFound ? "yes" : "no"}; ` +
           `visible options: ${sizeFillResult.diagnostics?.visibleOptionsSample || "none"}; ` +
           `exact match found: ${sizeFillResult.diagnostics?.exactMatchFound ? "yes" : "no"})`
@@ -1170,14 +1173,26 @@
   }
 
   async function tryFillSizeReactSelect(input) {
-    const { value, sizeDiscovery, sizeConfig } = input;
+    const { value, sizeAction, sizeDiscovery, sizeConfig } = input;
     const sizeControl = sizeDiscovery.sizeControl;
     const sizeHiddenInput = sizeDiscovery.sizeHiddenInput;
     const sizeFieldBlock = sizeDiscovery.sizeFieldBlock;
     const normalizedValue = normalizeText(value);
+    const adapters = getAdapters();
 
     if (!normalizedValue) {
-      return { status: "needs_review", reason: "payload missing", diagnostics: {} };
+      return {
+        status: "needs_review",
+        reason: "payload missing",
+        diagnostics: {
+          rawValue: value,
+          adaptedUsed: false,
+          adaptedTarget: null,
+          listboxFound: false,
+          visibleOptionsSample: "none",
+          exactMatchFound: false,
+        },
+      };
     }
 
     openCustomSelectControl(sizeControl);
@@ -1189,6 +1204,9 @@
         status: "needs_review",
         reason: "size listbox not found",
         diagnostics: {
+          rawValue: value,
+          adaptedUsed: false,
+          adaptedTarget: null,
           listboxFound: false,
           visibleOptionsSample: "none",
           exactMatchFound: false,
@@ -1197,15 +1215,32 @@
     }
 
     const options = findVisibleSizeOptions(listboxInfo.element, sizeConfig);
-    const matchingOptions = options.filter(
-      (option) => normalizeText(option.label) === normalizedValue
-    );
+    let matchingOptions = options.filter((option) => normalizeText(option.label) === normalizedValue);
+    let adaptedTarget = null;
+    let adaptedUsed = false;
+
+    if (!matchingOptions.length) {
+      const adapted = adapters.adaptValueForAction
+        ? adapters.adaptValueForAction(sizeAction, value)
+        : { adaptedValue: null, wasAdapted: false };
+      adaptedTarget = adapted.adaptedValue;
+      adaptedUsed = adapted.wasAdapted;
+      if (adaptedTarget) {
+        const normalizedAdaptedTarget = normalizeText(adaptedTarget);
+        matchingOptions = options.filter(
+          (option) => normalizeText(option.label) === normalizedAdaptedTarget
+        );
+      }
+    }
 
     if (matchingOptions.length !== 1) {
       return {
         status: "needs_review",
         reason: matchingOptions.length > 1 ? "multiple exact size matches" : "no exact size match",
         diagnostics: {
+          rawValue: value,
+          adaptedUsed,
+          adaptedTarget,
           listboxFound: true,
           visibleOptionsSample: buildSizeOptionsSample(options, 6),
           exactMatchFound: matchingOptions.length > 0,
@@ -1217,12 +1252,18 @@
     await wait(140);
 
     const confirmedValue = readSizeSelectionValue(sizeControl, sizeHiddenInput);
-    const isConfirmed = normalizeText(confirmedValue) === normalizedValue;
+    const normalizedTargetValue = normalizeText(
+      matchingOptions[0]?.label || adaptedTarget || value
+    );
+    const isConfirmed = normalizeText(confirmedValue) === normalizedTargetValue;
     if (!isConfirmed) {
       return {
         status: "needs_review",
         reason: "size selection not confirmed",
         diagnostics: {
+          rawValue: value,
+          adaptedUsed,
+          adaptedTarget,
           listboxFound: true,
           visibleOptionsSample: buildSizeOptionsSample(options, 6),
           exactMatchFound: true,
@@ -1233,6 +1274,9 @@
     return {
       status: "filled",
       diagnostics: {
+        rawValue: value,
+        adaptedUsed,
+        adaptedTarget,
         listboxFound: true,
         visibleOptionsSample: buildSizeOptionsSample(options, 6),
         exactMatchFound: true,
@@ -1561,6 +1605,7 @@
           key: input.key,
           label: input.label,
           payloadValue: input.payloadValue,
+          valuePolicy: input.valuePolicy ?? null,
           selectorConfig,
           controlType,
           adapterType: selectorConfig.adapterType ?? controlType,
@@ -1634,6 +1679,10 @@
             label: "eBay size",
             payloadValue: valuePickers.pickEbaySize(payload),
             selectorConfig: selectors.size,
+            valuePolicy: {
+              allowValueAdaptation: true,
+              valueAdaptationType: "alpha_apparel_size",
+            },
           },
           {
             marketplace: "ebay",
@@ -1708,7 +1757,87 @@
 
         return context.fillReactSelect(action, field, valueResult.value);
       },
+      adaptValueForAction(action, rawValue) {
+        const selectorPolicy = action?.selectorConfig ?? {};
+        const valuePolicy = action?.valuePolicy ?? {};
+        const allowValueAdaptation =
+          valuePolicy.allowValueAdaptation ?? selectorPolicy.allowValueAdaptation ?? false;
+        const valueAdaptationType =
+          valuePolicy.valueAdaptationType ?? selectorPolicy.valueAdaptationType ?? "";
+
+        if (!allowValueAdaptation || !valueAdaptationType) {
+          return { adaptedValue: null, wasAdapted: false };
+        }
+
+        if (valueAdaptationType === "alpha_apparel_size") {
+          const adapted = adaptAlphaApparelSize(rawValue);
+          return {
+            adaptedValue: adapted,
+            wasAdapted:
+              !!adapted &&
+              normalizeText(adapted) !== normalizeText(typeof rawValue === "string" ? rawValue : ""),
+          };
+        }
+
+        return { adaptedValue: null, wasAdapted: false };
+      },
     };
+  }
+
+  function adaptAlphaApparelSize(rawValue) {
+    const normalizedRaw = typeof rawValue === "string" ? rawValue.trim() : "";
+    if (!normalizedRaw) return null;
+
+    const lowered = normalizedRaw.toLowerCase();
+    const blockedTerms = [
+      "petite",
+      "juniors",
+      "junior",
+      "one size",
+      "onesize",
+      "osfa",
+      "shoe",
+      "ring",
+      "waist",
+    ];
+    if (blockedTerms.some((term) => lowered.includes(term))) return null;
+
+    const compact = lowered.replace(/[^a-z0-9]/g, "");
+    if (!compact) return null;
+    if (/^\d+$/.test(compact)) return null;
+
+    const safeMap = {
+      "2xs": "2XS",
+      "xxs": "2XS",
+      "2xsmall": "2XS",
+      "extraextrasmall": "2XS",
+      "xs": "XS",
+      "xsmall": "XS",
+      "extrasmall": "XS",
+      "s": "S",
+      "small": "S",
+      "m": "M",
+      "medium": "M",
+      "l": "L",
+      "large": "L",
+      "xl": "XL",
+      "xlarge": "XL",
+      "extralarge": "XL",
+      "2xl": "2XL",
+      "xxl": "2XL",
+      "2xlarge": "2XL",
+      "extraextralarge": "2XL",
+      "3xl": "3XL",
+      "xxxl": "3XL",
+      "3xlarge": "3XL",
+      "xxxlarge": "3XL",
+      "4xl": "4XL",
+      "xxxxl": "4XL",
+      "4xlarge": "4XL",
+      "xxxxlarge": "4XL",
+    };
+
+    return safeMap[compact] ?? null;
   }
 
   function getSelectorMap() {
@@ -1847,6 +1976,8 @@
           controlType: "custom_select",
           adapterType: "react_select",
           allowTypedEntry: false,
+          allowValueAdaptation: true,
+          valueAdaptationType: "alpha_apparel_size",
           postCategorySpecificsContainerSelectors: [
             '[data-testid*="specific"]',
             '[data-testid*="item-specific"]',
