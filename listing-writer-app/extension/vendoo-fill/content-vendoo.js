@@ -653,6 +653,7 @@
 
   function isBreadcrumbResultMode(optionEntries, confirmedStages) {
     const normalizedConfirmedPrefix = normalizeText(confirmedStages.join(" > "));
+    const normalizedConfirmedPrefixFlat = normalizeText(confirmedStages.join(" "));
 
     for (const entry of optionEntries) {
       const candidates = getOptionTextCandidates(entry);
@@ -677,6 +678,14 @@
         ) {
           return true;
         }
+
+        if (
+          normalizedConfirmedPrefixFlat &&
+          containsStagesInOrder(normalized, confirmedStages) &&
+          normalized !== normalizedConfirmedPrefixFlat
+        ) {
+          return true;
+        }
       }
     }
 
@@ -696,15 +705,21 @@
           .map((stage) => normalizeText(stage))
           .filter(Boolean);
 
-        if (breadcrumbStages.length <= normalizedPrefix.length) return false;
+        if (breadcrumbStages.length > normalizedPrefix.length) {
+          const prefixStart = findStageSequenceStart(breadcrumbStages, normalizedPrefix);
+          if (prefixStart >= 0) {
+            const nextIndex = prefixStart + normalizedPrefix.length;
+            if (nextIndex < breadcrumbStages.length) {
+              return normalizedWanted.includes(breadcrumbStages[nextIndex]);
+            }
+          }
+        }
 
-        const prefixStart = findStageSequenceStart(breadcrumbStages, normalizedPrefix);
-        if (prefixStart < 0) return false;
-
-        const nextIndex = prefixStart + normalizedPrefix.length;
-        if (nextIndex >= breadcrumbStages.length) return false;
-
-        return normalizedWanted.includes(breadcrumbStages[nextIndex]);
+        return containsWantedAfterPrefixInFlatText({
+          candidateText: normalizeText(candidate),
+          confirmedStages,
+          stageLabelsToTry,
+        });
       });
     });
   }
@@ -718,6 +733,42 @@
 
   function containsBreadcrumbSeparator(value) {
     return /[>›»]/.test(String(value ?? ""));
+  }
+
+  function containsStagesInOrder(normalizedText, stages) {
+    const normalizedStages = stages.map((stage) => normalizeText(stage)).filter(Boolean);
+    if (!normalizedStages.length) return false;
+
+    let searchStart = 0;
+    for (const stage of normalizedStages) {
+      const index = normalizedText.indexOf(stage, searchStart);
+      if (index < 0) return false;
+      searchStart = index + stage.length;
+    }
+    return true;
+  }
+
+  function containsWantedAfterPrefixInFlatText(input) {
+    const { candidateText, confirmedStages, stageLabelsToTry } = input;
+    if (!candidateText) return false;
+
+    if (!containsStagesInOrder(candidateText, confirmedStages)) {
+      return false;
+    }
+
+    const normalizedStages = confirmedStages.map((stage) => normalizeText(stage)).filter(Boolean);
+    let searchStart = 0;
+    for (const stage of normalizedStages) {
+      const index = candidateText.indexOf(stage, searchStart);
+      if (index < 0) return false;
+      searchStart = index + stage.length;
+    }
+
+    const normalizedWanted = stageLabelsToTry.map((label) => normalizeText(label)).filter(Boolean);
+    return normalizedWanted.some((wanted) => {
+      const wantedIndex = candidateText.indexOf(wanted, searchStart);
+      return wantedIndex >= 0;
+    });
   }
 
   function findStageSequenceStart(haystackStages, needleStages) {
