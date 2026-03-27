@@ -14,6 +14,7 @@ type Layer3Seed = {
   titleA: string;
   titleB: string;
   description: string;
+  ebaySection: string;
 };
 
 type SendFeedbackState = {
@@ -26,14 +27,153 @@ const INITIAL_SEND_FEEDBACK: SendFeedbackState = {
   message: "",
 };
 
+function normalizeToken(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function isJewelryLike(value: string): boolean {
+  const normalized = normalizeToken(value);
+  const keywords = [
+    "brooch",
+    "bracelet",
+    "earrings",
+    "necklace",
+    "ring",
+    "pin",
+    "pendant",
+    "jewelry",
+    "parure",
+  ];
+
+  return keywords.some((keyword) => normalized.includes(keyword));
+}
+
+function normalizeValue(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[\s\-–—:;,.]+/, "")
+    .replace(/[\s\-–—:;,.]+$/, "");
+}
+
+function normalizeLabel(value: string): string {
+  return normalizeToken(value.replace(/:$/, ""));
+}
+
+function isLabelLine(line: string, labels: readonly string[]): boolean {
+  const normalizedLine = normalizeLabel(line);
+  const raw = line.trim();
+  return labels.some((label) => {
+    const normalizedLabel = normalizeLabel(label);
+    return normalizedLine === normalizedLabel || raw.startsWith(`${label}:`);
+  });
+}
+
+function extractSingleLineValue(section: string, labels: readonly string[]): string {
+  const lines = section.replace(/\r\n/g, "\n").split("\n");
+  const ebayTopLabels = [
+    "Title A",
+    "Title B",
+    "Category",
+    "Item Specifics",
+    "Description",
+    "Approximate Measurements",
+  ];
+  const knownLabels = [...ebayTopLabels, ...labels];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!isLabelLine(line, labels)) continue;
+
+    const colonIndex = line.indexOf(":");
+    const sameLineValue = colonIndex >= 0 ? normalizeValue(line.slice(colonIndex + 1)) : "";
+    if (sameLineValue) return sameLineValue;
+
+    for (let next = index + 1; next < lines.length; next += 1) {
+      const nextLine = lines[next].trim();
+      if (!nextLine) continue;
+      if (isLabelLine(nextLine, knownLabels)) break;
+      return normalizeValue(nextLine);
+    }
+  }
+
+  return "";
+}
+
+function getMappedEbayFields(section: string): {
+  category: string;
+  canonicalCategoryPath: string;
+  brand: string;
+  size: string;
+  color: string;
+} {
+  const lines = section.replace(/\r\n/g, "\n").split("\n");
+  const itemSpecificsStartIndex = lines.findIndex((line) =>
+    isLabelLine(line, ["Item Specifics"])
+  );
+  const ebayBoundaryLabels = ["Title A", "Title B", "Category", "Description", "Approximate Measurements"];
+  const itemSpecificsLines: string[] = [];
+
+  if (itemSpecificsStartIndex >= 0) {
+    for (let index = itemSpecificsStartIndex + 1; index < lines.length; index += 1) {
+      const current = lines[index];
+      if (isLabelLine(current, ebayBoundaryLabels)) break;
+      if (current.trim()) {
+        itemSpecificsLines.push(current.trim());
+      }
+    }
+  }
+
+  const itemSpecificsMap = new Map<string, string>();
+  for (const line of itemSpecificsLines) {
+    const separatorIndex = line.indexOf(":");
+    if (separatorIndex <= 0) continue;
+    const key = normalizeLabel(line.slice(0, separatorIndex));
+    const value = normalizeValue(line.slice(separatorIndex + 1));
+    if (!value || itemSpecificsMap.has(key)) continue;
+    itemSpecificsMap.set(key, value);
+  }
+
+  const category = extractSingleLineValue(section, ["Category", "eBay Category"]);
+  const canonicalCategoryPath =
+    itemSpecificsMap.get("canonical vendoo category path") ||
+    itemSpecificsMap.get("canonical category path") ||
+    itemSpecificsMap.get("vendoo category path") ||
+    itemSpecificsMap.get("category path") ||
+    extractSingleLineValue(section, [
+      "Canonical Vendoo Category Path",
+      "Canonical Category Path",
+      "Vendoo Category Path",
+      "Category Path",
+    ]);
+  const brand =
+    itemSpecificsMap.get("brand") ||
+    itemSpecificsMap.get("maker") ||
+    itemSpecificsMap.get("signed/maker") ||
+    itemSpecificsMap.get("signed maker") ||
+    extractSingleLineValue(section, ["Brand", "Maker", "Signed/Maker"]);
+  const size = itemSpecificsMap.get("size") || extractSingleLineValue(section, ["Size"]);
+  const color = itemSpecificsMap.get("color") || extractSingleLineValue(section, ["Color"]);
+
+  return {
+    category: normalizeValue(category),
+    canonicalCategoryPath: normalizeValue(canonicalCategoryPath),
+    brand: normalizeValue(brand),
+    size: normalizeValue(size),
+    color: normalizeValue(color),
+  };
+}
+
 export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
+  const mappedSeed = useMemo(() => getMappedEbayFields(seed.ebaySection), [seed.ebaySection]);
+
   const [selectedSource, setSelectedSource] = useState<"A" | "B">(
     seed.titleA.trim() ? "A" : "B"
   );
-  const [category, setCategory] = useState("");
-  const [brand, setBrand] = useState("");
-  const [size, setSize] = useState("");
-  const [color, setColor] = useState("");
+  const [category, setCategory] = useState(mappedSeed.category);
+  const [brand, setBrand] = useState(mappedSeed.brand);
+  const [size, setSize] = useState(mappedSeed.size);
+  const [color, setColor] = useState(mappedSeed.color);
   const [sendFeedback, setSendFeedback] = useState<SendFeedbackState>(
     INITIAL_SEND_FEEDBACK
   );
@@ -84,9 +224,17 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
   );
 
   const canonicalVendooCategoryPath = useMemo(
-    () => buildVendooCategoryPath({ simpleCategory: category }) ?? undefined,
-    [category]
+    () =>
+      mappedSeed.canonicalCategoryPath ||
+      buildVendooCategoryPath({ simpleCategory: category }) ||
+      undefined,
+    [category, mappedSeed.canonicalCategoryPath]
   );
+
+  const sizeNotApplicableHint = useMemo(() => {
+    const source = `${seed.titleA} ${seed.titleB} ${seed.description} ${category}`;
+    return isJewelryLike(source) && size.trim().length === 0;
+  }, [category, seed.description, seed.titleA, seed.titleB, size]);
 
   const payload = useMemo(
     () =>
@@ -214,7 +362,7 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
                     setCategory(event.target.value);
                     setSendFeedback(INITIAL_SEND_FEEDBACK);
                   }}
-                  placeholder="Women > Dresses"
+                  placeholder="Category path"
                   className="rounded-lg border p-2"
                 />
               </label>
@@ -240,9 +388,18 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
                     setSize(event.target.value);
                     setSendFeedback(INITIAL_SEND_FEEDBACK);
                   }}
-                  placeholder="Size"
+                  placeholder={
+                    sizeNotApplicableHint
+                      ? "Optional for jewelry (leave blank if not applicable)"
+                      : "Size"
+                  }
                   className="rounded-lg border p-2"
                 />
+                {sizeNotApplicableHint ? (
+                  <span className="text-xs text-gray-500">
+                    Size is optional for jewelry and can be left blank when not applicable.
+                  </span>
+                ) : null}
               </label>
 
               <label className="grid gap-1 text-sm">
