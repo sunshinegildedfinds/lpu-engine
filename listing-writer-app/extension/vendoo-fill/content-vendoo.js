@@ -623,6 +623,13 @@
       candidates.push(cleaned);
     }
 
+    const categoryRow = resolveCategoryOptionRow(entry.element) ?? resolveCategoryOptionRow(entry.clickTarget);
+    if (categoryRow) {
+      addCandidate(getCategoryOptionRowLabel(categoryRow));
+      addCandidate(getOptionText(categoryRow));
+      return candidates;
+    }
+
     addCandidate(getOptionText(entry.element));
     addCandidate(getOptionText(entry.clickTarget));
 
@@ -643,6 +650,7 @@
 
   function getOptionText(option) {
     return [
+      option.innerText,
       option.textContent,
       option.getAttribute("aria-label"),
       option.getAttribute("title"),
@@ -743,11 +751,34 @@
   function resolveOptionClickTarget(node) {
     if (!(node instanceof Element)) return node;
 
+    const categoryRow = resolveCategoryOptionRow(node);
+    if (categoryRow) return categoryRow;
+
     const row = node.closest(
       '[role="option"], [data-radix-collection-item], li[role="option"], .select__option, .option, button'
     );
 
     return row ?? node;
+  }
+
+  function resolveCategoryOptionRow(node) {
+    if (!(node instanceof Element)) return null;
+    return (
+      node.closest('div[data-testid="category-option-dropdown"][role="option"]') ??
+      node.closest('div[data-testid="category-option-dropdown"]')
+    );
+  }
+
+  function getCategoryOptionRowLabel(row) {
+    if (!(row instanceof Element)) return "";
+
+    const firstChild = row.firstElementChild;
+    if (firstChild instanceof Element) {
+      const childText = cleanCategoryStage(firstChild.innerText || firstChild.textContent || "");
+      if (childText) return childText;
+    }
+
+    return cleanCategoryStage(row.innerText || row.textContent || "");
   }
 
   function isCategoryCompletionConfirmed(input) {
@@ -1084,25 +1115,9 @@
             '[data-selected="true"]',
           ],
           optionSelectors: [
-            '[role="option"]',
-            '[data-testid*="category"] button',
-            '[data-testid*="category"] [role="button"]',
-            '[data-testid*="category"] [data-testid*="row"]',
-            '[data-testid*="category"] [data-testid*="item"]',
-            '[data-testid*="category"] li',
-            '[data-testid*="category"] [tabindex]',
-            '[role="treeitem"]',
-            '[role="menuitemradio"]',
-            '[role="listitem"] [role="button"]',
-            'button',
-            '[role="button"]',
-            '[role="listbox"] [role="button"]',
-            '[role="listbox"] button',
-            '[data-radix-select-content] [data-radix-collection-item]',
-            '[data-radix-popper-content-wrapper] [data-radix-collection-item]',
-            '.select__option',
-            '.option',
-            'li[role="option"]',
+            'div[data-testid="category-option-dropdown"][role="option"]',
+            'div[data-testid="category-option-dropdown"]',
+            '[role="listbox"] [role="option"]',
           ],
           labelStrategies: [
             {
