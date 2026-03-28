@@ -7,6 +7,7 @@ import type { FinalTitleSelection } from "@/lib/ebay/selectFinalTitle";
 import { validateEbayDraft } from "@/lib/ebay/validateDraft";
 import { sendVendooPayloadToExtension } from "@/lib/sendVendooPayloadToExtension";
 import { buildVendooCategoryPath } from "@/lib/vendoo/buildVendooCategoryPath";
+import type { EbayItemSpecifics } from "@/lib/vendoo/extensionPayload";
 import { getReadyToSendState } from "@/lib/vendoo/getReadyToSendState";
 import { buildVendooExtensionPayload } from "@/lib/vendoo/extensionPayload";
 
@@ -33,6 +34,7 @@ function normalizeToken(value: string): string {
 
 function isJewelryLike(value: string): boolean {
   const normalized = normalizeToken(value);
+  const tokens = new Set(normalized.match(/[a-z0-9]+/g) ?? []);
   const keywords = [
     "brooch",
     "bracelet",
@@ -45,7 +47,7 @@ function isJewelryLike(value: string): boolean {
     "parure",
   ];
 
-  return keywords.some((keyword) => normalized.includes(keyword));
+  return keywords.some((keyword) => tokens.has(keyword));
 }
 
 function normalizeValue(value: string): string {
@@ -103,9 +105,7 @@ function extractSingleLineValue(section: string, labels: readonly string[]): str
 function getMappedEbayFields(section: string): {
   category: string;
   canonicalCategoryPath: string;
-  brand: string;
-  size: string;
-  color: string;
+  itemSpecifics: EbayItemSpecifics;
 } {
   const lines = section.replace(/\r\n/g, "\n").split("\n");
   const itemSpecificsStartIndex = lines.findIndex((line) =>
@@ -134,33 +134,94 @@ function getMappedEbayFields(section: string): {
     itemSpecificsMap.set(key, value);
   }
 
+  function getSpecificValue(aliases: readonly string[]): string {
+    for (const alias of aliases) {
+      const value = itemSpecificsMap.get(normalizeLabel(alias));
+      if (value) return normalizeValue(value);
+    }
+    return "";
+  }
+
+  function getSpecificValueWithFallback(
+    itemSpecificAliases: readonly string[],
+    fallbackLabels: readonly string[] = []
+  ): string {
+    const fromSpecifics = getSpecificValue(itemSpecificAliases);
+    if (fromSpecifics) return fromSpecifics;
+    if (!fallbackLabels.length) return "";
+    return normalizeValue(extractSingleLineValue(section, fallbackLabels));
+  }
+
   const category = extractSingleLineValue(section, ["Category", "eBay Category"]);
   const canonicalCategoryPath =
-    itemSpecificsMap.get("canonical vendoo category path") ||
-    itemSpecificsMap.get("canonical category path") ||
-    itemSpecificsMap.get("vendoo category path") ||
-    itemSpecificsMap.get("category path") ||
+    getSpecificValue([
+      "Canonical Vendoo Category Path",
+      "Canonical Category Path",
+      "Vendoo Category Path",
+      "Category Path",
+    ]) ||
     extractSingleLineValue(section, [
       "Canonical Vendoo Category Path",
       "Canonical Category Path",
       "Vendoo Category Path",
       "Category Path",
     ]);
-  const brand =
-    itemSpecificsMap.get("brand") ||
-    itemSpecificsMap.get("maker") ||
-    itemSpecificsMap.get("signed/maker") ||
-    itemSpecificsMap.get("signed maker") ||
-    extractSingleLineValue(section, ["Brand", "Maker", "Signed/Maker"]);
-  const size = itemSpecificsMap.get("size") || extractSingleLineValue(section, ["Size"]);
-  const color = itemSpecificsMap.get("color") || extractSingleLineValue(section, ["Color"]);
+  const itemSpecifics: EbayItemSpecifics = {
+    brand: getSpecificValueWithFallback(["Brand", "Maker", "Signed/Maker", "Signed Maker"], [
+      "Brand",
+      "Maker",
+      "Signed/Maker",
+      "Signed Maker",
+    ]),
+    size: getSpecificValueWithFallback(["Size"], ["Size"]),
+    color: getSpecificValueWithFallback(["Color", "Colour"], ["Color", "Colour"]),
+  };
+
+  const optionalSpecificFields: Array<[keyof EbayItemSpecifics, readonly string[], readonly string[]]> = [
+    ["signedMaker", ["Signed/Maker", "Signed Maker", "Maker", "Designer"], ["Signed/Maker", "Signed Maker", "Maker", "Designer"]],
+    ["material", ["Material"], ["Material"]],
+    ["styleType", ["Style/Type", "Style Type"], ["Style/Type", "Style Type"]],
+    ["fabricType", ["Fabric Type", "Fabric"], ["Fabric Type", "Fabric"]],
+    ["department", ["Department"], ["Department"]],
+    ["occasion", ["Occasion"], ["Occasion"]],
+    ["style", ["Style"], ["Style"]],
+    ["features", ["Features", "Feature"], ["Features", "Feature"]],
+    ["closure", ["Closure"], ["Closure"]],
+    ["accents", ["Accents", "Accent"], ["Accents", "Accent"]],
+    ["theme", ["Theme", "Style Theme"], ["Theme", "Style Theme"]],
+    ["pattern", ["Pattern"], ["Pattern"]],
+    ["dressLength", ["Dress Length"], ["Dress Length"]],
+    ["neckline", ["Neckline"], ["Neckline"]],
+    ["sleeveLength", ["Sleeve Length"], ["Sleeve Length"]],
+    ["sleeveType", ["Sleeve Type"], ["Sleeve Type"]],
+    ["fit", ["Fit"], ["Fit"]],
+    ["sizeType", ["Size Type"], ["Size Type"]],
+    ["vintage", ["Vintage"], ["Vintage"]],
+    ["handmade", ["Handmade", "Hand Made"], ["Handmade", "Hand Made"]],
+    ["signed", ["Signed"], ["Signed"]],
+    ["setIncludes", ["Set Includes", "Includes"], ["Set Includes", "Includes"]],
+    ["baseMetal", ["Base Metal"], ["Base Metal"]],
+    [
+      "countryRegionOfManufacture",
+      ["Country/Region of Manufacture", "Country of Manufacture", "Region of Manufacture"],
+      ["Country/Region of Manufacture", "Country of Manufacture", "Region of Manufacture"],
+    ],
+    ["mainStone", ["Main Stone"], ["Main Stone"]],
+    ["mainStoneColor", ["Main Stone Color"], ["Main Stone Color"]],
+    ["mainStoneCreation", ["Main Stone Creation"], ["Main Stone Creation"]],
+    ["shape", ["Shape"], ["Shape"]],
+  ];
+
+  for (const [key, itemAliases, fallbackLabels] of optionalSpecificFields) {
+    const value = getSpecificValueWithFallback(itemAliases, fallbackLabels);
+    if (!value) continue;
+    itemSpecifics[key] = value;
+  }
 
   return {
     category: normalizeValue(category),
     canonicalCategoryPath: normalizeValue(canonicalCategoryPath),
-    brand: normalizeValue(brand),
-    size: normalizeValue(size),
-    color: normalizeValue(color),
+    itemSpecifics,
   };
 }
 
@@ -171,9 +232,9 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
     seed.titleA.trim() ? "A" : "B"
   );
   const [category, setCategory] = useState(mappedSeed.category);
-  const [brand, setBrand] = useState(mappedSeed.brand);
-  const [size, setSize] = useState(mappedSeed.size);
-  const [color, setColor] = useState(mappedSeed.color);
+  const [brand, setBrand] = useState(mappedSeed.itemSpecifics.brand);
+  const [size, setSize] = useState(mappedSeed.itemSpecifics.size);
+  const [color, setColor] = useState(mappedSeed.itemSpecifics.color);
   const [sendFeedback, setSendFeedback] = useState<SendFeedbackState>(
     INITIAL_SEND_FEEDBACK
   );
@@ -246,6 +307,7 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
         category,
         canonicalVendooCategoryPath,
         itemSpecifics: {
+          ...mappedSeed.itemSpecifics,
           brand,
           size,
           color,
@@ -256,6 +318,7 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       canonicalVendooCategoryPath,
       category,
       color,
+      mappedSeed.itemSpecifics,
       seed.description,
       seed.titleA,
       seed.titleB,

@@ -19,6 +19,7 @@ function normalizeForFooterCheck(value: string): string {
 
 function isJewelryLike(value: string): boolean {
   const normalized = normalizeForFooterCheck(value);
+  const tokens = new Set(normalized.match(/[a-z0-9]+/g) ?? []);
   const keywords = [
     "brooch",
     "bracelet",
@@ -31,7 +32,7 @@ function isJewelryLike(value: string): boolean {
     "parure",
   ];
 
-  return keywords.some((keyword) => normalized.includes(keyword));
+  return keywords.some((keyword) => tokens.has(keyword));
 }
 
 function hasPassedCheck(validation: EbayValidationResult, label: string): boolean {

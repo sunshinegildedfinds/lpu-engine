@@ -138,6 +138,28 @@
         ],
       },
 
+      signedMaker: {
+        controlType: "custom_select",
+        adapterType: "react_select",
+        optionSelectors: DEFAULT_OPTION_SELECTORS,
+        allowTypedEntry: true,
+        labelStrategies: [
+          {
+            labelTerms: ["signed", "maker", "designer", "brand"],
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["signed", "maker", "designer", "brand"],
+            metadataExcludes: ["title", "category", "size", "color", "colour", "material", "style", "type"],
+          },
+        ],
+        fallbackStrategies: [
+          {
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["signed", "maker", "designer", "brand"],
+            metadataExcludes: ["title", "category", "size", "color", "colour", "material", "style", "type"],
+          },
+        ],
+      },
+
       size: {
         controlType: "custom_select",
         adapterType: "react_select",
@@ -195,6 +217,50 @@
             elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
             metadataIncludes: ["color", "colour"],
             metadataExcludes: ["title", "category", "brand", "size"],
+          },
+        ],
+      },
+
+      material: {
+        controlType: "custom_select",
+        adapterType: "react_select",
+        optionSelectors: DEFAULT_OPTION_SELECTORS,
+        allowTypedEntry: false,
+        labelStrategies: [
+          {
+            labelTerms: ["material"],
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["material"],
+            metadataExcludes: ["title", "category", "size", "brand", "color", "colour", "style", "type"],
+          },
+        ],
+        fallbackStrategies: [
+          {
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["material"],
+            metadataExcludes: ["title", "category", "size", "brand", "color", "colour", "style", "type"],
+          },
+        ],
+      },
+
+      styleType: {
+        controlType: "custom_select",
+        adapterType: "react_select",
+        optionSelectors: DEFAULT_OPTION_SELECTORS,
+        allowTypedEntry: false,
+        labelStrategies: [
+          {
+            labelTerms: ["style", "type"],
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["style", "type"],
+            metadataExcludes: ["title", "category", "size", "brand", "color", "colour", "material"],
+          },
+        ],
+        fallbackStrategies: [
+          {
+            elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+            metadataIncludes: ["style", "type"],
+            metadataExcludes: ["title", "category", "size", "brand", "color", "colour", "material"],
           },
         ],
       },

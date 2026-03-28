@@ -157,6 +157,9 @@
         pickEbayBrand,
         pickEbaySize,
         pickEbayColor,
+        pickEbaySignedMaker,
+        pickEbayMaterial,
+        pickEbayStyleType,
       })
       .map((definition) => {
         const action = actionModel.createFieldAction(definition);
@@ -214,6 +217,16 @@
 
     await retrySizeAfterCategorySuccess({
       fillSteps,
+      stepOutcomes: runState.stepOutcomes,
+      usedElements,
+      filled: runState.filled,
+      needsReview: runState.needsReview,
+      skippedForSafety: runState.skippedForSafety,
+    });
+
+    await fillDynamicVisibleFieldsAfterCategory({
+      payload,
+      selectors,
       stepOutcomes: runState.stepOutcomes,
       usedElements,
       filled: runState.filled,
@@ -345,6 +358,7 @@
         stageIndex: index,
         confirmedStages,
       });
+      optionEntries = stageMatchResult.candidateEntries;
       let matches = stageMatchResult.matches;
 
       if (matches.length !== 1) {
@@ -368,6 +382,7 @@
             stageIndex: index,
             confirmedStages,
           });
+          optionEntries = stageMatchResult.candidateEntries;
           matches = stageMatchResult.matches;
         }
       }
@@ -472,7 +487,7 @@
       }
     }
 
-    return null;
+    return score;
   }
 
   function findPickerSearchInput(pickerRoot, searchInputSelectors) {
@@ -504,7 +519,7 @@
       if (safeInput) return safeInput;
     }
 
-    return null;
+    return score;
   }
 
   function resolveCategoryOptionScope(pickerRoot, optionSelectors) {
@@ -558,19 +573,71 @@
         ];
 
     const rawEntries = [];
+    const seenRawCandidates = new Set();
+
+    function pushRawEntry(candidate, selector) {
+      if (!(candidate instanceof Element)) return;
+      if (seenRawCandidates.has(candidate)) return;
+      seenRawCandidates.add(candidate);
+      const clickTarget = resolveOptionClickTarget(candidate);
+      rawEntries.push({
+        element: candidate,
+        selector,
+        clickTarget,
+      });
+    }
 
     const scope = root ?? document;
     const scopeMode = scopeModeOverride ?? (root ? "picker_scope" : "document_scope");
     for (const selector of selectors) {
       const candidates = Array.from(scope.querySelectorAll(selector));
       for (const candidate of candidates) {
-        if (!(candidate instanceof Element)) continue;
-        const clickTarget = resolveOptionClickTarget(candidate);
-        rawEntries.push({
-          element: candidate,
-          selector,
-          clickTarget,
-        });
+        pushRawEntry(candidate, selector);
+      }
+    }
+
+    // If a narrowed picker scope finds zero rows, retry on the active category modal root.
+    if (rawEntries.length === 0 && root instanceof Element) {
+      const modalRoot =
+        (root.matches('[aria-label*="Category Selector"]') ? root : null) ??
+        root.closest('[aria-label*="Category Selector"]') ??
+        null;
+
+      if (modalRoot) {
+        const categoryRowSelectors = Array.from(
+          new Set([
+            ...selectors,
+            'div[data-testid="category-option-dropdown"][role="option"]',
+            'div[data-testid="category-option-dropdown"]',
+          ])
+        );
+
+        for (const selector of categoryRowSelectors) {
+          const candidates = Array.from(modalRoot.querySelectorAll(selector));
+          for (const candidate of candidates) {
+            pushRawEntry(candidate, selector);
+          }
+        }
+      }
+    }
+
+    const scopedCategoryRows = root instanceof Element
+      ? Array.from(
+          root.querySelectorAll('div[data-testid="category-option-dropdown"][role="option"]')
+        ).filter((row) => row instanceof Element && isVisible(row))
+      : [];
+
+    // When real category row containers are present, ignore generic modal nodes.
+    if (scopedCategoryRows.length > 0) {
+      const filteredToCategoryRows = rawEntries.filter(
+        (entry) =>
+          resolveCategoryOptionRow(entry.element) instanceof Element ||
+          resolveCategoryOptionRow(entry.clickTarget) instanceof Element
+      );
+
+      if (filteredToCategoryRows.length > 0) {
+        rawEntries.length = 0;
+        rawEntries.push(...filteredToCategoryRows);
       }
     }
 
@@ -622,33 +689,91 @@
   function findCategoryStageMatches(input) {
     const { optionEntries, stageLabelsToTry, stageIndex, confirmedStages } = input;
     const confirmedPrefix = confirmedStages.join(" > ");
+    const candidateEntries = getStageCandidateEntries({
+      optionEntries,
+      stageLabelsToTry,
+      stageIndex,
+      confirmedStages,
+    });
 
     if (stageIndex === 0) {
       return {
-        matches: findMatchingOptionsForStage(optionEntries, stageLabelsToTry),
+        matches: findMatchingOptionsForStage(candidateEntries, stageLabelsToTry),
         breadcrumbMode: false,
         confirmedPrefix,
+        candidateEntries,
       };
     }
 
-    const breadcrumbMode = isBreadcrumbResultMode(optionEntries, confirmedStages);
+    const breadcrumbMode = isBreadcrumbResultMode(candidateEntries, confirmedStages);
     if (!breadcrumbMode) {
       return {
-        matches: findMatchingOptionsForStage(optionEntries, stageLabelsToTry),
+        matches: findMatchingOptionsForStage(candidateEntries, stageLabelsToTry),
         breadcrumbMode: false,
         confirmedPrefix,
+        candidateEntries,
       };
     }
 
     return {
       matches: findBreadcrumbStageMatches({
-        optionEntries,
+        optionEntries: candidateEntries,
         stageLabelsToTry,
         confirmedStages,
       }),
       breadcrumbMode: true,
       confirmedPrefix,
+      candidateEntries,
     };
+  }
+
+  function getStageCandidateEntries(input) {
+    const { optionEntries, stageLabelsToTry, stageIndex, confirmedStages } = input;
+    if (stageIndex === 0) return optionEntries;
+
+    const normalizedPrefix = normalizeText(confirmedStages.join(" > "));
+    const normalizedPrefixFlat = normalizeText(confirmedStages.join(" "));
+    const normalizedWanted = stageLabelsToTry.map((label) => normalizeText(label)).filter(Boolean);
+
+    const preferred = optionEntries.filter((entry) => {
+      const candidates = getOptionTextCandidates(entry);
+      return candidates.some((candidate) => {
+        const cleaned = cleanCategoryStage(candidate);
+        const normalized = normalizeText(cleaned);
+        if (!normalized) return false;
+
+        if (
+          normalizedWanted.some(
+            (wanted) => normalized === wanted || normalized.includes(wanted)
+          ) &&
+          (containsBreadcrumbSeparator(cleaned) ||
+            (normalizedPrefix && normalized.includes(normalizedPrefix)) ||
+            (normalizedPrefixFlat && containsStagesInOrder(normalized, confirmedStages)))
+        ) {
+          return true;
+        }
+
+        if (
+          normalizedPrefix &&
+          normalized.includes(normalizedPrefix) &&
+          normalized !== normalizedPrefix
+        ) {
+          return true;
+        }
+
+        if (
+          normalizedPrefixFlat &&
+          containsStagesInOrder(normalized, confirmedStages) &&
+          normalized !== normalizedPrefixFlat
+        ) {
+          return true;
+        }
+
+        return false;
+      });
+    });
+
+    return preferred.length ? preferred : optionEntries;
   }
 
   function isBreadcrumbResultMode(optionEntries, confirmedStages) {
@@ -969,10 +1094,23 @@
   function getCategoryOptionRowLabel(row) {
     if (!(row instanceof Element)) return "";
 
-    const firstChild = row.firstElementChild;
-    if (firstChild instanceof Element) {
-      const childText = cleanCategoryStage(firstChild.innerText || firstChild.textContent || "");
-      if (childText) return childText;
+    const ariaLabel = cleanCategoryStage(row.getAttribute("aria-label") || "");
+    if (ariaLabel) return ariaLabel;
+
+    const directChildren = Array.from(row.children).filter(
+      (child) => child instanceof Element
+    );
+    const directChildTexts = directChildren
+      .map((child) => cleanCategoryStage(child.innerText || child.textContent || ""))
+      .filter(Boolean)
+      .filter((text) => /[a-z0-9]/i.test(text));
+
+    const directWithSeparators = directChildTexts.find((text) => /[>›»]/.test(text));
+    if (directWithSeparators) return directWithSeparators;
+
+    if (directChildTexts.length > 0) {
+      // Prefer the longest direct-child text to avoid tiny icon/arrow labels.
+      return directChildTexts.sort((a, b) => b.length - a.length)[0];
     }
 
     return cleanCategoryStage(row.innerText || row.textContent || "");
@@ -1120,6 +1258,808 @@
 
     skippedForSafety.push(`${sizeStep.label} (retry: ${sizeFillResult.reason})`);
     stepOutcomes.size = "skipped_for_safety";
+  }
+
+  const DYNAMIC_FIELD_SYNONYMS = {
+    brand: ["brand", "maker"],
+    signed: ["signed", "signed/maker", "signed maker", "maker", "designer"],
+    signedmaker: ["signed", "signed maker", "signed/maker", "designer", "maker"],
+    material: ["material", "materials", "metal", "base material", "base metal"],
+    style: ["style", "type", "style type", "style/theme", "style theme"],
+    type: ["type", "style", "style type", "style/theme"],
+    styletype: ["style", "type", "style type", "style/theme", "style theme", "theme"],
+    setincludes: ["set includes", "includes", "included"],
+    color: ["color", "colour"],
+    size: ["size"],
+  };
+
+  async function fillDynamicVisibleFieldsAfterCategory(input) {
+    const { payload, selectors, stepOutcomes, usedElements, filled, needsReview, skippedForSafety } =
+      input;
+
+    if (stepOutcomes.category !== "filled") {
+      skippedForSafety.push("Dynamic optional fields (category not confirmed)");
+      return;
+    }
+
+    const specificsSelectors = selectors?.size?.postCategorySpecificsContainerSelectors ?? [];
+    const revealStatus = await revealOptionalFieldsIfPresent(specificsSelectors);
+    await wait(180);
+
+    const specificsRoot = await waitForSpecificsContainer(specificsSelectors);
+    if (!specificsRoot) {
+      const reason = revealStatus.buttonFound
+        ? revealStatus.clicked
+          ? revealStatus.expandedDetected
+            ? "clicked but specifics section not found"
+            : "clicked but expansion not detected"
+          : "button found but not clicked"
+        : "button not found";
+      needsReview.push(`Dynamic optional fields (${reason})`);
+      return;
+    }
+
+    const candidates = buildDynamicPayloadCandidates(payload, stepOutcomes);
+    if (!candidates.length) {
+      skippedForSafety.push("Dynamic optional fields (no payload values)");
+      return;
+    }
+
+    let visibleRegistry = discoverVisibleFieldRegistry(specificsRoot);
+    if (!visibleRegistry.length) {
+      await wait(220);
+      visibleRegistry = discoverVisibleFieldRegistry(specificsRoot);
+    }
+    if (!visibleRegistry.length) {
+      needsReview.push(
+        "Dynamic optional fields (expanded but no visible fields discovered)"
+      );
+      return;
+    }
+
+    let matchedCount = 0;
+    let filledCount = 0;
+
+    for (const field of visibleRegistry) {
+      const matches = candidates.filter((candidate) =>
+        isDynamicLabelMatch(field.normalizedLabel, candidate.matchTerms)
+      );
+      if (matches.length !== 1) continue;
+      const candidate = matches[0];
+      matchedCount += 1;
+
+      if (usedElements.has(field.control)) {
+        skippedForSafety.push(`eBay ${field.label} (collision prevention)`);
+        continue;
+      }
+
+      const result = await fillDynamicFieldValue(field, candidate.value, selectors);
+      if (result.status === "filled") {
+        usedElements.add(field.control);
+        filled.push(`eBay ${field.label}`);
+        filledCount += 1;
+        continue;
+      }
+
+      if (result.status === "needs_review") {
+        needsReview.push(`eBay ${field.label} (${result.reason})`);
+        continue;
+      }
+
+      skippedForSafety.push(`eBay ${field.label} (${result.reason})`);
+    }
+
+    console.debug("[LPU Vendoo] Dynamic visible fields", {
+      revealStatus,
+      discovered: visibleRegistry.map((field) => ({
+        label: field.label,
+        normalizedLabel: field.normalizedLabel,
+        controlType: field.controlType,
+        allowedOptions: field.allowedOptions.slice(0, 8),
+      })),
+      candidateKeys: candidates.map((candidate) => candidate.key),
+      matchedCount,
+      filledCount,
+    });
+  }
+
+  async function revealOptionalFieldsIfPresent(specificsSelectors) {
+    const buttons = Array.from(document.querySelectorAll("button, [role='button']"));
+    const showOptional = buttons.find((button) => {
+      if (!(button instanceof Element)) return false;
+      if (!isVisible(button)) return false;
+      const text = normalizeText(button.textContent || "");
+      return text.includes("show optional fields") || text === "show optional";
+    });
+
+    if (!showOptional) {
+      return {
+        buttonFound: false,
+        clicked: false,
+        expandedDetected: false,
+        reason: "button not found",
+      };
+    }
+
+    const wasExpandedBefore = isOptionalFieldsExpanded(showOptional, specificsSelectors);
+    if (wasExpandedBefore) {
+      return {
+        buttonFound: true,
+        clicked: false,
+        expandedDetected: true,
+        reason: "already expanded",
+      };
+    }
+
+    clickElement(showOptional);
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await wait(140);
+      if (isOptionalFieldsExpanded(showOptional, specificsSelectors)) {
+        return {
+          buttonFound: true,
+          clicked: true,
+          expandedDetected: true,
+          reason: "expanded after click",
+        };
+      }
+    }
+
+    return {
+      buttonFound: true,
+      clicked: true,
+      expandedDetected: false,
+      reason: "clicked but expansion not detected",
+    };
+  }
+
+  async function waitForSpecificsContainer(selectors) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const found = findVisibleSpecificsContainer(selectors);
+      if (found) return found;
+      await wait(140);
+    }
+    return null;
+  }
+
+  function isOptionalFieldsExpanded(button, specificsSelectors) {
+    if (!(button instanceof Element)) return false;
+
+    const ariaExpanded = button.getAttribute("aria-expanded");
+    if (ariaExpanded === "true") return true;
+
+    const buttonText = normalizeText(button.textContent || "");
+    if (buttonText.includes("hide optional fields")) return true;
+
+    const specificsRoot = findVisibleSpecificsContainer(specificsSelectors ?? []);
+    if (!specificsRoot) return false;
+
+    const visibleLabels = Array.from(specificsRoot.querySelectorAll("label")).filter(
+      (label) => label instanceof Element && isVisible(label)
+    );
+    return visibleLabels.length > 0;
+  }
+
+  function buildDynamicPayloadCandidates(payload, stepOutcomes) {
+    const consumedKeys = new Set(Object.keys(stepOutcomes ?? {}));
+    const ebay = payload?.marketplaces?.ebay ?? {};
+    const specifics = ebay?.itemSpecifics ?? {};
+    const candidates = [];
+
+    const sourceEntries = Object.entries(specifics).filter((entry) => {
+      const [key, value] = entry;
+      if (consumedKeys.has(String(key))) return false;
+      return typeof value === "string" && value.trim();
+    });
+
+    for (const [key, value] of sourceEntries) {
+      const normalizedKey = normalizeText(String(key)).replace(/[^a-z0-9]/g, "");
+      const synonyms = DYNAMIC_FIELD_SYNONYMS[normalizedKey] ?? [];
+      const keyTerms = buildKeyTermsFromKey(String(key));
+      const matchTerms = Array.from(new Set([...synonyms, ...keyTerms].map(normalizeText)));
+      candidates.push({
+        key: String(key),
+        value: String(value).trim(),
+        matchTerms,
+      });
+    }
+
+    return candidates;
+  }
+
+  function buildKeyTermsFromKey(key) {
+    const expanded = key
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/[_-]+/g, " ")
+      .trim();
+    const normalized = normalizeText(expanded);
+    if (!normalized) return [];
+    return [normalized];
+  }
+
+  function discoverVisibleFieldRegistry(root) {
+    if (!(root instanceof Element)) return [];
+
+    const labels = Array.from(root.querySelectorAll("label"));
+    const seenControls = new Set();
+    const fields = [];
+
+    for (const labelEl of labels) {
+      if (!(labelEl instanceof Element)) continue;
+      if (!isVisible(labelEl)) continue;
+
+      const label = cleanCategoryStage(labelEl.textContent || "");
+      const normalizedLabel = normalizeText(label);
+      if (!normalizedLabel) continue;
+
+      const control = findControlForVisibleLabel(labelEl, root);
+      if (!control || seenControls.has(control)) continue;
+      seenControls.add(control);
+
+      const controlType = detectDynamicControlType(control);
+      const allowedOptions = discoverAllowedOptions(control, controlType);
+
+      fields.push({
+        label,
+        normalizedLabel,
+        control,
+        controlType,
+        allowedOptions,
+      });
+    }
+
+    return fields;
+  }
+
+  function findControlForVisibleLabel(labelEl, root) {
+    const forId = labelEl.getAttribute("for");
+    if (forId) {
+      const linked = document.getElementById(forId);
+      if (linked instanceof Element && root.contains(linked) && isVisible(linked)) {
+        return linked;
+      }
+    }
+
+    const container = labelEl.closest("div, section, fieldset") ?? labelEl.parentElement;
+    if (!(container instanceof Element)) return null;
+
+    const selectors = [
+      ".react-select__control",
+      "[role='combobox']",
+      "select",
+      "textarea",
+      "input:not([type='hidden'])",
+      "button[aria-haspopup='listbox']",
+      "button",
+    ];
+
+    const normalizedLabel = normalizeText(labelEl.textContent || "");
+    const candidates = [];
+    const seen = new Set();
+
+    function addCandidatesFrom(scope) {
+      if (!(scope instanceof Element)) return;
+      for (const selector of selectors) {
+        const found = Array.from(scope.querySelectorAll(selector)).filter(
+          (candidate) =>
+            candidate instanceof Element && isVisible(candidate) && !seen.has(candidate)
+        );
+        for (const candidate of found) {
+          seen.add(candidate);
+          candidates.push(candidate);
+        }
+      }
+    }
+
+    addCandidatesFrom(container);
+    const nearestSection = container.closest("section, fieldset, form");
+    if (nearestSection instanceof Element) {
+      addCandidatesFrom(nearestSection);
+    }
+
+    if (!candidates.length) return null;
+
+    const scored = candidates.map((candidate) => ({
+      candidate,
+      score: scoreControlForLabelMatch(candidate, normalizedLabel, labelEl),
+    }));
+    scored.sort((a, b) => b.score - a.score);
+
+    if (scored[0]?.score > 0) return scored[0].candidate;
+    return candidates[0] ?? null;
+  }
+
+  function scoreControlForLabelMatch(control, normalizedLabel, labelEl) {
+    if (!(control instanceof Element)) return 0;
+    let score = 0;
+
+    const controlMetadata = normalizeText(
+      [
+        control.getAttribute("name"),
+        control.getAttribute("id"),
+        control.getAttribute("aria-label"),
+        control.getAttribute("placeholder"),
+        control.getAttribute("title"),
+        control.className,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+    if (controlMetadata.includes(normalizedLabel)) score += 5;
+    const labelTokens = normalizedLabel.split(" ").filter(Boolean);
+    for (const token of labelTokens) {
+      if (controlMetadata.includes(token)) score += 1;
+    }
+
+    const sameContainer = control.closest("div, section, fieldset");
+    const labelContainer = labelEl.closest("div, section, fieldset");
+    if (sameContainer && labelContainer && sameContainer === labelContainer) {
+      score += 3;
+    }
+
+    if (control.matches(".react-select__control, [role='combobox']")) score += 2;
+    if (control.matches("select, textarea, input:not([type='hidden'])")) score += 1;
+
+    return score;
+  }
+
+  function detectDynamicControlType(control) {
+    if (!(control instanceof Element)) return "unknown";
+    if (control.matches("textarea, [contenteditable='true']")) return "textarea";
+    if (control.matches("select")) return "select";
+    if (control.matches("input[type='checkbox']")) return "checkbox";
+    if (control.matches("input[type='radio']")) return "radio";
+    if (
+      control.matches(".react-select__control, [role='combobox'], button[aria-haspopup='listbox']")
+    ) {
+      return "combobox";
+    }
+    if (control.matches("input:not([type='hidden'])")) return "text";
+    return "unknown";
+  }
+
+  function discoverAllowedOptions(control, controlType) {
+    if (controlType !== "select" || !(control instanceof HTMLSelectElement)) return [];
+    return Array.from(control.options)
+      .map((option) => cleanCategoryStage(option.textContent || option.value || ""))
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+
+  function isDynamicLabelMatch(label, terms) {
+    const normalizedLabel = normalizeText(label);
+    if (!normalizedLabel) return false;
+    return terms.some((term) => {
+      const normalizedTerm = normalizeText(term);
+      if (!normalizedTerm) return false;
+      return (
+        normalizedLabel === normalizedTerm ||
+        normalizedLabel.includes(normalizedTerm) ||
+        normalizedTerm.includes(normalizedLabel)
+      );
+    });
+  }
+
+  async function fillDynamicFieldValue(field, value, selectors) {
+    if (!value || !value.trim()) {
+      return { status: "needs_review", reason: "payload missing" };
+    }
+
+    if (field.controlType === "text" || field.controlType === "textarea") {
+      setElementValue(field.control, value);
+      return { status: "filled" };
+    }
+
+    if (field.controlType === "select" && field.control instanceof HTMLSelectElement) {
+      const payloadValues = buildNormalizedPayloadValues(value);
+      if (!payloadValues.values.length) {
+        return { status: "needs_review", reason: "payload missing after normalization" };
+      }
+      if (payloadValues.multiValue) {
+        return {
+          status: "skipped_for_safety",
+          reason: "multi-value payload for single-value select",
+        };
+      }
+      const normalizedValue = payloadValues.values[0];
+      const exactOptions = Array.from(field.control.options).filter((option) => {
+        const optionText = cleanCategoryStage(option.textContent || option.value || "");
+        return normalizeOptionValue(optionText) === normalizedValue;
+      });
+
+      if (exactOptions.length !== 1) {
+        return {
+          status: "needs_review",
+          reason: exactOptions.length > 1 ? "multiple exact select options" : "no exact select option",
+        };
+      }
+
+      field.control.value = exactOptions[0].value;
+      field.control.dispatchEvent(new Event("change", { bubbles: true }));
+      field.control.dispatchEvent(new Event("blur", { bubbles: true }));
+      return { status: "filled" };
+    }
+
+    if (field.controlType === "combobox") {
+      const optionSelectors = selectors?.color?.optionSelectors ?? [
+        '[role="option"]',
+        '[data-radix-collection-item]',
+        '.react-select__option',
+        'li[role="option"]',
+      ];
+
+      const payloadValues = buildNormalizedPayloadValues(value);
+      if (!payloadValues.values.length) {
+        return { status: "needs_review", reason: "payload missing after normalization" };
+      }
+      const valueMode = payloadValues.multiValue ? "multi-value" : "single-value";
+      if (payloadValues.multiValue && !isLikelyMultiValueControl(field.control)) {
+        return {
+          status: "skipped_for_safety",
+          reason: `${valueMode} payload for single-value control (raw: "${String(
+            value
+          ).trim()}"; canonical: "${payloadValues.canonicalValue}")`,
+        };
+      }
+
+      for (const target of payloadValues.values) {
+        const selectResult = await selectComboboxValueByNormalizedMatch({
+          control: field.control,
+          optionSelectors,
+          target,
+          fieldLabel: field.label,
+          payloadRaw: String(value ?? "").trim(),
+          payloadCanonical: payloadValues.canonicalValue,
+          valueMode,
+        });
+
+        if (selectResult.status !== "filled") {
+          return selectResult;
+        }
+      }
+
+      return { status: "filled" };
+    }
+
+    if (field.controlType === "checkbox" || field.controlType === "radio") {
+      return { status: "skipped_for_safety", reason: "unsupported control type" };
+    }
+
+    return { status: "skipped_for_safety", reason: "unknown control type" };
+  }
+
+  function findVisibleComboboxOptionEntries(control, optionSelectors) {
+    const activeContext = resolveActiveComboboxContext(control);
+    if (activeContext?.listbox) {
+      const activeDiscovery = findVisibleOptionEntries(
+        optionSelectors,
+        activeContext.listbox,
+        "combobox_active_control_scope"
+      );
+      if (activeDiscovery.entries.length) {
+        return {
+          ...activeDiscovery,
+          activeControlIdentified: true,
+          activeControlSource: activeContext.source,
+          harvestedFromFallback: false,
+        };
+      }
+    }
+
+    const menuRoot =
+      control.closest("div")?.querySelector(".react-select__menu") ??
+      document.querySelector(".react-select__menu");
+    if (menuRoot instanceof Element) {
+      const menuDiscovery = findVisibleOptionEntries(
+        optionSelectors,
+        menuRoot,
+        "combobox_menu_scope"
+      );
+      if (menuDiscovery.entries.length) {
+        return {
+          ...menuDiscovery,
+          activeControlIdentified: !!activeContext,
+          activeControlSource: activeContext?.source ?? "none",
+          harvestedFromFallback: true,
+        };
+      }
+    }
+
+    const documentDiscovery = findVisibleOptionEntries(
+      optionSelectors,
+      null,
+      "combobox_document_scope"
+    );
+    return {
+      ...documentDiscovery,
+      activeControlIdentified: !!activeContext,
+      activeControlSource: activeContext?.source ?? "none",
+      harvestedFromFallback: true,
+    };
+  }
+
+  function resolveActiveComboboxContext(control) {
+    const controlCandidates = [];
+    const directInput = control.querySelector("input[aria-controls], input[aria-owns]");
+    if (directInput instanceof HTMLInputElement) {
+      controlCandidates.push({ source: "control-input", input: directInput });
+    }
+
+    if (document.activeElement instanceof HTMLInputElement) {
+      const activeInput = document.activeElement;
+      if (
+        activeInput.matches("input[aria-controls], input[aria-owns]") &&
+        (control.contains(activeInput) || control.closest("div")?.contains(activeInput))
+      ) {
+        controlCandidates.push({ source: "active-input", input: activeInput });
+      }
+    }
+
+    for (const candidate of controlCandidates) {
+      const controlledId =
+        candidate.input.getAttribute("aria-controls") ||
+        candidate.input.getAttribute("aria-owns") ||
+        "";
+      if (!controlledId) continue;
+      const listbox = document.getElementById(controlledId);
+      if (listbox instanceof Element && isVisible(listbox)) {
+        return {
+          source: candidate.source,
+          listbox,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  async function selectComboboxValueByNormalizedMatch(input) {
+    const { control, optionSelectors, target, fieldLabel, payloadRaw, payloadCanonical, valueMode } =
+      input;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      openCustomSelectControl(control);
+      await wait(120 + attempt * 40);
+
+      const optionDiscovery = findVisibleComboboxOptionEntries(control, optionSelectors);
+      if (!optionDiscovery.entries.length) {
+        if (attempt === 2) {
+          const debugSummary = buildComboboxDebugSummary({
+            fieldLabel,
+            payloadRaw,
+            payloadCanonical,
+            valueMode,
+            optionDiscovery,
+            rawOptions: [],
+            normalizedOptions: [],
+            target,
+            exactMatchFound: false,
+          });
+          console.debug("[LPU Vendoo] Combobox debug", debugSummary);
+          return {
+            status: "needs_review",
+            reason: `active control opened but no options rendered (${optionDiscovery.scopeMode}; active: ${
+              optionDiscovery.activeControlIdentified ? "yes" : "no"
+            })`,
+          };
+        }
+        continue;
+      }
+
+      const rawOptions = getUniqueComboboxOptionTexts(optionDiscovery.entries, 14);
+      const normalizedEntries = optionDiscovery.entries.map((entry) => ({
+        entry,
+        values: getNormalizedOptionValuesFromEntry(entry),
+      }));
+      const normalizedOptions = getUniqueComboboxNormalizedValues(normalizedEntries, 18);
+      const matches = normalizedEntries.filter((candidate) => candidate.values.includes(target));
+      const debugSummary = buildComboboxDebugSummary({
+        fieldLabel,
+        payloadRaw,
+        payloadCanonical,
+        valueMode,
+        optionDiscovery,
+        rawOptions,
+        normalizedOptions,
+        target,
+        exactMatchFound: matches.length > 0,
+      });
+      console.debug("[LPU Vendoo] Combobox debug", debugSummary);
+
+      if (!matches.length) {
+        return {
+          status: "needs_review",
+          reason:
+            `options rendered but no normalized match (${optionDiscovery.scopeMode}; active: ${
+              optionDiscovery.activeControlIdentified ? "yes" : "no"
+            }; mode: ${valueMode}; canonical: "${payloadCanonical}")`,
+        };
+      }
+
+      if (matches.length > 1) {
+        return {
+          status: "needs_review",
+          reason: "multiple normalized combobox options",
+        };
+      }
+
+      clickElement(matches[0].entry.clickTarget);
+      await wait(110);
+      return { status: "filled" };
+    }
+
+    return {
+      status: "needs_review",
+      reason: "control opened but options could not be harvested",
+    };
+  }
+
+  function getUniqueComboboxOptionTexts(entries, maxItems) {
+    const values = [];
+    const seen = new Set();
+    for (const entry of entries) {
+      const text = cleanCategoryStage(getOptionTextFromEntry(entry));
+      const normalized = normalizeText(text);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      values.push(text);
+      if (values.length >= maxItems) break;
+    }
+    return values;
+  }
+
+  function getUniqueComboboxNormalizedValues(normalizedEntries, maxItems) {
+    const values = [];
+    const seen = new Set();
+    for (const entry of normalizedEntries) {
+      for (const value of entry.values) {
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        values.push(value);
+        if (values.length >= maxItems) return values;
+      }
+    }
+    return values;
+  }
+
+  function buildComboboxDebugSummary(input) {
+    const {
+      fieldLabel,
+      payloadRaw,
+      payloadCanonical,
+      valueMode,
+      optionDiscovery,
+      rawOptions,
+      normalizedOptions,
+      target,
+      exactMatchFound,
+    } = input;
+
+    return {
+      fieldLabel,
+      payloadRaw,
+      payloadCanonical,
+      valueMode,
+      target,
+      activeControlIdentified: optionDiscovery.activeControlIdentified,
+      activeControlSource: optionDiscovery.activeControlSource,
+      harvestedFromFallback: optionDiscovery.harvestedFromFallback,
+      optionScope: optionDiscovery.scopeMode,
+      rawOptionTexts: rawOptions,
+      normalizedOptionValues: normalizedOptions,
+      exactMatchFound,
+    };
+  }
+
+  function normalizeOptionValue(value) {
+    const normalized = normalizeText(
+      String(value ?? "")
+        .replace(/[._-]/g, " ")
+        .replace(/[()]/g, " ")
+        .replace(/[\/\\]/g, " ")
+        .replace(/['’]/g, "")
+    );
+    if (!normalized) return "";
+
+    if (["yes", "y", "true", "1"].includes(normalized)) return "yes";
+    if (["no", "n", "false", "0"].includes(normalized)) return "no";
+    if (
+      normalized === "not applicable" ||
+      normalized === "notapplicable" ||
+      normalized === "not available" ||
+      normalized === "n a" ||
+      normalized === "na" ||
+      normalized === "n/a"
+    ) {
+      return "not applicable";
+    }
+
+    return normalized;
+  }
+
+  function stripMatcherAnnotations(value) {
+    return String(value ?? "")
+      .replace(/\(([^)]*(inference|confidence)[^)]*)\)/gi, " ")
+      .replace(/\[([^]]*(inference|confidence)[^]]*)\]/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function getNormalizedOptionValuesFromEntry(entry) {
+    const values = [];
+    const seen = new Set();
+
+    function add(raw) {
+      const normalized = normalizeOptionValue(raw);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      values.push(normalized);
+    }
+
+    const primaryText = getOptionTextFromEntry(entry);
+    add(primaryText);
+
+    const candidates = getOptionTextCandidates(entry);
+    for (const candidate of candidates) {
+      add(candidate);
+      const lines = String(candidate ?? "")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      for (const line of lines) {
+        add(line);
+      }
+    }
+
+    return values;
+  }
+
+  function buildNormalizedPayloadValues(value) {
+    const raw = stripMatcherAnnotations(value);
+    if (!raw) return { values: [], multiValue: false };
+
+    const splitValues = raw
+      .split(/[;,]/)
+      .map((part) => normalizeOptionValue(part))
+      .filter(Boolean);
+
+    if (splitValues.length > 1) {
+      return {
+        values: Array.from(new Set(splitValues)),
+        multiValue: true,
+        canonicalValue: raw,
+      };
+    }
+
+    const single = normalizeOptionValue(raw);
+    return {
+      values: single ? [single] : [],
+      multiValue: false,
+      canonicalValue: raw,
+    };
+  }
+
+  function isLikelyMultiValueControl(control) {
+    const metadata = normalizeText(
+      [
+        control.getAttribute("aria-multiselectable"),
+        control.getAttribute("aria-label"),
+        control.getAttribute("name"),
+        control.className,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+    if (metadata.includes("true") && metadata.includes("multiselectable")) return true;
+    if (metadata.includes("multi") || metadata.includes("tags")) return true;
+    if (metadata.includes("checkbox")) return true;
+
+    const multiChip = control.querySelector(
+      ".react-select__multi-value, [class*='multi-value'], [class*='chip']"
+    );
+    return multiChip instanceof Element;
   }
 
   async function findPostCategorySizeField(sizeConfig) {
@@ -1643,7 +2583,23 @@
 
   function getFieldDefinitions() {
     return window.LPU_VENDOO_FIELD_DEFINITIONS ?? {
-      buildEbayFieldDefinitions(payload, selectors, valuePickers) {
+      normalizeCategoryPath(value) {
+        return String(value ?? "").trim().toLowerCase();
+      },
+      isJewelryProofSlice(input) {
+        const categoryPath = this.normalizeCategoryPath(input.categoryPath);
+        if (categoryPath.includes("jewelry")) return true;
+
+        return [input.material, input.styleType, input.signedMaker].some((value) =>
+          String(value ?? "").trim().length > 0
+        );
+      },
+      addFieldIfPresent(fields, input) {
+        const value = String(input.payloadValue ?? "").trim();
+        if (!value) return;
+        fields.push({ ...input, payloadValue: value });
+      },
+      buildEbayApparelFieldDefinitions(payload, selectors, valuePickers) {
         return [
           {
             marketplace: "ebay",
@@ -1692,6 +2648,84 @@
             selectorConfig: selectors.color,
           },
         ];
+      },
+      buildEbayJewelryFieldDefinitions(payload, selectors, valuePickers) {
+        const fields = [
+          {
+            marketplace: "ebay",
+            key: "title",
+            label: "eBay title",
+            payloadValue: valuePickers.pickEbayTitle(payload),
+            selectorConfig: selectors.title,
+          },
+          {
+            marketplace: "ebay",
+            key: "description",
+            label: "eBay description",
+            payloadValue: payload?.marketplaces?.ebay?.description ?? "",
+            selectorConfig: selectors.description,
+          },
+          {
+            marketplace: "ebay",
+            key: "category",
+            label: "eBay category",
+            payloadValue: valuePickers.pickEbayCategoryPath(payload),
+            selectorConfig: selectors.category,
+          },
+        ];
+
+        this.addFieldIfPresent(fields, {
+          marketplace: "ebay",
+          key: "signedMaker",
+          label: "eBay signed/maker",
+          payloadValue: valuePickers.pickEbaySignedMaker(payload),
+          selectorConfig: selectors.signedMaker ?? selectors.brand,
+        });
+
+        this.addFieldIfPresent(fields, {
+          marketplace: "ebay",
+          key: "color",
+          label: "eBay color",
+          payloadValue: valuePickers.pickEbayColor(payload),
+          selectorConfig: selectors.color,
+        });
+
+        this.addFieldIfPresent(fields, {
+          marketplace: "ebay",
+          key: "material",
+          label: "eBay material",
+          payloadValue: valuePickers.pickEbayMaterial(payload),
+          selectorConfig: selectors.material ?? selectors.color,
+        });
+
+        this.addFieldIfPresent(fields, {
+          marketplace: "ebay",
+          key: "styleType",
+          label: "eBay style/type",
+          payloadValue: valuePickers.pickEbayStyleType(payload),
+          selectorConfig: selectors.styleType ?? selectors.color,
+        });
+
+        return fields;
+      },
+      buildEbayFieldDefinitions(payload, selectors, valuePickers) {
+        const categoryPath = valuePickers.pickEbayCategoryPath(payload);
+        const signedMaker = valuePickers.pickEbaySignedMaker(payload);
+        const material = valuePickers.pickEbayMaterial(payload);
+        const styleType = valuePickers.pickEbayStyleType(payload);
+
+        if (
+          this.isJewelryProofSlice({
+            categoryPath,
+            signedMaker,
+            material,
+            styleType,
+          })
+        ) {
+          return this.buildEbayJewelryFieldDefinitions(payload, selectors, valuePickers);
+        }
+
+        return this.buildEbayApparelFieldDefinitions(payload, selectors, valuePickers);
       },
     };
   }
@@ -1972,6 +3006,36 @@
             },
           ],
         },
+        signedMaker: {
+          controlType: "custom_select",
+          adapterType: "react_select",
+          allowTypedEntry: true,
+          optionSelectors: [
+            '[role="option"]',
+            '[role="listbox"] [role="button"]',
+            '[role="listbox"] button',
+            '[data-radix-select-content] [data-radix-collection-item]',
+            '[data-radix-popper-content-wrapper] [data-radix-collection-item]',
+            '.select__option',
+            '.option',
+            'li[role="option"]',
+          ],
+          labelStrategies: [
+            {
+              labelTerms: ["signed", "maker", "designer", "brand"],
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["signed", "maker", "designer", "brand"],
+              metadataExcludes: ["title", "category", "size", "color", "colour", "material", "style", "type"],
+            },
+          ],
+          fallbackStrategies: [
+            {
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["signed", "maker", "designer", "brand"],
+              metadataExcludes: ["title", "category", "size", "color", "colour", "material", "style", "type"],
+            },
+          ],
+        },
         size: {
           controlType: "custom_select",
           adapterType: "react_select",
@@ -2049,6 +3113,66 @@
             },
           ],
         },
+        material: {
+          controlType: "custom_select",
+          adapterType: "react_select",
+          allowTypedEntry: false,
+          optionSelectors: [
+            '[role="option"]',
+            '[role="listbox"] [role="button"]',
+            '[role="listbox"] button',
+            '[data-radix-select-content] [data-radix-collection-item]',
+            '[data-radix-popper-content-wrapper] [data-radix-collection-item]',
+            '.select__option',
+            '.option',
+            'li[role="option"]',
+          ],
+          labelStrategies: [
+            {
+              labelTerms: ["material"],
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["material"],
+              metadataExcludes: ["title", "category", "size", "brand", "color", "colour", "style", "type"],
+            },
+          ],
+          fallbackStrategies: [
+            {
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["material"],
+              metadataExcludes: ["title", "category", "size", "brand", "color", "colour", "style", "type"],
+            },
+          ],
+        },
+        styleType: {
+          controlType: "custom_select",
+          adapterType: "react_select",
+          allowTypedEntry: false,
+          optionSelectors: [
+            '[role="option"]',
+            '[role="listbox"] [role="button"]',
+            '[role="listbox"] button',
+            '[data-radix-select-content] [data-radix-collection-item]',
+            '[data-radix-popper-content-wrapper] [data-radix-collection-item]',
+            '.select__option',
+            '.option',
+            'li[role="option"]',
+          ],
+          labelStrategies: [
+            {
+              labelTerms: ["style", "type"],
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["style", "type"],
+              metadataExcludes: ["title", "category", "size", "brand", "color", "colour", "material"],
+            },
+          ],
+          fallbackStrategies: [
+            {
+              elementSelector: 'button, [role="combobox"], input[type="text"], input:not([type])',
+              metadataIncludes: ["style", "type"],
+              metadataExcludes: ["title", "category", "size", "brand", "color", "colour", "material"],
+            },
+          ],
+        },
       },
     };
   }
@@ -2089,6 +3213,18 @@
     return typeof brand === "string" ? brand.trim() : "";
   }
 
+  function pickEbaySignedMaker(payload) {
+    const signedMaker =
+      payload?.marketplaces?.ebay?.itemSpecifics?.signedMaker ??
+      payload?.marketplaces?.ebay?.itemSpecifics?.maker ??
+      payload?.marketplaces?.ebay?.itemSpecifics?.designer ??
+      payload?.marketplaces?.ebay?.itemSpecifics?.brand ??
+      payload?.marketplaces?.ebay?.signedMaker ??
+      payload?.marketplaces?.ebay?.maker ??
+      "";
+    return typeof signedMaker === "string" ? signedMaker.trim() : "";
+  }
+
   function pickEbaySize(payload) {
     const size =
       payload?.marketplaces?.ebay?.itemSpecifics?.size ??
@@ -2105,6 +3241,24 @@
       "";
 
     return typeof color === "string" ? color.trim() : "";
+  }
+
+  function pickEbayMaterial(payload) {
+    const material =
+      payload?.marketplaces?.ebay?.itemSpecifics?.material ??
+      payload?.marketplaces?.ebay?.material ??
+      "";
+    return typeof material === "string" ? material.trim() : "";
+  }
+
+  function pickEbayStyleType(payload) {
+    const styleType =
+      payload?.marketplaces?.ebay?.itemSpecifics?.styleType ??
+      payload?.marketplaces?.ebay?.itemSpecifics?.style ??
+      payload?.marketplaces?.ebay?.itemSpecifics?.type ??
+      payload?.marketplaces?.ebay?.styleType ??
+      "";
+    return typeof styleType === "string" ? styleType.trim() : "";
   }
 
   function findElementBySelectorMap(fieldConfig, root) {

@@ -115,6 +115,50 @@
       ["payloadMap", "ebay", "color"]
     );
 
+    const signedMaker = pickString(
+      input,
+      ["marketplaces", "ebay", "itemSpecifics", "signedMaker"],
+      ["marketplaces", "ebay", "itemSpecifics", "maker"],
+      ["marketplaces", "ebay", "signedMaker"],
+      ["ebay", "itemSpecifics", "signedMaker"],
+      ["ebay", "itemSpecifics", "maker"],
+      ["ebay", "signedMaker"]
+    );
+
+    const material = pickString(
+      input,
+      ["marketplaces", "ebay", "itemSpecifics", "material"],
+      ["marketplaces", "ebay", "material"],
+      ["ebay", "itemSpecifics", "material"],
+      ["ebay", "material"]
+    );
+
+    const styleType = pickString(
+      input,
+      ["marketplaces", "ebay", "itemSpecifics", "styleType"],
+      ["marketplaces", "ebay", "styleType"],
+      ["ebay", "itemSpecifics", "styleType"],
+      ["ebay", "styleType"]
+    );
+
+    const incomingItemSpecifics = pickObject(
+      input,
+      ["marketplaces", "ebay", "itemSpecifics"],
+      ["ebay", "itemSpecifics"],
+      ["payloadMap", "ebay", "itemSpecifics"]
+    );
+
+    const normalizedItemSpecifics = normalizeItemSpecifics(incomingItemSpecifics);
+    const itemSpecifics = {
+      ...normalizedItemSpecifics,
+      brand: normalizedItemSpecifics.brand || brand,
+      size: normalizedItemSpecifics.size || size,
+      color: normalizedItemSpecifics.color || color,
+      ...(signedMaker ? { signedMaker } : {}),
+      ...(material ? { material } : {}),
+      ...(styleType ? { styleType } : {}),
+    };
+
     return {
       version: 1,
       meta: {
@@ -129,11 +173,7 @@
           description,
           category,
           canonicalVendooCategoryPath,
-          itemSpecifics: {
-            brand,
-            size,
-            color,
-          },
+          itemSpecifics,
         },
       },
       raw: input ?? null,
@@ -148,6 +188,32 @@
       }
     }
     return "";
+  }
+
+  function pickObject(obj, ...paths) {
+    for (const path of paths) {
+      const value = getAtPath(obj, path);
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  function normalizeItemSpecifics(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+
+    const result = {};
+    for (const [key, raw] of Object.entries(value)) {
+      if (typeof raw !== "string") continue;
+      const normalized = raw.trim();
+      if (!normalized) continue;
+      result[key] = normalized;
+    }
+
+    return result;
   }
 
   function getAtPath(obj, path) {

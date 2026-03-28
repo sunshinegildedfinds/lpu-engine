@@ -1071,11 +1071,13 @@ export default function LpuPage() {
           payloadMap.platforms.ebay.titleA,
           payloadMap.platforms.ebay.titleB,
           payloadMap.platforms.ebay.description,
+          payloadMap.platforms.ebay.section,
         ].join("|")}
         seed={{
           titleA: payloadMap.platforms.ebay.titleA,
           titleB: payloadMap.platforms.ebay.titleB,
           description: payloadMap.platforms.ebay.description,
+          ebaySection: payloadMap.platforms.ebay.section,
         }}
       />
     </main>
