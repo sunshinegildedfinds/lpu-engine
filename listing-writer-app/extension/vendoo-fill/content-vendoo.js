@@ -1182,6 +1182,7 @@
 
     function addCandidate(text) {
       const cleaned = cleanCategoryStage(text);
+      if (isSeparatorOptionLabel(cleaned)) return;
       const normalized = normalizeText(cleaned);
       if (!normalized || seen.has(normalized)) return;
       seen.add(normalized);
@@ -1214,16 +1215,33 @@
   }
 
   function getOptionText(option) {
-    return [
+    const uniqueValues = [];
+    const seen = new Set();
+    const orderedCandidates = [
       option.innerText,
       option.textContent,
       option.getAttribute("aria-label"),
       option.getAttribute("title"),
       option.getAttribute("data-value"),
       option.getAttribute("value"),
-    ]
-      .filter(Boolean)
-      .join(" ");
+    ];
+
+    for (const candidate of orderedCandidates) {
+      const cleaned = cleanCategoryStage(candidate);
+      const normalized = normalizeText(cleaned);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      uniqueValues.push(cleaned);
+    }
+
+    return uniqueValues[0] ?? "";
+  }
+
+  function isSeparatorOptionLabel(value) {
+    const cleaned = cleanCategoryStage(value);
+    if (!cleaned) return true;
+    const compact = cleaned.replace(/[\s\-–—_•·|:()[\]{}.,/\\]+/g, "");
+    return compact.length === 0;
   }
 
   function getCustomSelectAttemptValue(fieldKey, value) {
@@ -2095,7 +2113,10 @@
         values: getNormalizedOptionValuesFromEntry(entry),
       }));
       const normalizedOptions = getUniqueComboboxNormalizedValues(normalizedEntries, 18);
-      const matches = normalizedEntries.filter((candidate) => candidate.values.includes(target));
+      const normalizedPayloadValue = normalizeOptionValue(target);
+      const matches = normalizedEntries.filter((candidate) =>
+        candidate.values.some((value) => normalizeOptionValue(value) === normalizedPayloadValue)
+      );
       const debugSummary = buildComboboxDebugSummary({
         fieldLabel,
         payloadRaw,
@@ -2105,6 +2126,7 @@
         rawOptions,
         normalizedOptions,
         target,
+        normalizedPayloadValue,
         exactMatchFound: matches.length > 0,
       });
       console.debug("[LPU Vendoo] Combobox debug", debugSummary);
@@ -2175,6 +2197,7 @@
       rawOptions,
       normalizedOptions,
       target,
+      normalizedPayloadValue,
       exactMatchFound,
     } = input;
 
@@ -2184,6 +2207,7 @@
       payloadCanonical,
       valueMode,
       target,
+      normalizedPayloadValue,
       activeControlIdentified: optionDiscovery.activeControlIdentified,
       activeControlSource: optionDiscovery.activeControlSource,
       harvestedFromFallback: optionDiscovery.harvestedFromFallback,
