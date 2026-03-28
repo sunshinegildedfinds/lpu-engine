@@ -1531,6 +1531,8 @@
     setincludes: ["set includes", "includes", "included"],
     color: ["color", "colour"],
     size: ["size"],
+    department: ["department", "jewelry department"],
+    jewelrydepartment: ["jewelry department", "department"],
   };
 
   async function fillDynamicVisibleFieldsAfterCategory(input) {
@@ -1559,12 +1561,6 @@
       return;
     }
 
-    const candidates = buildDynamicPayloadCandidates(payload, stepOutcomes);
-    if (!candidates.length) {
-      skippedForSafety.push("Dynamic optional fields (no payload values)");
-      return;
-    }
-
     let visibleRegistry = discoverVisibleFieldRegistry(specificsRoot);
     if (!visibleRegistry.length) {
       await wait(220);
@@ -1574,6 +1570,23 @@
       needsReview.push(
         "Dynamic optional fields (expanded but no visible fields discovered)"
       );
+      return;
+    }
+
+    const {
+      candidates,
+      excludedPayloadKeys,
+      hasVisibleDepartmentLikeField,
+      visibleDepartmentLikeLabels,
+      departmentOverrideApplied,
+      exclusionReasonByKey,
+    } = buildDynamicPayloadCandidates(
+      payload,
+      stepOutcomes,
+      visibleRegistry
+    );
+    if (!candidates.length) {
+      skippedForSafety.push("Dynamic optional fields (no payload values)");
       return;
     }
 
@@ -1611,6 +1624,20 @@
 
     console.debug("[LPU Vendoo] Dynamic visible fields", {
       revealStatus,
+      payloadDepartmentState: {
+        department:
+          typeof payload?.marketplaces?.ebay?.itemSpecifics?.department === "string"
+            ? payload.marketplaces.ebay.itemSpecifics.department.trim()
+              ? "present"
+              : "blank"
+            : "omitted",
+        jewelryDepartment:
+          typeof payload?.marketplaces?.ebay?.jewelryDepartment === "string"
+            ? payload.marketplaces.ebay.jewelryDepartment.trim()
+              ? "present"
+              : "blank"
+            : "omitted",
+      },
       discovered: visibleRegistry.map((field) => ({
         label: field.label,
         normalizedLabel: field.normalizedLabel,
@@ -1618,6 +1645,11 @@
         allowedOptions: field.allowedOptions.slice(0, 8),
       })),
       candidateKeys: candidates.map((candidate) => candidate.key),
+      excludedPayloadKeys,
+      hasVisibleDepartmentLikeField,
+      visibleDepartmentLikeLabels,
+      departmentOverrideApplied,
+      exclusionReasonByKey,
       matchedCount,
       filledCount,
     });
@@ -1700,31 +1732,78 @@
     return visibleLabels.length > 0;
   }
 
-  function buildDynamicPayloadCandidates(payload, stepOutcomes) {
+  function buildDynamicPayloadCandidates(payload, stepOutcomes, visibleRegistry) {
     const consumedKeys = new Set(Object.keys(stepOutcomes ?? {}));
     const ebay = payload?.marketplaces?.ebay ?? {};
     const specifics = ebay?.itemSpecifics ?? {};
     const candidates = [];
+    const excludedPayloadKeys = [];
+    const seenKeys = new Set();
+    const visibleLabels = new Set(
+      Array.isArray(visibleRegistry)
+        ? visibleRegistry.map((field) => normalizeText(field.label)).filter(Boolean)
+        : []
+    );
+    const visibleDepartmentLikeLabels = Array.from(visibleLabels).filter((label) =>
+      /\bdepartment\b/.test(label)
+    );
+    const hasVisibleDepartmentLikeField = visibleDepartmentLikeLabels.length > 0;
+    const departmentOverrideApplied = {};
+    const exclusionReasonByKey = {};
 
-    const sourceEntries = Object.entries(specifics).filter((entry) => {
-      const [key, value] = entry;
-      if (consumedKeys.has(String(key))) return false;
-      return typeof value === "string" && value.trim();
-    });
+    function isDepartmentLikeKey(rawKey) {
+      const normalized = normalizeText(rawKey).replace(/[^a-z0-9]/g, "");
+      return normalized === "department" || normalized === "jewelrydepartment";
+    }
 
-    for (const [key, value] of sourceEntries) {
-      const normalizedKey = normalizeText(String(key)).replace(/[^a-z0-9]/g, "");
+    function addCandidateEntry(key, value) {
+      const rawKey = String(key);
+      const allowDepartmentOverride =
+        hasVisibleDepartmentLikeField && isDepartmentLikeKey(rawKey);
+      if (isDepartmentLikeKey(rawKey)) {
+        departmentOverrideApplied[rawKey] = allowDepartmentOverride;
+      }
+      if (consumedKeys.has(rawKey) && !allowDepartmentOverride) {
+        excludedPayloadKeys.push(rawKey);
+        exclusionReasonByKey[rawKey] = "consumed_key";
+        return;
+      }
+      if (typeof value !== "string" || !value.trim()) {
+        excludedPayloadKeys.push(rawKey);
+        exclusionReasonByKey[rawKey] = "missing_or_blank_value";
+        return;
+      }
+      const dedupeKey = normalizeText(rawKey).replace(/[^a-z0-9]/g, "");
+      if (!dedupeKey || seenKeys.has(dedupeKey)) return;
+      seenKeys.add(dedupeKey);
+
+      const normalizedKey = normalizeText(rawKey).replace(/[^a-z0-9]/g, "");
       const synonyms = DYNAMIC_FIELD_SYNONYMS[normalizedKey] ?? [];
-      const keyTerms = buildKeyTermsFromKey(String(key));
+      const keyTerms = buildKeyTermsFromKey(rawKey);
       const matchTerms = Array.from(new Set([...synonyms, ...keyTerms].map(normalizeText)));
       candidates.push({
-        key: String(key),
+        key: rawKey,
         value: String(value).trim(),
         matchTerms,
       });
     }
 
-    return candidates;
+    for (const [key, value] of Object.entries(specifics)) {
+      addCandidateEntry(key, value);
+    }
+
+    for (const key of ["department", "jewelryDepartment"]) {
+      addCandidateEntry(key, ebay?.[key]);
+    }
+
+    return {
+      candidates,
+      excludedPayloadKeys: Array.from(new Set(excludedPayloadKeys)),
+      hasVisibleDepartmentLikeField,
+      visibleDepartmentLikeLabels,
+      departmentOverrideApplied,
+      exclusionReasonByKey,
+    };
   }
 
   function buildKeyTermsFromKey(key) {
