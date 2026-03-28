@@ -357,6 +357,8 @@
         stageLabelsToTry,
         stageIndex: index,
         confirmedStages,
+        pickerElement: pickerInfo.element,
+        optionSelectors: fieldConfig.optionSelectors ?? [],
       });
       optionEntries = stageMatchResult.candidateEntries;
       let matches = stageMatchResult.matches;
@@ -381,6 +383,8 @@
             stageLabelsToTry,
             stageIndex: index,
             confirmedStages,
+            pickerElement: pickerInfo.element,
+            optionSelectors: fieldConfig.optionSelectors ?? [],
           });
           optionEntries = stageMatchResult.candidateEntries;
           matches = stageMatchResult.matches;
@@ -399,6 +403,18 @@
         const breadcrumbMode = stageMatchResult.breadcrumbMode ? "yes" : "no";
         const confirmedPrefix = stageMatchResult.confirmedPrefix || "none";
         const safeCandidateFound = matches.length > 0 ? "yes" : "no";
+        const prefixFilterApplied = stageMatchResult.prefixFilterApplied ? "yes" : "no";
+        const filteredCandidateCount = stageMatchResult.filteredCandidateCount ?? 0;
+        const filteredVisibleSample = stageMatchResult.filteredVisibleSample || "none";
+        const candidateSourceType = stageMatchResult.candidateSourceType || "unknown";
+        const candidateElementSelector = stageMatchResult.candidateElementSelector || "none";
+        const extractedRowText = stageMatchResult.extractedRowText || "none";
+        const clickableRowCount = stageMatchResult.clickableRowCount ?? 0;
+        const breadcrumbRowCount = stageMatchResult.breadcrumbRowCount ?? 0;
+        const sampledRowTexts = stageMatchResult.sampledRowTexts || "none";
+        const activeRowListSelectorUsed = stageMatchResult.activeRowListSelectorUsed || "none";
+        const stageRowCount = stageMatchResult.stageRowCount ?? 0;
+        const parentRowExcluded = stageMatchResult.excludedParentRow ? "true" : "false";
 
         const detail =
           `stopped at stage ${index + 1}: wanted "${wanted}"; ` +
@@ -406,6 +422,11 @@
           `picker: ${pickerStatus} (${pickerSelector}); ` +
           `raw candidates: ${optionDiscovery.rawCount}; visible candidates: ${optionDiscovery.visibleCount}; ` +
           `raw sample: ${optionDiscovery.rawSample || "none"}; visible sample: ${optionDiscovery.visibleSample || "none"}; ` +
+          `candidate source: ${candidateSourceType}; selector: ${candidateElementSelector}; ` +
+          `extracted row text: "${extractedRowText}"; clickable rows: ${clickableRowCount}; breadcrumb rows: ${breadcrumbRowCount}; ` +
+          `sampled rows: ${sampledRowTexts}; ` +
+          `activeRowListSelectorUsed: ${activeRowListSelectorUsed}; stageRowCount: ${stageRowCount}; excludedParentRow: ${parentRowExcluded}; ` +
+          `prefix-compatible filtering: ${prefixFilterApplied}; filtered candidates: ${filteredCandidateCount}; filtered sample: ${filteredVisibleSample}; ` +
           `scope: ${optionDiscovery.scopeMode}; ` +
           `visible: ${visiblePreview || "none"}; ` +
           `alias tried: ${aliasTried}; exact match found: ${exactMatchFound}; ` +
@@ -432,6 +453,18 @@
           visiblePreview,
           breadcrumbMode: stageMatchResult.breadcrumbMode,
           confirmedPrefix: stageMatchResult.confirmedPrefix,
+          prefixFilterApplied: stageMatchResult.prefixFilterApplied,
+          filteredCandidateCount: stageMatchResult.filteredCandidateCount,
+          filteredVisibleSample: stageMatchResult.filteredVisibleSample,
+          candidateSourceType: stageMatchResult.candidateSourceType,
+          candidateElementSelector: stageMatchResult.candidateElementSelector,
+          extractedRowText: stageMatchResult.extractedRowText,
+          clickableRowCount: stageMatchResult.clickableRowCount,
+          breadcrumbRowCount: stageMatchResult.breadcrumbRowCount,
+          sampledRowTexts: stageMatchResult.sampledRowTexts,
+          activeRowListSelectorUsed: stageMatchResult.activeRowListSelectorUsed,
+          stageRowCount: stageMatchResult.stageRowCount,
+          excludedParentRow: stageMatchResult.excludedParentRow,
           exactMatchFound: matches.length > 0,
           safeCandidateFound: matches.length > 0,
           stageOneNodes: index === 0 ? stageDiagnostics : "",
@@ -687,14 +720,28 @@
   }
 
   function findCategoryStageMatches(input) {
-    const { optionEntries, stageLabelsToTry, stageIndex, confirmedStages } = input;
-    const confirmedPrefix = confirmedStages.join(" > ");
-    const candidateEntries = getStageCandidateEntries({
+    const {
       optionEntries,
       stageLabelsToTry,
       stageIndex,
       confirmedStages,
+      pickerElement,
+      optionSelectors,
+    } = input;
+    const confirmedPrefix = confirmedStages.join(" > ");
+    const stageCandidateResult = getStageCandidateEntries({
+      optionEntries,
+      stageLabelsToTry,
+      stageIndex,
+      confirmedStages,
+      pickerElement,
+      optionSelectors,
     });
+    const candidateEntries = stageCandidateResult.entries;
+    const candidateSummary = summarizeCategoryCandidates(candidateEntries);
+    const filteredVisibleSample = buildVisibleOptionsPreview(candidateEntries, 8);
+    const filteredCandidateCount = candidateEntries.length;
+    const prefixFilterApplied = stageIndex > 0 && confirmedStages.length > 0;
 
     if (stageIndex === 0) {
       return {
@@ -702,6 +749,18 @@
         breadcrumbMode: false,
         confirmedPrefix,
         candidateEntries,
+        prefixFilterApplied,
+        filteredCandidateCount,
+        filteredVisibleSample,
+        candidateSourceType: candidateSummary.candidateSourceType,
+        candidateElementSelector: candidateSummary.candidateElementSelector,
+        extractedRowText: candidateSummary.extractedRowText,
+        clickableRowCount: candidateSummary.clickableRowCount,
+        breadcrumbRowCount: candidateSummary.breadcrumbRowCount,
+        sampledRowTexts: candidateSummary.sampledRowTexts,
+        activeRowListSelectorUsed: stageCandidateResult.activeRowListSelectorUsed,
+        stageRowCount: stageCandidateResult.stageRowCount,
+        excludedParentRow: stageCandidateResult.excludedParentRow,
       };
     }
 
@@ -712,6 +771,18 @@
         breadcrumbMode: false,
         confirmedPrefix,
         candidateEntries,
+        prefixFilterApplied,
+        filteredCandidateCount,
+        filteredVisibleSample,
+        candidateSourceType: candidateSummary.candidateSourceType,
+        candidateElementSelector: candidateSummary.candidateElementSelector,
+        extractedRowText: candidateSummary.extractedRowText,
+        clickableRowCount: candidateSummary.clickableRowCount,
+        breadcrumbRowCount: candidateSummary.breadcrumbRowCount,
+        sampledRowTexts: candidateSummary.sampledRowTexts,
+        activeRowListSelectorUsed: stageCandidateResult.activeRowListSelectorUsed,
+        stageRowCount: stageCandidateResult.stageRowCount,
+        excludedParentRow: stageCandidateResult.excludedParentRow,
       };
     }
 
@@ -724,18 +795,92 @@
       breadcrumbMode: true,
       confirmedPrefix,
       candidateEntries,
+      prefixFilterApplied,
+      filteredCandidateCount,
+      filteredVisibleSample,
+      candidateSourceType: candidateSummary.candidateSourceType,
+      candidateElementSelector: candidateSummary.candidateElementSelector,
+      extractedRowText: candidateSummary.extractedRowText,
+      clickableRowCount: candidateSummary.clickableRowCount,
+      breadcrumbRowCount: candidateSummary.breadcrumbRowCount,
+      sampledRowTexts: candidateSummary.sampledRowTexts,
+      activeRowListSelectorUsed: stageCandidateResult.activeRowListSelectorUsed,
+      stageRowCount: stageCandidateResult.stageRowCount,
+      excludedParentRow: stageCandidateResult.excludedParentRow,
     };
   }
 
   function getStageCandidateEntries(input) {
-    const { optionEntries, stageLabelsToTry, stageIndex, confirmedStages } = input;
-    if (stageIndex === 0) return optionEntries;
+    const { optionEntries, stageLabelsToTry, stageIndex, confirmedStages, pickerElement } =
+      input;
+    if (stageIndex === 0) {
+      return {
+        entries: optionEntries,
+        activeRowListSelectorUsed: "none",
+        stageRowCount: optionEntries.length,
+        excludedParentRow: false,
+      };
+    }
+
+    const stagePanelResult = collectStageOptionRowsFromModal({
+      confirmedStages,
+      pickerElement,
+    });
+    const stageSourceEntries = stagePanelResult.entries.length
+      ? stagePanelResult.entries
+      : optionEntries;
 
     const normalizedPrefix = normalizeText(confirmedStages.join(" > "));
     const normalizedPrefixFlat = normalizeText(confirmedStages.join(" "));
     const normalizedWanted = stageLabelsToTry.map((label) => normalizeText(label)).filter(Boolean);
+    const candidateProfiles = stageSourceEntries.map((entry) => {
+      const extractedRowText = cleanCategoryStage(getOptionTextFromEntry(entry));
+      const normalizedRowText = normalizeText(extractedRowText);
+      const hasBreadcrumb = containsBreadcrumbSeparator(extractedRowText);
+      const hasPrefix =
+        !!normalizedPrefix &&
+        (normalizedRowText.includes(normalizedPrefix) ||
+          (normalizedPrefixFlat && containsStagesInOrder(normalizedRowText, confirmedStages)));
 
-    const preferred = optionEntries.filter((entry) => {
+      return {
+        entry,
+        extractedRowText,
+        normalizedRowText,
+        hasBreadcrumb,
+        hasPrefix,
+      };
+    });
+
+    // Stage 2+ should prefer actual breadcrumb/result rows under the confirmed prefix path.
+    const prefixCompatibleProfiles = candidateProfiles.filter(
+      (profile) => profile.hasPrefix || (profile.hasBreadcrumb && profile.normalizedRowText.includes(" > "))
+    );
+    if (prefixCompatibleProfiles.length > 0) {
+      return {
+        entries: prefixCompatibleProfiles.map((profile) => profile.entry),
+        activeRowListSelectorUsed: stagePanelResult.activeRowListSelectorUsed,
+        stageRowCount: stagePanelResult.stageRowCount,
+        excludedParentRow: stagePanelResult.excludedParentRow,
+      };
+    }
+
+    // If no breadcrumb-prefix rows are available, fall back to rows that at least match wanted stage labels.
+    const wantedCompatibleProfiles = candidateProfiles.filter((profile) =>
+      normalizedWanted.some(
+        (wanted) =>
+          profile.normalizedRowText === wanted || profile.normalizedRowText.includes(wanted)
+      )
+    );
+    if (wantedCompatibleProfiles.length > 0) {
+      return {
+        entries: wantedCompatibleProfiles.map((profile) => profile.entry),
+        activeRowListSelectorUsed: stagePanelResult.activeRowListSelectorUsed,
+        stageRowCount: stagePanelResult.stageRowCount,
+        excludedParentRow: stagePanelResult.excludedParentRow,
+      };
+    }
+
+    const preferred = stageSourceEntries.filter((entry) => {
       const candidates = getOptionTextCandidates(entry);
       return candidates.some((candidate) => {
         const cleaned = cleanCategoryStage(candidate);
@@ -773,7 +918,105 @@
       });
     });
 
-    return preferred.length ? preferred : optionEntries;
+    if (confirmedStages.length > 0) {
+      if (stageIndex >= 2 && !preferred.length) {
+        return {
+          entries: stageSourceEntries,
+          activeRowListSelectorUsed: stagePanelResult.activeRowListSelectorUsed,
+          stageRowCount: stagePanelResult.stageRowCount,
+          excludedParentRow: stagePanelResult.excludedParentRow,
+        };
+      }
+
+      return {
+        entries: preferred,
+        activeRowListSelectorUsed: stagePanelResult.activeRowListSelectorUsed,
+        stageRowCount: stagePanelResult.stageRowCount,
+        excludedParentRow: stagePanelResult.excludedParentRow,
+      };
+    }
+
+    return {
+      entries: preferred.length ? preferred : stageSourceEntries,
+      activeRowListSelectorUsed: stagePanelResult.activeRowListSelectorUsed,
+      stageRowCount: stagePanelResult.stageRowCount,
+      excludedParentRow: stagePanelResult.excludedParentRow,
+    };
+  }
+
+  function collectStageOptionRowsFromModal(input) {
+    const { confirmedStages, pickerElement } = input;
+    if (!(pickerElement instanceof Element) || !confirmedStages.length) {
+      return {
+        entries: [],
+        activeRowListSelectorUsed: "none",
+        stageRowCount: 0,
+        excludedParentRow: false,
+      };
+    }
+
+    const rowSelectorUsed = 'div[data-testid="category-option-dropdown"][role="option"]';
+    const sourceRows = Array.from(pickerElement.querySelectorAll(rowSelectorUsed)).filter(
+      (row) => row instanceof Element && isVisible(row)
+    );
+    const parentLabel = normalizeText(confirmedStages[confirmedStages.length - 1] ?? "");
+
+    const entries = [];
+    for (const row of sourceRows) {
+      if (!(row instanceof Element)) continue;
+      entries.push({
+        element: row,
+        selector: rowSelectorUsed,
+        clickTarget: resolveOptionClickTarget(row),
+      });
+    }
+
+    const entriesWithoutParent = parentLabel
+      ? entries.filter((entry) => {
+          const row = resolveCategoryOptionRow(entry.clickTarget) ?? resolveCategoryOptionRow(entry.element);
+          const rowLabel = normalizeText(getCategoryOptionRowLabel(row ?? entry.element));
+          return rowLabel !== parentLabel;
+        })
+      : entries;
+
+    return {
+      entries: entriesWithoutParent,
+      activeRowListSelectorUsed: rowSelectorUsed,
+      stageRowCount: entries.length,
+      excludedParentRow: !!parentLabel && entriesWithoutParent.length !== entries.length,
+    };
+  }
+
+  function summarizeCategoryCandidates(optionEntries) {
+    const sampledRowTexts = [];
+    const selectors = new Set();
+    let clickableRowCount = 0;
+    let breadcrumbRowCount = 0;
+
+    for (const entry of optionEntries) {
+      selectors.add(entry.selector);
+      if (entry.clickTarget instanceof Element) clickableRowCount += 1;
+
+      const text = cleanCategoryStage(getOptionTextFromEntry(entry));
+      if (!text) continue;
+      if (containsBreadcrumbSeparator(text)) breadcrumbRowCount += 1;
+      if (sampledRowTexts.length < 8) {
+        sampledRowTexts.push(text);
+      }
+    }
+
+    const candidateElementSelector = Array.from(selectors).slice(0, 3).join(", ") || "none";
+    const candidateSourceType = breadcrumbRowCount > 0 ? "breadcrumb_rows" : "stage_rows";
+    const extractedRowText = sampledRowTexts[0] ?? "";
+
+    return {
+      candidateSourceType,
+      candidateElementSelector,
+      extractedRowText,
+      clickableRowCount,
+      breadcrumbRowCount,
+      sampledRowTexts: sampledRowTexts.join(" | ") || "none",
+    };
   }
 
   function isBreadcrumbResultMode(optionEntries, confirmedStages) {
@@ -1097,20 +1340,19 @@
     const ariaLabel = cleanCategoryStage(row.getAttribute("aria-label") || "");
     if (ariaLabel) return ariaLabel;
 
-    const directChildren = Array.from(row.children).filter(
-      (child) => child instanceof Element
-    );
-    const directChildTexts = directChildren
+    const leafDescendantTexts = Array.from(row.querySelectorAll("div, span, p, label, strong"))
+      .filter((child) => child instanceof Element && isVisible(child))
+      .filter((child) => child.children.length === 0)
       .map((child) => cleanCategoryStage(child.innerText || child.textContent || ""))
       .filter(Boolean)
       .filter((text) => /[a-z0-9]/i.test(text));
 
-    const directWithSeparators = directChildTexts.find((text) => /[>›»]/.test(text));
+    const directWithSeparators = leafDescendantTexts.find((text) => /[>›»]/.test(text));
     if (directWithSeparators) return directWithSeparators;
 
-    if (directChildTexts.length > 0) {
-      // Prefer the longest direct-child text to avoid tiny icon/arrow labels.
-      return directChildTexts.sort((a, b) => b.length - a.length)[0];
+    if (leafDescendantTexts.length > 0) {
+      // Prefer the longest visible leaf text-bearing descendant.
+      return leafDescendantTexts.sort((a, b) => b.length - a.length)[0];
     }
 
     return cleanCategoryStage(row.innerText || row.textContent || "");
