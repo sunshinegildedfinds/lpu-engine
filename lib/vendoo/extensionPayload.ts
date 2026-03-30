@@ -7,6 +7,7 @@ export type EbayItemSpecifics = {
   styleType?: string;
   fabricType?: string;
   department?: string;
+  jewelryDepartment?: string;
   occasion?: string;
   style?: string;
   features?: string;
@@ -68,6 +69,7 @@ export function buildVendooExtensionPayload(input: {
     "styleType",
     "fabricType",
     "department",
+    "jewelryDepartment",
     "occasion",
     "style",
     "features",

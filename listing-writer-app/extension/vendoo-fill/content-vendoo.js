@@ -1531,8 +1531,8 @@
     setincludes: ["set includes", "includes", "included"],
     color: ["color", "colour"],
     size: ["size"],
-    department: ["department", "jewelry department"],
-    jewelrydepartment: ["jewelry department", "department"],
+    department: ["department"],
+    jewelrydepartment: ["jewelry department"],
   };
 
   async function fillDynamicVisibleFieldsAfterCategory(input) {
@@ -1592,21 +1592,69 @@
 
     let matchedCount = 0;
     let filledCount = 0;
+    const adapterAttemptedByField = [];
+    const unattemptedFieldReasons = [];
+    const finalRouteByKey = [];
 
     for (const field of visibleRegistry) {
-      const matches = candidates.filter((candidate) =>
+      const initialMatches = candidates.filter((candidate) =>
         isDynamicLabelMatch(field.normalizedLabel, candidate.matchTerms)
       );
-      if (matches.length !== 1) continue;
+      const resolved = resolveFinalMatchesByPrecedence(
+        field.normalizedLabel,
+        initialMatches,
+        candidates
+      );
+      const matches = resolved.matches;
+      finalRouteByKey.push({
+        label: field.label,
+        matchedKeysBeforeResolution: initialMatches.map((candidate) => candidate.key),
+        matchedKeysAfterResolution: matches.map((candidate) => candidate.key),
+        resolutionPhase: resolved.phase,
+        matchedKeys: matches.map((candidate) => candidate.key),
+      });
+      if (matches.length === 0) {
+        unattemptedFieldReasons.push({
+          label: field.label,
+          controlFamily: field.controlFamily,
+          reason: "no_payload_match",
+        });
+        continue;
+      }
+      if (matches.length > 1) {
+        unattemptedFieldReasons.push({
+          label: field.label,
+          controlFamily: field.controlFamily,
+          reason: "ambiguous_payload_match",
+          matchedKeys: matches.map((candidate) => candidate.key),
+        });
+        continue;
+      }
       const candidate = matches[0];
       matchedCount += 1;
 
       if (usedElements.has(field.control)) {
         skippedForSafety.push(`eBay ${field.label} (collision prevention)`);
+        adapterAttemptedByField.push({
+          label: field.label,
+          payloadKey: candidate.key,
+          controlFamily: field.controlFamily,
+          adapterSelected: "collision_prevention_skip",
+          status: "skipped_for_safety",
+          reason: "collision_prevention",
+        });
         continue;
       }
 
       const result = await fillDynamicFieldValue(field, candidate.value, selectors);
+      adapterAttemptedByField.push({
+        label: field.label,
+        payloadKey: candidate.key,
+        controlFamily: result.controlFamily ?? field.controlFamily,
+        adapterSelected: result.adapterSelected ?? "unknown",
+        status: result.status,
+        reason: result.reason ?? "",
+      });
       if (result.status === "filled") {
         usedElements.add(field.control);
         filled.push(`eBay ${field.label}`);
@@ -1632,8 +1680,14 @@
               : "blank"
             : "omitted",
         jewelryDepartment:
-          typeof payload?.marketplaces?.ebay?.jewelryDepartment === "string"
-            ? payload.marketplaces.ebay.jewelryDepartment.trim()
+          typeof (
+            payload?.marketplaces?.ebay?.itemSpecifics?.jewelryDepartment ??
+            payload?.marketplaces?.ebay?.jewelryDepartment
+          ) === "string"
+            ? String(
+                payload.marketplaces.ebay.itemSpecifics?.jewelryDepartment ??
+                  payload.marketplaces.ebay.jewelryDepartment
+              ).trim()
               ? "present"
               : "blank"
             : "omitted",
@@ -1642,6 +1696,7 @@
         label: field.label,
         normalizedLabel: field.normalizedLabel,
         controlType: field.controlType,
+        controlFamily: field.controlFamily,
         allowedOptions: field.allowedOptions.slice(0, 8),
       })),
       candidateKeys: candidates.map((candidate) => candidate.key),
@@ -1650,6 +1705,9 @@
       visibleDepartmentLikeLabels,
       departmentOverrideApplied,
       exclusionReasonByKey,
+      adapterAttemptedByField,
+      unattemptedFieldReasons,
+      finalRouteByKey,
       matchedCount,
       filledCount,
     });
@@ -1732,8 +1790,7 @@
     return visibleLabels.length > 0;
   }
 
-  function buildDynamicPayloadCandidates(payload, stepOutcomes, visibleRegistry) {
-    const consumedKeys = new Set(Object.keys(stepOutcomes ?? {}));
+  function buildDynamicPayloadCandidates(payload, _stepOutcomes, visibleRegistry) {
     const ebay = payload?.marketplaces?.ebay ?? {};
     const specifics = ebay?.itemSpecifics ?? {};
     const candidates = [];
@@ -1763,18 +1820,24 @@
       if (isDepartmentLikeKey(rawKey)) {
         departmentOverrideApplied[rawKey] = allowDepartmentOverride;
       }
-      if (consumedKeys.has(rawKey) && !allowDepartmentOverride) {
-        excludedPayloadKeys.push(rawKey);
-        exclusionReasonByKey[rawKey] = "consumed_key";
-        return;
-      }
       if (typeof value !== "string" || !value.trim()) {
         excludedPayloadKeys.push(rawKey);
         exclusionReasonByKey[rawKey] = "missing_or_blank_value";
         return;
       }
+      const normalizedValue = normalizeOptionValue(value);
+      if (normalizedValue === "not applicable") {
+        excludedPayloadKeys.push(rawKey);
+        exclusionReasonByKey[rawKey] = "not_applicable";
+        return;
+      }
       const dedupeKey = normalizeText(rawKey).replace(/[^a-z0-9]/g, "");
-      if (!dedupeKey || seenKeys.has(dedupeKey)) return;
+      if (!dedupeKey) return;
+      if (seenKeys.has(dedupeKey)) {
+        excludedPayloadKeys.push(rawKey);
+        exclusionReasonByKey[rawKey] = "duplicate_key";
+        return;
+      }
       seenKeys.add(dedupeKey);
 
       const normalizedKey = normalizeText(rawKey).replace(/[^a-z0-9]/g, "");
@@ -1836,6 +1899,12 @@
       seenControls.add(control);
 
       const controlType = detectDynamicControlType(control);
+      const controlFamily = classifyDynamicControlFamily({
+        label,
+        normalizedLabel,
+        control,
+        controlType,
+      });
       const allowedOptions = discoverAllowedOptions(control, controlType);
 
       fields.push({
@@ -1843,6 +1912,7 @@
         normalizedLabel,
         control,
         controlType,
+        controlFamily,
         allowedOptions,
       });
     }
@@ -1958,6 +2028,54 @@
     return "unknown";
   }
 
+  function classifyDynamicControlFamily(field) {
+    const label = normalizeText(field?.normalizedLabel ?? field?.label ?? "");
+    const controlType = field?.controlType ?? "unknown";
+    const control = field?.control;
+
+    if (label.includes("category") && (controlType === "combobox" || controlType === "select")) {
+      return "category_picker";
+    }
+    if (controlType === "text") return "text_input";
+    if (controlType === "textarea") return "textarea";
+    if (controlType === "select") return "single_select_combobox";
+    if (controlType === "combobox") {
+      return isLikelyMultiValueControl(control) ? "multi_value_chip" : "single_select_combobox";
+    }
+    if (controlType === "checkbox") return "checkbox_group";
+    if (controlType === "radio") return "radio_group";
+    return "unknown_unsupported";
+  }
+
+  function resolveDynamicAdapterRoute(field) {
+    const controlFamily = field.controlFamily || classifyDynamicControlFamily(field);
+    if (controlFamily === "text_input") {
+      return { controlFamily, adapterSelected: "text_set_value" };
+    }
+    if (controlFamily === "textarea") {
+      return { controlFamily, adapterSelected: "textarea_set_value" };
+    }
+    if (controlFamily === "single_select_combobox") {
+      if (field.controlType === "select" && field.control instanceof HTMLSelectElement) {
+        return { controlFamily, adapterSelected: "select_exact_option" };
+      }
+      return { controlFamily, adapterSelected: "combobox_normalized_option" };
+    }
+    if (controlFamily === "multi_value_chip") {
+      return { controlFamily, adapterSelected: "combobox_multi_value" };
+    }
+    if (controlFamily === "checkbox_group") {
+      return { controlFamily, adapterSelected: "checkbox_group_unsupported" };
+    }
+    if (controlFamily === "radio_group") {
+      return { controlFamily, adapterSelected: "radio_group_unsupported" };
+    }
+    if (controlFamily === "category_picker") {
+      return { controlFamily, adapterSelected: "category_picker_unsupported" };
+    }
+    return { controlFamily: "unknown_unsupported", adapterSelected: "unknown_unsupported" };
+  }
+
   function discoverAllowedOptions(control, controlType) {
     if (controlType !== "select" || !(control instanceof HTMLSelectElement)) return [];
     return Array.from(control.options)
@@ -1980,25 +2098,121 @@
     });
   }
 
+  function normalizePayloadKey(value) {
+    return normalizeText(value).replace(/[^a-z0-9]/g, "");
+  }
+
+  function resolveFinalMatchesByPrecedence(fieldLabel, matches, allCandidates) {
+    const normalizedFieldLabel = normalizeText(fieldLabel);
+    const normalizedFieldKey = normalizePayloadKey(fieldLabel);
+    if (!matches.length) return { matches: [], phase: "none" };
+
+    const exactKeyMatches = matches.filter(
+      (candidate) => normalizePayloadKey(candidate.key) === normalizedFieldKey
+    );
+    if (exactKeyMatches.length) {
+      return { matches: exactKeyMatches, phase: "exact_key" };
+    }
+
+    const aliasKeys = getAliasKeysForLabel(normalizedFieldLabel);
+    if (aliasKeys.size > 0) {
+      const aliasMatches = matches.filter((candidate) =>
+        aliasKeys.has(normalizePayloadKey(candidate.key))
+      );
+      if (aliasMatches.length) {
+        return { matches: aliasMatches, phase: "alias_key" };
+      }
+    }
+
+    const knownCandidateKeys = new Set(
+      Array.isArray(allCandidates)
+        ? allCandidates.map((candidate) => normalizePayloadKey(candidate.key))
+        : []
+    );
+    const knownSynonymKeys = new Set(
+      Object.keys(DYNAMIC_FIELD_SYNONYMS).map((key) => normalizePayloadKey(key))
+    );
+    const hasKnownFieldIdentity =
+      !!normalizedFieldKey &&
+      (knownCandidateKeys.has(normalizedFieldKey) || knownSynonymKeys.has(normalizedFieldKey));
+    if (hasKnownFieldIdentity) {
+      return { matches: [], phase: "no_exact_or_alias" };
+    }
+
+    const broaderMatches = matches.filter((candidate) =>
+      isBroaderFallbackLabelMatch(normalizedFieldLabel, candidate.matchTerms)
+    );
+    if (broaderMatches.length) {
+      return { matches: broaderMatches, phase: "broader" };
+    }
+
+    return { matches: [], phase: "none" };
+  }
+
+  function getAliasKeysForLabel(normalizedFieldLabel) {
+    const aliasKeys = new Set();
+    if (!normalizedFieldLabel) return aliasKeys;
+
+    for (const [key, terms] of Object.entries(DYNAMIC_FIELD_SYNONYMS)) {
+      if (!Array.isArray(terms)) continue;
+      if (terms.some((term) => normalizeText(term) === normalizedFieldLabel)) {
+        aliasKeys.add(normalizePayloadKey(key));
+      }
+    }
+
+    return aliasKeys;
+  }
+
+  function isBroaderFallbackLabelMatch(normalizedFieldLabel, matchTerms) {
+    if (!normalizedFieldLabel || !Array.isArray(matchTerms)) return false;
+    return matchTerms.some((term) => {
+      const normalizedTerm = normalizeText(term);
+      if (!normalizedTerm) return false;
+      if (normalizedTerm === normalizedFieldLabel) return true;
+      return normalizedTerm.includes(normalizedFieldLabel);
+    });
+  }
+
   async function fillDynamicFieldValue(field, value, selectors) {
+    const route = resolveDynamicAdapterRoute(field);
     if (!value || !value.trim()) {
-      return { status: "needs_review", reason: "payload missing" };
+      return {
+        status: "needs_review",
+        reason: "payload missing",
+        controlFamily: route.controlFamily,
+        adapterSelected: route.adapterSelected,
+      };
     }
 
-    if (field.controlType === "text" || field.controlType === "textarea") {
+    if (route.controlFamily === "text_input" || route.controlFamily === "textarea") {
       setElementValue(field.control, value);
-      return { status: "filled" };
+      return {
+        status: "filled",
+        controlFamily: route.controlFamily,
+        adapterSelected: route.adapterSelected,
+      };
     }
 
-    if (field.controlType === "select" && field.control instanceof HTMLSelectElement) {
+    if (
+      route.controlFamily === "single_select_combobox" &&
+      field.controlType === "select" &&
+      field.control instanceof HTMLSelectElement
+    ) {
       const payloadValues = buildNormalizedPayloadValues(value);
       if (!payloadValues.values.length) {
-        return { status: "needs_review", reason: "payload missing after normalization" };
+        return {
+          status: "needs_review",
+          reason: "payload missing after normalization",
+          controlFamily: route.controlFamily,
+          adapterSelected: route.adapterSelected,
+        };
       }
       if (payloadValues.multiValue) {
         return {
           status: "skipped_for_safety",
           reason: "multi-value payload for single-value select",
+          controlFamily: route.controlFamily,
+          adapterSelected: route.adapterSelected,
         };
       }
       const normalizedValue = payloadValues.values[0];
@@ -2011,16 +2225,25 @@
         return {
           status: "needs_review",
           reason: exactOptions.length > 1 ? "multiple exact select options" : "no exact select option",
+          controlFamily: route.controlFamily,
+          adapterSelected: route.adapterSelected,
         };
       }
 
       field.control.value = exactOptions[0].value;
       field.control.dispatchEvent(new Event("change", { bubbles: true }));
       field.control.dispatchEvent(new Event("blur", { bubbles: true }));
-      return { status: "filled" };
+      return {
+        status: "filled",
+        controlFamily: route.controlFamily,
+        adapterSelected: route.adapterSelected,
+      };
     }
 
-    if (field.controlType === "combobox") {
+    if (
+      route.controlFamily === "single_select_combobox" ||
+      route.controlFamily === "multi_value_chip"
+    ) {
       const optionSelectors = selectors?.color?.optionSelectors ?? [
         '[role="option"]',
         '[data-radix-collection-item]',
@@ -2030,15 +2253,22 @@
 
       const payloadValues = buildNormalizedPayloadValues(value);
       if (!payloadValues.values.length) {
-        return { status: "needs_review", reason: "payload missing after normalization" };
+        return {
+          status: "needs_review",
+          reason: "payload missing after normalization",
+          controlFamily: route.controlFamily,
+          adapterSelected: route.adapterSelected,
+        };
       }
       const valueMode = payloadValues.multiValue ? "multi-value" : "single-value";
-      if (payloadValues.multiValue && !isLikelyMultiValueControl(field.control)) {
+      if (payloadValues.multiValue && route.controlFamily !== "multi_value_chip") {
         return {
           status: "skipped_for_safety",
           reason: `${valueMode} payload for single-value control (raw: "${String(
             value
           ).trim()}"; canonical: "${payloadValues.canonicalValue}")`,
+          controlFamily: route.controlFamily,
+          adapterSelected: route.adapterSelected,
         };
       }
 
@@ -2054,18 +2284,27 @@
         });
 
         if (selectResult.status !== "filled") {
-          return selectResult;
+          return {
+            ...selectResult,
+            controlFamily: route.controlFamily,
+            adapterSelected: route.adapterSelected,
+          };
         }
       }
 
-      return { status: "filled" };
+      return {
+        status: "filled",
+        controlFamily: route.controlFamily,
+        adapterSelected: route.adapterSelected,
+      };
     }
 
-    if (field.controlType === "checkbox" || field.controlType === "radio") {
-      return { status: "skipped_for_safety", reason: "unsupported control type" };
-    }
-
-    return { status: "skipped_for_safety", reason: "unknown control type" };
+    return {
+      status: "skipped_for_safety",
+      reason: `unsupported control family (${route.controlFamily})`,
+      controlFamily: route.controlFamily,
+      adapterSelected: route.adapterSelected,
+    };
   }
 
   function findVisibleComboboxOptionEntries(control, optionSelectors) {

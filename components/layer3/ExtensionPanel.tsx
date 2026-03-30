@@ -183,6 +183,7 @@ function getMappedEbayFields(section: string): {
     ["styleType", ["Style/Type", "Style Type"], ["Style/Type", "Style Type"]],
     ["fabricType", ["Fabric Type", "Fabric"], ["Fabric Type", "Fabric"]],
     ["department", ["Department", "Jewelry Department"], ["Department", "Jewelry Department"]],
+    ["jewelryDepartment", ["Jewelry Department"], ["Jewelry Department"]],
     ["occasion", ["Occasion"], ["Occasion"]],
     ["style", ["Style"], ["Style"]],
     ["features", ["Features", "Feature"], ["Features", "Feature"]],
