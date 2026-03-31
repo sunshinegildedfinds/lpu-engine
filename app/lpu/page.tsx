@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, useMemo, useState } from "react";
 import { ExtensionPanel } from "@/components/layer3/ExtensionPanel";
+import { ResearchPanel } from "@/components/lpu/ResearchPanel";
 import {
   buildCopyMap,
   buildPayloadMap,
@@ -13,6 +14,16 @@ import {
   getVendooPlatformRequiredFieldStatus,
 } from "@/lib/vendoo/fieldMap";
 import { buildVendooActionPreview } from "@/lib/vendoo/actionPreview";
+import { buildResearchRecordFromValidatedPayload } from "@/lib/research/buildResearchRecord";
+import type { OptionalPriceInput } from "@/lib/research/types";
+import type { VendooPricingMeta, VendooResearchMeta } from "@/lib/vendoo/extensionPayload";
+
+const INITIAL_PRICE_DECISION: OptionalPriceInput = {
+  selectedPrice: "",
+  floorPrice: "",
+  pricingNote: "",
+  source: null,
+};
 
 type ImagePayload = {
   name: string;
@@ -201,6 +212,10 @@ export default function LpuPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
   const [layer3Photos, setLayer3Photos] = useState<ImagePayload[]>([]);
+  const [enableResearchPanel, setEnableResearchPanel] = useState(false);
+  const [priceDecision, setPriceDecision] = useState<OptionalPriceInput>(
+    INITIAL_PRICE_DECISION
+  );
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files ?? []);
@@ -245,6 +260,7 @@ export default function LpuPage() {
       setOutput(data.output || "");
       setValidation(data.validation ?? null);
       setLayer3Photos(images);
+      setPriceDecision(INITIAL_PRICE_DECISION);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to generate output.";
@@ -252,6 +268,7 @@ export default function LpuPage() {
       setValidation(null);
       setCopiedTarget(null);
       setLayer3Photos([]);
+      setPriceDecision(INITIAL_PRICE_DECISION);
     } finally {
       setIsLoading(false);
     }
@@ -350,6 +367,42 @@ export default function LpuPage() {
       actionReviewPlatforms: platformOrder.length - actionReadyPlatforms,
     };
   }, [platformOrder, vendooActionPreview]);
+
+  const researchRecord = useMemo(() => {
+    if (!validation) return null;
+    return buildResearchRecordFromValidatedPayload(payloadMap);
+  }, [payloadMap, validation]);
+
+  const researchMetaForPayload = useMemo<VendooResearchMeta | undefined>(() => {
+    if (!enableResearchPanel || !researchRecord) return undefined;
+    return {
+      searchSeed: researchRecord.searchSeed,
+      primaryQuery: researchRecord.primaryQuery,
+      alternateQueries: researchRecord.alternateQueries,
+      soldCompLink: researchRecord.soldCompLink,
+      completedCompLink: researchRecord.completedCompLink,
+      activeCompLink: researchRecord.activeCompLink,
+      matchConfidence: researchRecord.matchConfidence,
+      researchNotes: researchRecord.researchNotes,
+    };
+  }, [enableResearchPanel, researchRecord]);
+
+  const pricingForPayload = useMemo<VendooPricingMeta | undefined>(() => {
+    if (!enableResearchPanel) return undefined;
+    return {
+      selectedPrice: priceDecision.selectedPrice,
+      floorPrice: priceDecision.floorPrice,
+      pricingNote: priceDecision.pricingNote,
+      source: priceDecision.source,
+    };
+  }, [enableResearchPanel, priceDecision]);
+
+  const resolvedPriceForPayload = useMemo<string | undefined>(() => {
+    if (!enableResearchPanel) return undefined;
+    const selected = priceDecision.selectedPrice.trim();
+    if (!selected) return undefined;
+    return /^[$]?\d+([.,]\d{1,2})?$/.test(selected) ? selected : undefined;
+  }, [enableResearchPanel, priceDecision.selectedPrice]);
 
   async function handleCopy(target: string) {
     const text = copyMap[target];
@@ -1071,6 +1124,26 @@ export default function LpuPage() {
         )}
       </section>
 
+      <section className="mt-8 rounded-2xl border p-4">
+        <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
+          <input
+            type="checkbox"
+            checked={enableResearchPanel}
+            onChange={(event) => setEnableResearchPanel(event.target.checked)}
+            className="h-4 w-4"
+          />
+          Enable Research Panel
+        </label>
+      </section>
+
+      {enableResearchPanel && validation && researchRecord ? (
+        <ResearchPanel
+          researchRecord={researchRecord}
+          priceDecision={priceDecision}
+          onPriceDecisionChange={setPriceDecision}
+        />
+      ) : null}
+
       <ExtensionPanel
         key={[
           payloadMap.platforms.ebay.titleA,
@@ -1084,6 +1157,9 @@ export default function LpuPage() {
           description: payloadMap.platforms.ebay.description,
           ebaySection: payloadMap.platforms.ebay.section,
           photos: layer3Photos,
+          researchMeta: researchMetaForPayload,
+          pricing: pricingForPayload,
+          resolvedPrice: resolvedPriceForPayload,
         }}
       />
     </main>

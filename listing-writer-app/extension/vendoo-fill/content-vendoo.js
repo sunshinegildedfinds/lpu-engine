@@ -148,6 +148,16 @@
       return;
     }
 
+    const receivedResolvedPrice =
+      typeof payload?.resolvedPrice === "string" ? payload.resolvedPrice : "";
+    console.debug("[Vendoo][ReceivedPayload]", {
+      hasResolvedPrice: Boolean(receivedResolvedPrice),
+      resolvedPrice: receivedResolvedPrice,
+      hasPricing: Boolean(payload?.pricing && typeof payload.pricing === "object"),
+      topLevelPayloadKeys:
+        payload && typeof payload === "object" ? Object.keys(payload) : [],
+    });
+
     const selectors = getSelectorMap().ebay;
     const actionModel = getActionModel();
     const fieldDefinitions = getFieldDefinitions();
@@ -200,6 +210,19 @@
       );
     }
 
+    const listingPriceDiagnostics = await fillResolvedListingPriceIfPresent({
+      payload,
+      usedElements,
+    });
+    runState.diagnosticsByField.listingPrice = listingPriceDiagnostics;
+    if (listingPriceDiagnostics.status === "filled") {
+      runState.filled.push("Listing Price");
+    } else if (listingPriceDiagnostics.status === "needs_review") {
+      runState.needsReview.push(`Listing Price (${listingPriceDiagnostics.reason})`);
+    } else if (listingPriceDiagnostics.status === "skipped_for_safety") {
+      runState.skippedForSafety.push(`Listing Price (${listingPriceDiagnostics.reason})`);
+    }
+
     if (!marketplaceStageDiagnostics.handoffToMarketplaceFill) {
       runState.needsReview.push(
         `Marketplace stage (${marketplaceStageDiagnostics.marketplaceReadyReason || marketplaceStageDiagnostics.marketplaceActivationReason || "marketplace not ready"})`
@@ -210,6 +233,7 @@
         needsReview: runState.needsReview,
         skippedForSafety: runState.skippedForSafety,
         photoStageDiagnostics,
+        listingPriceDiagnostics,
         baseStageDiagnostics,
         marketplaceStageDiagnostics,
       });
@@ -291,10 +315,451 @@
       needsReview: runState.needsReview,
       skippedForSafety: runState.skippedForSafety,
       photoStageDiagnostics,
+      listingPriceDiagnostics,
       baseStageDiagnostics,
       marketplaceStageDiagnostics,
     });
     await refreshPanel();
+  }
+
+  async function fillResolvedListingPriceIfPresent(input) {
+    const { payload, usedElements } = input;
+    const resolvedPriceRaw =
+      typeof payload?.resolvedPrice === "string" ? payload.resolvedPrice.trim() : "";
+    const baseDiagnostic = {
+      fieldLabel: "Listing Price",
+      payloadKey: "resolvedPrice",
+      controlFamily: "text_input",
+      status: "skipped_for_safety",
+      reason: "",
+      expectedValue: resolvedPriceRaw || "",
+      actualValue: "",
+    };
+
+    try {
+      if (!resolvedPriceRaw) {
+        const result = {
+          ...baseDiagnostic,
+          status: "skipped_for_safety",
+          reason: "resolvedPrice missing",
+        };
+        console.debug("[Vendoo][ListingPrice]", result);
+        return result;
+      }
+
+      if (!isValidResolvedPrice(resolvedPriceRaw)) {
+        const result = {
+          ...baseDiagnostic,
+          status: "skipped_for_safety",
+          reason: "resolvedPrice invalid",
+        };
+        console.debug("[Vendoo][ListingPrice]", result);
+        return result;
+      }
+
+      const discovery = await findListingPriceInputWithFallback();
+      console.debug("[Vendoo][ListingPriceDiscovery]", {
+        exactSelectorMatchCount: discovery.exactSelectorMatchCount,
+        usedFallback: discovery.usedFallback,
+        fallbackFound: discovery.fallbackFound,
+      });
+      const inputField = discovery.inputField;
+      if (!(inputField instanceof HTMLInputElement)) {
+        const ebayPriceResult = await tryFillEbayBuyItNowPriceIfApplicable({
+          resolvedPriceRaw,
+          usedElements,
+        });
+        if (ebayPriceResult) {
+          return ebayPriceResult;
+        }
+        logListingPriceDomSnapshot();
+        logListingPriceGlobalSearch();
+        const result = {
+          ...baseDiagnostic,
+          status: "needs_review",
+          reason: "Listing Price field not found",
+        };
+        console.debug("[Vendoo][ListingPrice]", result);
+        return result;
+      }
+
+      if (usedElements.has(inputField)) {
+        const result = {
+          ...baseDiagnostic,
+          status: "skipped_for_safety",
+          reason: "collision prevention",
+        };
+        console.debug("[Vendoo][ListingPrice]", result);
+        return result;
+      }
+
+      const verifyResult = await fillAndVerifyPriceInput(inputField, resolvedPriceRaw);
+      if (!verifyResult.ok) {
+        const result = {
+          ...baseDiagnostic,
+          status: "needs_review",
+          reason: `verification failed (expected "${resolvedPriceRaw}", got "${verifyResult.actualValue || ""}")`,
+          actualValue: verifyResult.actualValue || "",
+        };
+        console.debug("[Vendoo][ListingPrice]", result);
+        return result;
+      }
+
+      usedElements.add(inputField);
+      const result = {
+        ...baseDiagnostic,
+        status: "filled",
+        reason: "value persisted after blur",
+        actualValue: verifyResult.actualValue || "",
+      };
+      console.debug("[Vendoo][ListingPrice]", result);
+      return result;
+    } catch (error) {
+      const result = {
+        ...baseDiagnostic,
+        status: "needs_review",
+        reason: error instanceof Error ? error.message : "runtime error",
+      };
+      console.debug("[Vendoo][ListingPrice]", result);
+      return result;
+    }
+  }
+
+  function findListingPriceInput() {
+    const selectors = [
+      'input[data-testid="generalDetails.price"]',
+      'input#generalDetails\\.price',
+      'input[name="generalDetails.price"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  async function tryFillEbayBuyItNowPriceIfApplicable(input) {
+    const { resolvedPriceRaw, usedElements } = input;
+    if (!isEbayMarketplacePage()) {
+      return null;
+    }
+
+    const diagnostic = {
+      fieldLabel: "eBay Buy It Now Price",
+      payloadKey: "resolvedPrice",
+      controlFamily: "text_input",
+      status: "needs_review",
+      reason: "",
+      expectedValue: resolvedPriceRaw || "",
+      actualValue: "",
+    };
+
+    const inputField = findEbayBuyItNowPriceInput();
+    if (!(inputField instanceof HTMLInputElement)) {
+      const result = {
+        ...diagnostic,
+        status: "needs_review",
+        reason: "eBay Buy It Now price field not found",
+      };
+      console.debug("[Vendoo][EbayPrice]", result);
+      return result;
+    }
+
+    if (usedElements.has(inputField)) {
+      const result = {
+        ...diagnostic,
+        status: "skipped_for_safety",
+        reason: "collision prevention",
+      };
+      console.debug("[Vendoo][EbayPrice]", result);
+      return result;
+    }
+
+    const verifyResult = await fillAndVerifyPriceInput(inputField, resolvedPriceRaw);
+    if (!verifyResult.ok) {
+      const result = {
+        ...diagnostic,
+        status: "needs_review",
+        reason: `verification failed (expected "${resolvedPriceRaw}", got "${verifyResult.actualValue || ""}")`,
+        actualValue: verifyResult.actualValue || "",
+      };
+      console.debug("[Vendoo][EbayPrice]", result);
+      return result;
+    }
+
+    usedElements.add(inputField);
+    const result = {
+      ...diagnostic,
+      status: "filled",
+      reason: "value persisted after blur",
+      actualValue: verifyResult.actualValue || "",
+    };
+    console.debug("[Vendoo][EbayPrice]", result);
+    return result;
+  }
+
+  function findEbayBuyItNowPriceInput() {
+    const selectors = [
+      'input[name="listings.ebay.marketplaceSpecifics.pricingFormatDetails.fixedPrice.buyItNowPrice"]',
+      'input#listings\\.ebay\\.marketplaceSpecifics\\.pricingFormatDetails\\.fixedPrice\\.buyItNowPrice',
+      'input[data-testid="listings.ebay.marketplaceSpecifics.pricingFormatDetails.fixedPrice.buyItNowPrice"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  function isEbayMarketplacePage() {
+    try {
+      const url = new URL(window.location.href);
+      return normalizeText(url.searchParams.get("marketplace") || "") === "ebay";
+    } catch {
+      return normalizeText(window.location.href).includes("marketplace=ebay");
+    }
+  }
+
+  async function fillAndVerifyPriceInput(inputField, value) {
+    setElementValue(inputField, value);
+    inputField.dispatchEvent(new Event("blur", { bubbles: true }));
+    await wait(160);
+
+    const persistedValue = normalizePriceForCompare(inputField.value);
+    const expectedValue = normalizePriceForCompare(value);
+    if (!persistedValue || persistedValue !== expectedValue) {
+      return {
+        ok: false,
+        actualValue: inputField.value || "",
+      };
+    }
+
+    return {
+      ok: true,
+      actualValue: inputField.value || "",
+    };
+  }
+
+  async function findListingPriceInputWithFallback() {
+    const selectors = [
+      'input[data-testid="generalDetails.price"]',
+      'input#generalDetails\\.price',
+      'input[name="generalDetails.price"]',
+    ];
+    const matched = new Set();
+    for (const selector of selectors) {
+      for (const node of document.querySelectorAll(selector)) {
+        if (node instanceof HTMLInputElement) matched.add(node);
+      }
+    }
+
+    let inputField = findListingPriceInput();
+    if (inputField) {
+      return {
+        inputField,
+        exactSelectorMatchCount: matched.size,
+        usedFallback: false,
+        fallbackFound: false,
+      };
+    }
+
+    await wait(180);
+    inputField = findListingPriceInput();
+    if (inputField) {
+      return {
+        inputField,
+        exactSelectorMatchCount: matched.size,
+        usedFallback: false,
+        fallbackFound: false,
+      };
+    }
+
+    const fallbackInput = findListingPriceInputFromLabel();
+    return {
+      inputField: fallbackInput,
+      exactSelectorMatchCount: matched.size,
+      usedFallback: true,
+      fallbackFound: fallbackInput instanceof HTMLInputElement,
+    };
+  }
+
+  function findListingPriceInputFromLabel() {
+    const labels = Array.from(
+      document.querySelectorAll("label, div, span, p")
+    ).filter((node) => {
+      if (!(node instanceof HTMLElement) || !isVisible(node)) return false;
+      return normalizeText(node.innerText || node.textContent || "") === "listing price";
+    });
+
+    for (const labelNode of labels) {
+      if (!(labelNode instanceof HTMLElement)) continue;
+      if (labelNode instanceof HTMLLabelElement && labelNode.htmlFor) {
+        const linked = document.getElementById(labelNode.htmlFor);
+        if (linked instanceof HTMLInputElement && isVisible(linked)) {
+          return linked;
+        }
+      }
+
+      let ancestor = labelNode;
+      for (let depth = 0; depth < 6 && ancestor; depth += 1) {
+        const visibleInputs = Array.from(
+          ancestor.querySelectorAll('input[type="text"], input[type="number"], input:not([type])')
+        ).filter((node) => node instanceof HTMLInputElement && isVisible(node));
+        if (visibleInputs.length === 1) {
+          return visibleInputs[0];
+        }
+        ancestor = ancestor.parentElement;
+      }
+    }
+
+    return null;
+  }
+
+  function logListingPriceDomSnapshot() {
+    const textNodes = Array.from(
+      document.querySelectorAll("label, div, span, p, legend, h1, h2, h3, h4")
+    ).filter((node) => node instanceof HTMLElement && isVisible(node));
+
+    const listingPriceTextNodes = textNodes.filter(
+      (node) => normalizeText(node.innerText || node.textContent || "") === "listing price"
+    );
+    const priceTextNodes = textNodes.filter((node) => {
+      const text = normalizeText(node.innerText || node.textContent || "");
+      return text === "price" || text.includes("listing price");
+    });
+
+    const anchor =
+      listingPriceTextNodes[0] instanceof HTMLElement
+        ? listingPriceTextNodes[0]
+        : priceTextNodes[0] instanceof HTMLElement
+          ? priceTextNodes[0]
+          : null;
+    const section = resolveListingPriceSection(anchor);
+    const nearbyLabels = section
+      ? collectNearbyPriceLabels(section)
+      : [];
+    const inputLikeElements = section
+      ? collectNearbyPriceInputs(section)
+      : [];
+
+    console.debug("[Vendoo][ListingPriceDOM]", {
+      hasPriceText: priceTextNodes.length > 0,
+      hasListingPriceText: listingPriceTextNodes.length > 0,
+      nearbyLabels,
+      inputLikeElements,
+      inputLikeCount: inputLikeElements.length,
+    });
+  }
+
+  function logListingPriceGlobalSearch() {
+    const selector = [
+      '[id*="price" i]',
+      '[name*="price" i]',
+      '[data-testid*="price" i]',
+      '[aria-label*="price" i]',
+      '[placeholder*="price" i]',
+    ].join(", ");
+
+    const matches = Array.from(document.querySelectorAll(selector));
+    const entries = matches.slice(0, 40).map((node) => {
+      const element = node instanceof HTMLElement ? node : null;
+      return {
+        tagName: element ? element.tagName.toLowerCase() : "",
+        type: node instanceof HTMLInputElement ? node.type || "" : "",
+        id: element?.getAttribute("id") || "",
+        name: element?.getAttribute("name") || "",
+        dataTestid: element?.getAttribute("data-testid") || "",
+        ariaLabel: element?.getAttribute("aria-label") || "",
+        placeholder: element?.getAttribute("placeholder") || "",
+      };
+    });
+
+    const allElements = document.querySelectorAll("*");
+    let shadowHostCount = 0;
+    for (const element of allElements) {
+      if (element instanceof HTMLElement && element.shadowRoot) {
+        shadowHostCount += 1;
+      }
+    }
+
+    const exactPriceInput = document.querySelector('input[name="generalDetails.price"]');
+
+    console.debug("[Vendoo][ListingPriceGlobalSearch]", {
+      locationHref: window.location.href,
+      iframeCount: document.querySelectorAll("iframe").length,
+      shadowHostCount,
+      exactGeneralDetailsPriceMatchInCurrentRoot: Boolean(exactPriceInput),
+      totalMatches: matches.length,
+      matches: entries,
+    });
+  }
+
+  function resolveListingPriceSection(anchor) {
+    if (!(anchor instanceof HTMLElement)) return null;
+    let current = anchor;
+    for (let depth = 0; depth < 7 && current; depth += 1) {
+      const count = current.querySelectorAll(
+        "input, select, textarea, [contenteditable='true'], [contenteditable='']"
+      ).length;
+      if (count > 0) return current;
+      current = current.parentElement;
+    }
+    return anchor.parentElement;
+  }
+
+  function collectNearbyPriceLabels(section) {
+    const seen = new Set();
+    const labels = [];
+    const nodes = section.querySelectorAll("label, span, div, p, legend");
+    for (const node of nodes) {
+      if (!(node instanceof HTMLElement) || !isVisible(node)) continue;
+      const text = normalizeText(node.innerText || node.textContent || "");
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      labels.push(text);
+      if (labels.length >= 12) break;
+    }
+    return labels;
+  }
+
+  function collectNearbyPriceInputs(section) {
+    const entries = [];
+    const nodes = section.querySelectorAll(
+      "input, select, textarea, [contenteditable='true'], [contenteditable='']"
+    );
+    for (const node of nodes) {
+      if (!(node instanceof HTMLElement) || !isVisible(node)) continue;
+      entries.push({
+        tagName: node.tagName.toLowerCase(),
+        type: node instanceof HTMLInputElement ? node.type || "" : "",
+        name: node.getAttribute("name") || "",
+        id: node.getAttribute("id") || "",
+        dataTestid: node.getAttribute("data-testid") || "",
+        ariaLabel: node.getAttribute("aria-label") || "",
+        placeholder: node.getAttribute("placeholder") || "",
+      });
+      if (entries.length >= 12) break;
+    }
+    return entries;
+  }
+
+  function isValidResolvedPrice(value) {
+    return /^[$]?\d{1,6}([.,]\d{1,2})?$/.test(String(value ?? "").trim());
+  }
+
+  function normalizePriceForCompare(value) {
+    return String(value ?? "")
+      .replace(/[$,\s]/g, "")
+      .replace(/^0+(\d)/, "$1")
+      .trim();
   }
 
   async function runBaseGeneralVendooStage(input) {
@@ -4786,6 +5251,7 @@
       needsReview,
       skippedForSafety,
       photoStageDiagnostics,
+      listingPriceDiagnostics,
       baseStageDiagnostics,
       marketplaceStageDiagnostics,
     } = input;
@@ -4810,6 +5276,14 @@
         `Photo stage: ${photoStageDiagnostics.photoStageStatus}; ` +
           `expected: ${photoStageDiagnostics.expectedPhotoCount}; observed: ${photoStageDiagnostics.uploadedPhotoCountObserved}; ` +
           `reason: ${photoStageDiagnostics.uploadVerificationReason || "none"}`
+      );
+    }
+    if (listingPriceDiagnostics) {
+      lines.push(
+        `Listing Price: ${listingPriceDiagnostics.status}; ` +
+          `reason: ${listingPriceDiagnostics.reason || "none"}; ` +
+          `expected: ${listingPriceDiagnostics.expectedValue || "none"}; ` +
+          `actual: ${listingPriceDiagnostics.actualValue || "none"}`
       );
     }
     if (baseStageDiagnostics) {

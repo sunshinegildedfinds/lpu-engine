@@ -18,6 +18,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "STORE_PAYLOAD") {
+    const relayPayload =
+      message.payload && typeof message.payload === "object" ? message.payload : null;
+    const relayResolvedPrice =
+      typeof relayPayload?.resolvedPrice === "string" ? relayPayload.resolvedPrice : "";
+    console.debug("[Extension][RelayPayload]", {
+      hasResolvedPrice: Boolean(relayResolvedPrice),
+      resolvedPrice: relayResolvedPrice,
+      topLevelPayloadKeys: relayPayload ? Object.keys(relayPayload) : [],
+    });
+
     const transientPhotos = normalizeTransientPhotos(message.transientPhotos);
     const savedAt = Date.now();
     const record = {

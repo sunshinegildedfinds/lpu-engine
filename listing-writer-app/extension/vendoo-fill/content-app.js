@@ -165,6 +165,21 @@
       ["ebay", "itemSpecifics"],
       ["payloadMap", "ebay", "itemSpecifics"]
     );
+    const resolvedPrice = pickDefined(
+      input,
+      ["resolvedPrice"],
+      ["payloadMap", "resolvedPrice"]
+    );
+    const researchMeta = pickObject(
+      input,
+      ["researchMeta"],
+      ["payloadMap", "researchMeta"]
+    );
+    const pricing = pickObject(
+      input,
+      ["pricing"],
+      ["payloadMap", "pricing"]
+    );
 
     const normalizedItemSpecifics = normalizeItemSpecifics(incomingItemSpecifics);
     const itemSpecifics = {
@@ -184,6 +199,13 @@
         sourcePage: window.location.href,
       },
       ...(photos.length ? { photos } : {}),
+      ...((resolvedPrice !== undefined &&
+        resolvedPrice !== null &&
+        (typeof resolvedPrice !== "string" || resolvedPrice.trim()))
+        ? { resolvedPrice }
+        : {}),
+      ...(researchMeta ? { researchMeta } : {}),
+      ...(pricing ? { pricing } : {}),
       marketplaces: {
         ebay: {
           title,
@@ -289,6 +311,16 @@
       }
     }
     return null;
+  }
+
+  function pickDefined(obj, ...paths) {
+    for (const path of paths) {
+      const value = getAtPath(obj, path);
+      if (value !== undefined) {
+        return value;
+      }
+    }
+    return undefined;
   }
 
   function pickPhotos(obj, ...paths) {

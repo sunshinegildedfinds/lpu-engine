@@ -10,6 +10,8 @@ import { buildVendooCategoryPath } from "@/lib/vendoo/buildVendooCategoryPath";
 import type {
   EbayItemSpecifics,
   VendooPhotoPayload,
+  VendooPricingMeta,
+  VendooResearchMeta,
 } from "@/lib/vendoo/extensionPayload";
 import { getReadyToSendState } from "@/lib/vendoo/getReadyToSendState";
 import { buildVendooExtensionPayload } from "@/lib/vendoo/extensionPayload";
@@ -20,6 +22,9 @@ type Layer3Seed = {
   description: string;
   ebaySection: string;
   photos?: VendooPhotoPayload[];
+  researchMeta?: VendooResearchMeta;
+  pricing?: VendooPricingMeta;
+  resolvedPrice?: string;
 };
 
 type SendFeedbackState = {
@@ -312,6 +317,9 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
         category,
         canonicalVendooCategoryPath,
         photos: seed.photos ?? [],
+        researchMeta: seed.researchMeta,
+        pricing: seed.pricing,
+        resolvedPrice: seed.resolvedPrice,
         itemSpecifics: {
           ...mappedSeed.itemSpecifics,
           brand,
@@ -329,6 +337,9 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       seed.titleA,
       seed.titleB,
       seed.photos,
+      seed.researchMeta,
+      seed.pricing,
+      seed.resolvedPrice,
       selectedTitle,
       size,
     ]
