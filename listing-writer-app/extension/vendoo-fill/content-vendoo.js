@@ -175,6 +175,10 @@
     const runState = actionModel.createRunState();
     const usedElements = new Set();
     const photoStageDiagnostics = await runPhotoUploadStage(payload);
+    const marketplaceStageDiagnostics = await runMarketplaceActivationStage({
+      targetMarketplace: "ebay",
+      selectors,
+    });
 
     if (photoStageDiagnostics.photoStageStatus === "uploaded_verified") {
       runState.filled.push("Vendoo photos");
@@ -184,6 +188,22 @@
       runState.needsReview.push(
         `Vendoo photos (${photoStageDiagnostics.uploadVerificationReason})`
       );
+    }
+
+    if (!marketplaceStageDiagnostics.handoffToMarketplaceFill) {
+      runState.needsReview.push(
+        `Marketplace stage (${marketplaceStageDiagnostics.marketplaceReadyReason || marketplaceStageDiagnostics.marketplaceActivationReason || "marketplace not ready"})`
+      );
+      reportEl.textContent = "Fill run completed.";
+      renderLastRunResults({
+        filled: runState.filled,
+        needsReview: runState.needsReview,
+        skippedForSafety: runState.skippedForSafety,
+        photoStageDiagnostics,
+        marketplaceStageDiagnostics,
+      });
+      await refreshPanel();
+      return;
     }
 
     for (const step of fillSteps) {
@@ -254,8 +274,77 @@
       needsReview: runState.needsReview,
       skippedForSafety: runState.skippedForSafety,
       photoStageDiagnostics,
+      marketplaceStageDiagnostics,
     });
     await refreshPanel();
+  }
+
+  async function runMarketplaceActivationStage(input) {
+    const { targetMarketplace, selectors } = input;
+    const diagnostics = {
+      marketplaceStageAttempted: true,
+      targetMarketplace,
+      marketplaceTabFound: false,
+      marketplaceActivationAttempted: false,
+      marketplaceActivationMethod: "none",
+      marketplaceActivationPassed: false,
+      marketplaceActivationReason: "",
+      marketplaceReadyCheckAttempted: false,
+      marketplaceReadyPassed: false,
+      marketplaceReadyReason: "",
+      marketplaceReadyEvidence: {},
+      handoffToMarketplaceFill: false,
+      marketplaceStageStatus: "attempted",
+      marketplaceStageError: "",
+    };
+
+    try {
+      const tab = findMarketplaceTab(targetMarketplace);
+      diagnostics.marketplaceTabFound = tab instanceof Element;
+      if (!(tab instanceof Element)) {
+        diagnostics.marketplaceStageStatus = "needs_review";
+        diagnostics.marketplaceActivationReason = "marketplace tab not found";
+        diagnostics.marketplaceReadyReason = "marketplace tab not found";
+        console.debug("[LPU Vendoo] Marketplace stage diagnostics", diagnostics);
+        return diagnostics;
+      }
+
+      diagnostics.marketplaceActivationAttempted = true;
+      clickElement(tab);
+      diagnostics.marketplaceActivationMethod = "tab_click";
+
+      const activationState = readMarketplaceActivationState(tab, targetMarketplace);
+      diagnostics.marketplaceActivationPassed = activationState.active;
+      diagnostics.marketplaceActivationReason = activationState.reason;
+      diagnostics.marketplaceStageStatus = activationState.active ? "activated" : "attempted";
+
+      diagnostics.marketplaceReadyCheckAttempted = true;
+      const readiness = await waitForMarketplaceReady({
+        targetMarketplace,
+        selectors,
+        tabElement: tab,
+      });
+      diagnostics.marketplaceReadyPassed = readiness.passed;
+      diagnostics.marketplaceReadyReason = readiness.reason;
+      diagnostics.marketplaceReadyEvidence = readiness.evidence;
+
+      if (!readiness.passed) {
+        diagnostics.marketplaceStageStatus = "needs_review";
+        console.debug("[LPU Vendoo] Marketplace stage diagnostics", diagnostics);
+        return diagnostics;
+      }
+
+      diagnostics.handoffToMarketplaceFill = true;
+      diagnostics.marketplaceStageStatus = "handed_off";
+      console.debug("[LPU Vendoo] Marketplace stage diagnostics", diagnostics);
+      return diagnostics;
+    } catch (error) {
+      diagnostics.marketplaceStageStatus = "failed";
+      diagnostics.marketplaceStageError = error instanceof Error ? error.message : "unknown error";
+      diagnostics.marketplaceReadyReason = "marketplace stage runtime error";
+      console.debug("[LPU Vendoo] Marketplace stage diagnostics", diagnostics);
+      return diagnostics;
+    }
   }
 
   async function runPhotoUploadStage(payload) {
@@ -381,6 +470,121 @@
       console.debug("[LPU Vendoo] Photo stage diagnostics", diagnostics);
       return diagnostics;
     }
+  }
+
+  function findMarketplaceTab(targetMarketplace) {
+    const target = normalizeText(targetMarketplace);
+    const candidates = Array.from(
+      document.querySelectorAll("button, [role='tab'], [role='button'], [aria-controls], [data-testid]")
+    ).filter((element) => element instanceof Element && isVisible(element));
+
+    const scored = candidates
+      .map((element) => {
+        const text = normalizeText(
+          [
+            element.textContent || "",
+            element.getAttribute("aria-label") || "",
+            element.getAttribute("title") || "",
+            element.getAttribute("data-testid") || "",
+            element.getAttribute("name") || "",
+          ].join(" ")
+        );
+        if (!text) return null;
+        let score = 0;
+        if (text === target) score += 6;
+        if (text.includes(target)) score += 4;
+        if (text.includes("marketplace")) score += 2;
+        if (element.matches("[role='tab']")) score += 2;
+        return { element, score };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+
+    return scored[0]?.score > 0 ? scored[0].element : null;
+  }
+
+  function readMarketplaceActivationState(tabElement, targetMarketplace) {
+    if (!(tabElement instanceof Element)) {
+      return { active: false, reason: "tab missing" };
+    }
+
+    const selectedAttr = normalizeText(tabElement.getAttribute("aria-selected") || "");
+    const dataState = normalizeText(tabElement.getAttribute("data-state") || "");
+    const className = normalizeText(
+      typeof tabElement.className === "string" ? tabElement.className : ""
+    );
+    const tabText = normalizeText(tabElement.textContent || "");
+    const target = normalizeText(targetMarketplace);
+    const active =
+      selectedAttr === "true" ||
+      dataState === "active" ||
+      className.includes("active") ||
+      className.includes("selected");
+    if (active) return { active: true, reason: "tab state indicates active" };
+    if (tabText.includes(target)) {
+      return { active: true, reason: "target tab clicked; active state not explicit" };
+    }
+    return { active: false, reason: "tab active state not confirmed" };
+  }
+
+  async function waitForMarketplaceReady(input) {
+    const { targetMarketplace, selectors, tabElement } = input;
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (attempt > 0) {
+        await wait(160);
+      }
+
+      const evidence = getMarketplaceReadyEvidence({
+        targetMarketplace,
+        selectors,
+        tabElement,
+      });
+      if (evidence.ready) {
+        return {
+          passed: true,
+          reason: "marketplace form ready",
+          evidence,
+        };
+      }
+    }
+
+    return {
+      passed: false,
+      reason: "marketplace readiness not confirmed",
+      evidence: getMarketplaceReadyEvidence({
+        targetMarketplace,
+        selectors,
+        tabElement,
+      }),
+    };
+  }
+
+  function getMarketplaceReadyEvidence(input) {
+    const { targetMarketplace, selectors, tabElement } = input;
+    const activationState = readMarketplaceActivationState(tabElement, targetMarketplace);
+    const loadingVisible = isMarketplaceLoadingVisible();
+    const categoryReady = !!findElementBySelectorMap(selectors?.category);
+    const titleReady = !!findElementBySelectorMap(selectors?.title);
+    const descriptionReady = !!findElementBySelectorMap(selectors?.description);
+    const ready = !loadingVisible && activationState.active && (categoryReady || titleReady || descriptionReady);
+
+    return {
+      tabActive: activationState.active,
+      tabActiveReason: activationState.reason,
+      categoryFieldVisible: categoryReady,
+      titleFieldVisible: titleReady,
+      descriptionFieldVisible: descriptionReady,
+      loadingVisible,
+      ready,
+    };
+  }
+
+  function isMarketplaceLoadingVisible() {
+    const loadingNode = document.querySelector(
+      '[aria-busy="true"], [data-loading="true"], [class*="loading"], [class*="spinner"], [role="progressbar"]'
+    );
+    return loadingNode instanceof Element && isVisible(loadingNode);
   }
 
   async function tryFillCustomSelect(input) {
@@ -4095,7 +4299,13 @@
   }
 
   function renderLastRunResults(input) {
-    const { filled, needsReview, skippedForSafety, photoStageDiagnostics } = input;
+    const {
+      filled,
+      needsReview,
+      skippedForSafety,
+      photoStageDiagnostics,
+      marketplaceStageDiagnostics,
+    } = input;
     const lastRunEl = document.getElementById("lpu-vendoo-last-run");
     if (!lastRunEl) return;
 
@@ -4117,6 +4327,15 @@
         `Photo stage: ${photoStageDiagnostics.photoStageStatus}; ` +
           `expected: ${photoStageDiagnostics.expectedPhotoCount}; observed: ${photoStageDiagnostics.uploadedPhotoCountObserved}; ` +
           `reason: ${photoStageDiagnostics.uploadVerificationReason || "none"}`
+      );
+    }
+    if (marketplaceStageDiagnostics) {
+      lines.push(
+        `Marketplace stage: ${marketplaceStageDiagnostics.marketplaceStageStatus}; ` +
+          `target: ${marketplaceStageDiagnostics.targetMarketplace}; ` +
+          `activation: ${marketplaceStageDiagnostics.marketplaceActivationPassed ? "passed" : "failed"}; ` +
+          `ready: ${marketplaceStageDiagnostics.marketplaceReadyPassed ? "passed" : "failed"}; ` +
+          `reason: ${marketplaceStageDiagnostics.marketplaceReadyReason || marketplaceStageDiagnostics.marketplaceActivationReason || "none"}`
       );
     }
 
