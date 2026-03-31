@@ -175,9 +175,19 @@
     const runState = actionModel.createRunState();
     const usedElements = new Set();
     const photoStageDiagnostics = await runPhotoUploadStage(payload);
+    const baseStageDiagnostics = await runBaseGeneralVendooStage({
+      fillSteps,
+      adapters,
+      actionModel,
+      runState,
+      usedElements,
+      payload,
+      selectors,
+    });
     const marketplaceStageDiagnostics = await runMarketplaceActivationStage({
       targetMarketplace: "ebay",
       selectors,
+      preMarketplaceBaseStageCompleted: baseStageDiagnostics.baseStageCompleted,
     });
 
     if (photoStageDiagnostics.photoStageStatus === "uploaded_verified") {
@@ -200,6 +210,7 @@
         needsReview: runState.needsReview,
         skippedForSafety: runState.skippedForSafety,
         photoStageDiagnostics,
+        baseStageDiagnostics,
         marketplaceStageDiagnostics,
       });
       await refreshPanel();
@@ -207,6 +218,12 @@
     }
 
     for (const step of fillSteps) {
+      if (
+        isBaseGeneralFieldKey(step.key) &&
+        runState.stepOutcomes[step.key] === "filled"
+      ) {
+        continue;
+      }
       const result = await adapters.runVendooFieldAction(step, {
         resolveField(action) {
           return findElementBySelectorMap(action.selectorConfig);
@@ -274,16 +291,254 @@
       needsReview: runState.needsReview,
       skippedForSafety: runState.skippedForSafety,
       photoStageDiagnostics,
+      baseStageDiagnostics,
       marketplaceStageDiagnostics,
     });
     await refreshPanel();
   }
 
+  async function runBaseGeneralVendooStage(input) {
+    const { fillSteps, adapters, actionModel, runState, usedElements, payload, selectors } = input;
+    const targeted = buildBaseStageTargetSteps({
+      fillSteps,
+      payload,
+      selectors,
+      actionModel,
+    });
+    const diagnostics = {
+      baseStageAttempted: targeted.length > 0,
+      baseStageFieldsTargeted: targeted.map((step) => step.label),
+      baseStageFieldsFilled: [],
+      baseStageFieldsNeedsReview: [],
+      baseStageFieldsSkipped: [],
+      baseStageCompleted: false,
+      baseStageCompletedBeforeMarketplaceSwitch: false,
+      baseStageReason: "",
+      baseStageTargetSelectionReason:
+        "explicit shared/base keys targeted before marketplace switch",
+      baseStageCategoryExecutionPath:
+        pickEbayCategory(payload) && pickEbayCategory(payload) !== pickEbayCategoryPath(payload)
+          ? "base_simple_category_then_downstream_path"
+          : "base_category_path",
+      baseStageBrandExecutionPath:
+        pickEbayBrand(payload)
+          ? "brand_payload_to_brand_selector"
+          : "brand_missing_or_fallback",
+      baseCategoryStageIndexReached: 0,
+      baseCategoryStagesExpected: 0,
+      baseCategoryWantedAtFailure: "",
+      baseCategoryVisibleCandidatesAtFailure: "none",
+      baseCategoryPickerResolved: false,
+      baseCategoryDropdownOpened: false,
+      baseCategoryOptionSurfaceResolved: false,
+      baseCategoryOptionSurfaceType: "none",
+      baseCategoryRawCandidatesCount: 0,
+      baseCategoryVisibleCandidatesCount: 0,
+      baseCategoryClickableRowsCount: 0,
+      baseCategoryOptionSurfaceChecks: "none",
+      baseCategoryBreadcrumbMode: false,
+      baseCategorySelectionVerified: false,
+      baseCategorySelectionReason: "",
+      baseStageError: "",
+    };
+
+    if (!targeted.length) {
+      diagnostics.baseStageCompleted = true;
+      diagnostics.baseStageCompletedBeforeMarketplaceSwitch = true;
+      diagnostics.baseStageReason = "no base fields targeted";
+      console.debug("[LPU Vendoo] Base stage diagnostics", diagnostics);
+      return diagnostics;
+    }
+
+    try {
+      for (const step of targeted) {
+        const result = await adapters.runVendooFieldAction(step, {
+          resolveField(action) {
+            return findElementBySelectorMap(action.selectorConfig);
+          },
+          isUsed(field) {
+            return usedElements.has(field);
+          },
+          markUsed(field) {
+            usedElements.add(field);
+          },
+          setValue(field, value) {
+            setElementValue(field, value);
+          },
+          normalizeCustomSelectValue(action, value) {
+            return getCustomSelectAttemptValue(action.key, value);
+          },
+          async fillReactSelect(action, control, value) {
+            return tryFillCustomSelect({
+              step: action,
+              value,
+              control,
+              usedElements,
+            });
+          },
+          async fillModalPicker(action, control, value) {
+            const result = await tryFillCategoryByStages({
+              value,
+              control,
+              fieldConfig: action.selectorConfig ?? {},
+            });
+
+            if (result.status === "filled") {
+              usedElements.add(control);
+            }
+
+            return result;
+          },
+        });
+
+        actionModel.applyActionResult(runState, step, result);
+        if (step.key === "category") {
+          const categoryDiagnostics =
+            result?.diagnostics && typeof result.diagnostics === "object"
+              ? result.diagnostics
+              : {};
+          diagnostics.baseCategoryStageIndexReached =
+            Number(categoryDiagnostics.stageIndexReached ?? 0) || 0;
+          diagnostics.baseCategoryStagesExpected =
+            Number(categoryDiagnostics.stagesExpected ?? 0) || 0;
+          diagnostics.baseCategoryWantedAtFailure = String(
+            categoryDiagnostics.wantedAtFailure ?? ""
+          );
+          diagnostics.baseCategoryVisibleCandidatesAtFailure = String(
+            categoryDiagnostics.visibleCandidatesAtFailure ?? "none"
+          );
+          diagnostics.baseCategoryPickerResolved = Boolean(
+            categoryDiagnostics.pickerResolved
+          );
+          diagnostics.baseCategoryDropdownOpened = Boolean(
+            categoryDiagnostics.dropdownOpened
+          );
+          diagnostics.baseCategoryOptionSurfaceResolved = Boolean(
+            categoryDiagnostics.optionSurfaceResolved
+          );
+          diagnostics.baseCategoryOptionSurfaceType = String(
+            categoryDiagnostics.optionSurfaceType ?? "none"
+          );
+          diagnostics.baseCategoryRawCandidatesCount =
+            Number(categoryDiagnostics.rawCandidatesCount ?? 0) || 0;
+          diagnostics.baseCategoryVisibleCandidatesCount =
+            Number(categoryDiagnostics.visibleCandidatesCount ?? 0) || 0;
+          diagnostics.baseCategoryClickableRowsCount =
+            Number(categoryDiagnostics.clickableRowsCount ?? 0) || 0;
+          diagnostics.baseCategoryOptionSurfaceChecks = String(
+            categoryDiagnostics.optionSurfaceChecks ?? "none"
+          );
+          diagnostics.baseCategoryBreadcrumbMode = Boolean(
+            categoryDiagnostics.breadcrumbMode
+          );
+          diagnostics.baseCategorySelectionVerified = Boolean(
+            categoryDiagnostics.selectionVerified
+          );
+          diagnostics.baseCategorySelectionReason = String(
+            categoryDiagnostics.selectionReason ?? result.reason ?? ""
+          );
+        }
+        if (result.status === "filled") {
+          diagnostics.baseStageFieldsFilled.push(step.label);
+        } else if (result.status === "needs_review") {
+          diagnostics.baseStageFieldsNeedsReview.push(
+            `${step.label}${result.reason ? ` (${result.reason})` : ""}`
+          );
+        } else {
+          diagnostics.baseStageFieldsSkipped.push(
+            `${step.label}${result.reason ? ` (${result.reason})` : ""}`
+          );
+        }
+      }
+
+      diagnostics.baseStageCompleted = true;
+      diagnostics.baseStageCompletedBeforeMarketplaceSwitch = true;
+      diagnostics.baseStageReason = "base stage attempted before marketplace switch";
+      console.debug("[LPU Vendoo] Base stage diagnostics", diagnostics);
+      return diagnostics;
+    } catch (error) {
+      diagnostics.baseStageCompleted = false;
+      diagnostics.baseStageCompletedBeforeMarketplaceSwitch = false;
+      diagnostics.baseStageReason = "base stage runtime error";
+      diagnostics.baseStageError = error instanceof Error ? error.message : "unknown error";
+      console.debug("[LPU Vendoo] Base stage diagnostics", diagnostics);
+      return diagnostics;
+    }
+  }
+
+  function isBaseGeneralFieldKey(key) {
+    return ["title", "description", "brand", "color", "category"].includes(String(key));
+  }
+
+  function buildBaseStageTargetSteps(input) {
+    const { fillSteps, payload, selectors, actionModel } = input;
+    const byKey = new Map(fillSteps.map((step) => [String(step.key), step]));
+    const baseCategoryValue = pickEbayCategory(payload) || pickEbayCategoryPath(payload);
+    const definitions = [
+      {
+        key: "title",
+        label: "eBay title",
+        payloadValue: pickEbayTitle(payload),
+        selectorConfig: selectors?.title,
+      },
+      {
+        key: "description",
+        label: "eBay description",
+        payloadValue: payload?.marketplaces?.ebay?.description ?? "",
+        selectorConfig: selectors?.description,
+      },
+      {
+        key: "brand",
+        label: "eBay brand",
+        payloadValue: pickEbayBrand(payload),
+        selectorConfig: selectors?.brand,
+      },
+      {
+        key: "color",
+        label: "eBay color",
+        payloadValue: pickEbayColor(payload),
+        selectorConfig: selectors?.color,
+      },
+      {
+        key: "category",
+        label: "eBay category",
+        payloadValue: baseCategoryValue,
+        selectorConfig: selectors?.category,
+      },
+    ];
+
+    const targets = [];
+    for (const definition of definitions) {
+      const existing = byKey.get(definition.key);
+      if (existing) {
+        if (definition.key === "category") {
+          targets.push({
+            ...existing,
+            payloadValue: definition.payloadValue,
+            value: definition.payloadValue,
+          });
+        } else {
+          targets.push(existing);
+        }
+        continue;
+      }
+
+      const action = actionModel.createFieldAction(definition);
+      targets.push({
+        ...action,
+        value: action.payloadValue,
+      });
+    }
+
+    return targets;
+  }
+
   async function runMarketplaceActivationStage(input) {
-    const { targetMarketplace, selectors } = input;
+    const { targetMarketplace, selectors, preMarketplaceBaseStageCompleted } = input;
     const diagnostics = {
       marketplaceStageAttempted: true,
       targetMarketplace,
+      preMarketplaceBaseStageCompleted: Boolean(preMarketplaceBaseStageCompleted),
       marketplaceTabFound: false,
       marketplaceActivationAttempted: false,
       marketplaceActivationMethod: "none",
@@ -666,7 +921,20 @@
     const { value, control, fieldConfig } = input;
     const stages = splitCategoryStages(value);
     if (!stages.length) {
-      return { status: "needs_review", reason: "no category stages found" };
+      return {
+        status: "needs_review",
+        reason: "no category stages found",
+        diagnostics: {
+          stageIndexReached: 0,
+          stagesExpected: 0,
+          wantedAtFailure: "",
+          visibleCandidatesAtFailure: "none",
+          pickerResolved: false,
+          breadcrumbMode: false,
+          selectionVerified: false,
+          selectionReason: "no category stages found",
+        },
+      };
     }
 
     openCustomSelectControl(control);
@@ -674,6 +942,11 @@
 
     let stageOneChosenDebug = "";
     const confirmedStages = [];
+    let lastVisibleSample = "";
+    let optionSurfaceResolved = false;
+    let optionSurfaceType = "none";
+    let optionSurfaceChecks = "";
+    let dropdownOpened = true;
     for (let index = 0; index < stages.length; index += 1) {
       const stageLabel = stages[index];
       const stageLabelsToTry = getStageLabelsForMatch(stageLabel, index, fieldConfig);
@@ -690,11 +963,16 @@
         fieldConfig.optionSelectors ?? []
       );
 
-      let optionDiscovery = findVisibleOptionEntries(
-        fieldConfig.optionSelectors ?? [],
+      let optionContext = discoverCategoryOptionEntries({
+        optionSelectors: fieldConfig.optionSelectors ?? [],
         pickerScope,
-        "category_modal_scope"
-      );
+        pickerElement: pickerInfo.element,
+        control,
+      });
+      let optionDiscovery = optionContext.optionDiscovery;
+      optionSurfaceResolved = optionContext.optionSurfaceResolved;
+      optionSurfaceType = optionContext.optionSurfaceType;
+      optionSurfaceChecks = optionContext.optionSurfaceChecks;
       let optionEntries = optionDiscovery.entries;
       let stageMatchResult = findCategoryStageMatches({
         optionEntries,
@@ -716,11 +994,16 @@
         if (searchInput) {
           setElementValue(searchInput, stageLabel);
           await wait(140);
-          optionDiscovery = findVisibleOptionEntries(
-            fieldConfig.optionSelectors ?? [],
+          optionContext = discoverCategoryOptionEntries({
+            optionSelectors: fieldConfig.optionSelectors ?? [],
             pickerScope,
-            "category_modal_scope"
-          );
+            pickerElement: pickerInfo.element,
+            control,
+          });
+          optionDiscovery = optionContext.optionDiscovery;
+          optionSurfaceResolved = optionContext.optionSurfaceResolved;
+          optionSurfaceType = optionContext.optionSurfaceType;
+          optionSurfaceChecks = optionContext.optionSurfaceChecks;
           optionEntries = optionDiscovery.entries;
           stageMatchResult = findCategoryStageMatches({
             optionEntries,
@@ -818,6 +1101,23 @@
         return {
           status: "needs_review",
           reason: withChosen,
+          diagnostics: {
+            stageIndexReached: index,
+            stagesExpected: stages.length,
+            wantedAtFailure: wanted,
+            visibleCandidatesAtFailure: visiblePreview || "none",
+            pickerResolved: !!pickerInfo?.element,
+            dropdownOpened,
+            optionSurfaceResolved,
+            optionSurfaceType,
+            optionSurfaceChecks,
+            rawCandidatesCount: optionDiscovery.rawCount,
+            visibleCandidatesCount: optionDiscovery.visibleCount,
+            clickableRowsCount: stageMatchResult.clickableRowCount ?? 0,
+            breadcrumbMode: !!stageMatchResult.breadcrumbMode,
+            selectionVerified: false,
+            selectionReason: withChosen,
+          },
         };
       }
 
@@ -827,7 +1127,16 @@
 
       clickElement(matches[0].clickTarget);
       confirmedStages.push(stageLabel);
-      await wait(180);
+      const waitResult = await waitForCategoryStageTransition({
+        pickerElement: pickerInfo.element,
+        optionSelectors: fieldConfig.optionSelectors ?? [],
+        previousVisibleSample: lastVisibleSample || optionDiscovery.visibleSample || "",
+        expectedNextStage: stages[index + 1] ?? "",
+      });
+      lastVisibleSample = waitResult.visibleSample || lastVisibleSample;
+      if (!waitResult.changed) {
+        await wait(120);
+      }
     }
 
     const completionConfirmed = isCategoryCompletionConfirmed({
@@ -837,10 +1146,183 @@
     });
 
     if (!completionConfirmed) {
-      return { status: "needs_review", reason: "completion not confirmed" };
+      return {
+        status: "needs_review",
+        reason: "completion not confirmed",
+        diagnostics: {
+          stageIndexReached: stages.length,
+          stagesExpected: stages.length,
+          wantedAtFailure: stages[stages.length - 1] ?? "",
+          visibleCandidatesAtFailure: lastVisibleSample || "none",
+          pickerResolved: true,
+          dropdownOpened,
+          optionSurfaceResolved,
+          optionSurfaceType,
+          optionSurfaceChecks,
+          rawCandidatesCount: 0,
+          visibleCandidatesCount: 0,
+          clickableRowsCount: 0,
+          breadcrumbMode: true,
+          selectionVerified: false,
+          selectionReason: "completion not confirmed",
+        },
+      };
     }
 
-    return { status: "filled" };
+    return {
+      status: "filled",
+      diagnostics: {
+        stageIndexReached: stages.length,
+        stagesExpected: stages.length,
+        wantedAtFailure: "",
+        visibleCandidatesAtFailure: "none",
+        pickerResolved: true,
+        dropdownOpened,
+        optionSurfaceResolved,
+        optionSurfaceType,
+        optionSurfaceChecks,
+        rawCandidatesCount: 0,
+        visibleCandidatesCount: 0,
+        clickableRowsCount: 0,
+        breadcrumbMode: true,
+        selectionVerified: true,
+        selectionReason: "category completion confirmed",
+      },
+    };
+  }
+
+  function discoverCategoryOptionEntries(input) {
+    const { optionSelectors, pickerScope, pickerElement, control } = input;
+    const checks = [];
+
+    function evaluateSurface(surface, scopeMode, checkLabel) {
+      if (!(surface instanceof Element) && surface !== document) {
+        return null;
+      }
+      const discovery = findVisibleOptionEntries(optionSelectors, surface, scopeMode);
+      checks.push(
+        `${checkLabel}:raw=${discovery.rawCount},visible=${discovery.visibleCount},scope=${discovery.scopeMode}`
+      );
+      return discovery;
+    }
+
+    const scoped = evaluateSurface(
+      pickerScope,
+      "category_modal_scope",
+      "picker_scope"
+    );
+    if (scoped && scoped.rawCount > 0) {
+      return {
+        optionDiscovery: scoped,
+        optionSurfaceResolved: true,
+        optionSurfaceType: "picker_scope",
+        optionSurfaceChecks: checks.join(" | "),
+      };
+    }
+
+    const portalSurfaces = [];
+    const controlAriaControls = control?.getAttribute?.("aria-controls") || "";
+    if (controlAriaControls) {
+      const controlledSurface = document.getElementById(controlAriaControls);
+      if (controlledSurface instanceof Element && isVisible(controlledSurface)) {
+        portalSurfaces.push({ element: controlledSurface, type: "control_aria_controls" });
+      }
+    }
+
+    const globalSurfaceSelectors = [
+      '[role="listbox"]',
+      '[data-radix-select-content]',
+      '[data-radix-popper-content-wrapper]',
+      '[class*="menu"]',
+      '[class*="popover"]',
+      '[class*="dropdown"]',
+    ];
+    for (const selector of globalSurfaceSelectors) {
+      const candidates = Array.from(document.querySelectorAll(selector)).filter(
+        (candidate) => candidate instanceof Element && isVisible(candidate)
+      );
+      for (const candidate of candidates) {
+        portalSurfaces.push({ element: candidate, type: `global:${selector}` });
+      }
+    }
+
+    let bestPortal = null;
+    for (const surface of portalSurfaces) {
+      const discovery = evaluateSurface(
+        surface.element,
+        "category_portal_scope",
+        surface.type
+      );
+      if (!discovery || discovery.rawCount === 0) continue;
+      if (!bestPortal || discovery.visibleCount > bestPortal.discovery.visibleCount) {
+        bestPortal = { discovery, type: surface.type };
+      }
+    }
+    if (bestPortal) {
+      return {
+        optionDiscovery: bestPortal.discovery,
+        optionSurfaceResolved: true,
+        optionSurfaceType: bestPortal.type,
+        optionSurfaceChecks: checks.join(" | "),
+      };
+    }
+
+    const documentScope = evaluateSurface(
+      document,
+      "category_document_scope",
+      "document_scope"
+    );
+    if (documentScope && documentScope.rawCount > 0) {
+      return {
+        optionDiscovery: documentScope,
+        optionSurfaceResolved: true,
+        optionSurfaceType: "document_scope",
+        optionSurfaceChecks: checks.join(" | "),
+      };
+    }
+
+    return {
+      optionDiscovery:
+        scoped ??
+        findVisibleOptionEntries(optionSelectors, pickerElement ?? document, "category_modal_scope"),
+      optionSurfaceResolved: false,
+      optionSurfaceType: "none",
+      optionSurfaceChecks: checks.join(" | ") || "none",
+    };
+  }
+
+  async function waitForCategoryStageTransition(input) {
+    const { pickerElement, optionSelectors, previousVisibleSample, expectedNextStage } = input;
+    const previousNormalized = normalizeText(previousVisibleSample || "");
+    const expectedNormalized = normalizeText(expectedNextStage || "");
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await wait(120);
+      const scope = resolveCategoryOptionScope(pickerElement, optionSelectors);
+      const optionDiscovery = findVisibleOptionEntries(
+        optionSelectors,
+        scope,
+        "category_modal_scope"
+      );
+      const visibleSample = optionDiscovery.visibleSample || "";
+      const visibleNormalized = normalizeText(visibleSample);
+      const changed = !!visibleNormalized && visibleNormalized !== previousNormalized;
+      const includesExpected = expectedNormalized
+        ? visibleNormalized.includes(expectedNormalized)
+        : changed;
+
+      if (includesExpected || changed) {
+        return {
+          changed: true,
+          visibleSample,
+        };
+      }
+    }
+
+    return {
+      changed: false,
+      visibleSample: previousVisibleSample || "",
+    };
   }
 
   function isSafeCustomSelectControl(control) {
@@ -4304,6 +4786,7 @@
       needsReview,
       skippedForSafety,
       photoStageDiagnostics,
+      baseStageDiagnostics,
       marketplaceStageDiagnostics,
     } = input;
     const lastRunEl = document.getElementById("lpu-vendoo-last-run");
@@ -4329,10 +4812,21 @@
           `reason: ${photoStageDiagnostics.uploadVerificationReason || "none"}`
       );
     }
+    if (baseStageDiagnostics) {
+      lines.push(
+        `Base stage: ${baseStageDiagnostics.baseStageCompleted ? "completed" : "incomplete"}; ` +
+          `targeted: ${baseStageDiagnostics.baseStageFieldsTargeted.length}; ` +
+          `filled: ${baseStageDiagnostics.baseStageFieldsFilled.length}; ` +
+          `needs review: ${baseStageDiagnostics.baseStageFieldsNeedsReview.length}; ` +
+          `skipped: ${baseStageDiagnostics.baseStageFieldsSkipped.length}; ` +
+          `before switch: ${baseStageDiagnostics.baseStageCompletedBeforeMarketplaceSwitch ? "true" : "false"}`
+      );
+    }
     if (marketplaceStageDiagnostics) {
       lines.push(
         `Marketplace stage: ${marketplaceStageDiagnostics.marketplaceStageStatus}; ` +
           `target: ${marketplaceStageDiagnostics.targetMarketplace}; ` +
+          `pre-base complete: ${marketplaceStageDiagnostics.preMarketplaceBaseStageCompleted ? "true" : "false"}; ` +
           `activation: ${marketplaceStageDiagnostics.marketplaceActivationPassed ? "passed" : "failed"}; ` +
           `ready: ${marketplaceStageDiagnostics.marketplaceReadyPassed ? "passed" : "failed"}; ` +
           `reason: ${marketplaceStageDiagnostics.marketplaceReadyReason || marketplaceStageDiagnostics.marketplaceActivationReason || "none"}`
