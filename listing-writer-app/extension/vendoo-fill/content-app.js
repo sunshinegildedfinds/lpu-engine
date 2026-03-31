@@ -4,6 +4,7 @@
 
   const BRIDGE_SOURCE = "lpu-app";
   const BRIDGE_TYPE = "LPU_VENDOO_PAYLOAD";
+  const TRANSIENT_PHOTO_KEY = "__LPU_VENDOO_TRANSIENT_PHOTO_PAYLOAD__";
 
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
@@ -14,14 +15,25 @@
     }
 
     const normalized = normalizePayload(data.payload);
+    cacheTransientPhotos(normalized.photos ?? []);
+    const prepared = preparePayloadForStorage(normalized);
 
     chrome.runtime.sendMessage(
       {
         type: "STORE_PAYLOAD",
-        payload: normalized,
+        payload: prepared.payloadForStorage,
+        transientPhotos: normalized.photos ?? [],
       },
       (response) => {
         const runtimeError = chrome.runtime.lastError?.message;
+        const storageSaveError = runtimeError || (!response?.ok ? response?.error ?? "Unknown error" : "");
+        const transportDiagnostics = {
+          ...prepared.diagnostics,
+          storageSavePassed: !storageSaveError,
+          storageSaveError,
+        };
+        console.debug("[LPU Vendoo] Payload storage diagnostics", transportDiagnostics);
+
         if (runtimeError) {
           showToast(`Extension error: ${runtimeError}`, false);
           return;
@@ -38,6 +50,12 @@
   });
 
   function normalizePayload(input) {
+    const photos = pickPhotos(
+      input,
+      ["photos"],
+      ["payloadMap", "photos"]
+    );
+
     const title = pickString(
       input,
       ["marketplaces", "ebay", "title"],
@@ -165,6 +183,7 @@
         sentAt: new Date().toISOString(),
         sourcePage: window.location.href,
       },
+      ...(photos.length ? { photos } : {}),
       marketplaces: {
         ebay: {
           title,
@@ -176,8 +195,80 @@
           itemSpecifics,
         },
       },
-      raw: input ?? null,
     };
+  }
+
+  function preparePayloadForStorage(payload) {
+    const safePayload = {
+      ...(payload && typeof payload === "object" ? payload : {}),
+    };
+    const photos = Array.isArray(payload?.photos) ? payload.photos : [];
+    const metadataPhotos = photos.map((photo, index) => ({
+      index,
+      name: typeof photo?.name === "string" ? photo.name : "",
+      type: typeof photo?.type === "string" ? photo.type : "",
+      size:
+        typeof photo?.size === "number" && Number.isFinite(photo.size) && photo.size >= 0
+          ? photo.size
+          : 0,
+    }));
+
+    safePayload.photos = metadataPhotos;
+    if (safePayload.raw) {
+      delete safePayload.raw;
+    }
+
+    const storedPayloadByteEstimate = estimateByteSize(safePayload);
+    const diagnostics = {
+      storedPayloadByteEstimate,
+      transientPhotoPayloadPresent: photos.length > 0,
+      photoCount: photos.length,
+      persistedPhotoMetadataOnly: true,
+      photoPayloadStrippedForStorage: photos.length > 0,
+    };
+    safePayload.meta = {
+      ...(safePayload.meta && typeof safePayload.meta === "object" ? safePayload.meta : {}),
+      ...diagnostics,
+    };
+
+    return { payloadForStorage: safePayload, diagnostics };
+  }
+
+  function cacheTransientPhotos(photos) {
+    const sanitized = Array.isArray(photos)
+      ? photos
+          .map((photo, index) => {
+            const dataUrl =
+              typeof photo?.dataUrl === "string" ? photo.dataUrl.trim() : "";
+            if (!dataUrl) return null;
+            return {
+              index,
+              name: typeof photo?.name === "string" ? photo.name.trim() : "",
+              type: typeof photo?.type === "string" ? photo.type.trim() : "",
+              size:
+                typeof photo?.size === "number" &&
+                Number.isFinite(photo.size) &&
+                photo.size >= 0
+                  ? photo.size
+                  : 0,
+              dataUrl,
+            };
+          })
+          .filter(Boolean)
+      : [];
+
+    window[TRANSIENT_PHOTO_KEY] = {
+      savedAt: Date.now(),
+      photos: sanitized,
+    };
+  }
+
+  function estimateByteSize(value) {
+    try {
+      return new TextEncoder().encode(JSON.stringify(value ?? null)).length;
+    } catch {
+      return -1;
+    }
   }
 
   function pickString(obj, ...paths) {
@@ -198,6 +289,37 @@
       }
     }
     return null;
+  }
+
+  function pickPhotos(obj, ...paths) {
+    for (const path of paths) {
+      const value = getAtPath(obj, path);
+      if (!Array.isArray(value)) continue;
+
+      const photos = value
+        .map((photo) => {
+          if (!photo || typeof photo !== "object") return null;
+          const dataUrl =
+            typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "";
+          if (!dataUrl) return null;
+          return {
+            name: typeof photo.name === "string" ? photo.name.trim() : "",
+            type: typeof photo.type === "string" ? photo.type.trim() : "",
+            size:
+              typeof photo.size === "number" &&
+              Number.isFinite(photo.size) &&
+              photo.size >= 0
+                ? photo.size
+                : 0,
+            dataUrl,
+          };
+        })
+        .filter(Boolean);
+
+      if (photos.length) return photos;
+    }
+
+    return [];
   }
 
   function normalizeItemSpecifics(value) {

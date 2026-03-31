@@ -33,7 +33,15 @@ export type EbayItemSpecifics = {
   shape?: string;
 };
 
+export type VendooPhotoPayload = {
+  name: string;
+  type: string;
+  size: number;
+  dataUrl: string;
+};
+
 export type VendooExtensionPayload = {
+  photos?: VendooPhotoPayload[];
   marketplaces: {
     ebay: {
       title: string;
@@ -55,8 +63,22 @@ export function buildVendooExtensionPayload(input: {
   category: string;
   canonicalVendooCategoryPath?: string | null;
   itemSpecifics: EbayItemSpecifics;
+  photos?: VendooPhotoPayload[];
 }): VendooExtensionPayload {
   const canonicalVendooCategoryPath = input.canonicalVendooCategoryPath?.trim();
+  const sanitizedPhotos = Array.isArray(input.photos)
+    ? input.photos
+        .map((photo) => ({
+          name: typeof photo?.name === "string" ? photo.name.trim() : "",
+          type: typeof photo?.type === "string" ? photo.type.trim() : "",
+          size:
+            typeof photo?.size === "number" && Number.isFinite(photo.size) && photo.size >= 0
+              ? photo.size
+              : 0,
+          dataUrl: typeof photo?.dataUrl === "string" ? photo.dataUrl.trim() : "",
+        }))
+        .filter((photo) => photo.dataUrl)
+    : [];
   const itemSpecifics: EbayItemSpecifics = {
     brand: input.itemSpecifics.brand.trim(),
     size: input.itemSpecifics.size.trim(),
@@ -103,6 +125,7 @@ export function buildVendooExtensionPayload(input: {
   }
 
   return {
+    ...(sanitizedPhotos.length ? { photos: sanitizedPhotos } : {}),
     marketplaces: {
       ebay: {
         title: input.title.trim(),

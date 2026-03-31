@@ -17,6 +17,7 @@ import { buildVendooActionPreview } from "@/lib/vendoo/actionPreview";
 type ImagePayload = {
   name: string;
   type: string;
+  size: number;
   dataUrl: string;
 };
 
@@ -199,6 +200,7 @@ export default function LpuPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
+  const [layer3Photos, setLayer3Photos] = useState<ImagePayload[]>([]);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files ?? []);
@@ -218,6 +220,7 @@ export default function LpuPage() {
         files.map(async (file) => ({
           name: file.name,
           type: file.type,
+          size: file.size,
           dataUrl: await fileToDataUrl(file),
         }))
       );
@@ -241,12 +244,14 @@ export default function LpuPage() {
 
       setOutput(data.output || "");
       setValidation(data.validation ?? null);
+      setLayer3Photos(images);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to generate output.";
       setError(message);
       setValidation(null);
       setCopiedTarget(null);
+      setLayer3Photos([]);
     } finally {
       setIsLoading(false);
     }
@@ -1078,6 +1083,7 @@ export default function LpuPage() {
           titleB: payloadMap.platforms.ebay.titleB,
           description: payloadMap.platforms.ebay.description,
           ebaySection: payloadMap.platforms.ebay.section,
+          photos: layer3Photos,
         }}
       />
     </main>

@@ -3,6 +3,7 @@
   window.__LPU_VENDOO_PAGE_BRIDGE__ = true;
 
   const PANEL_ID = "lpu-vendoo-panel";
+  const TRANSIENT_PHOTO_KEY = "__LPU_VENDOO_TRANSIENT_PHOTO_PAYLOAD__";
 
   init();
 
@@ -96,6 +97,7 @@
     const brand = pickEbayBrand(record.payload);
     const size = pickEbaySize(record.payload);
     const color = pickEbayColor(record.payload);
+    const photos = pickPayloadPhotos(record.payload);
     const savedAt = record.savedAt
       ? new Date(record.savedAt).toLocaleString()
       : "unknown";
@@ -109,6 +111,7 @@
       <div><strong>eBay brand:</strong> ${brand ? "ready" : "missing"}</div>
       <div><strong>eBay size:</strong> ${size ? "ready" : "missing"}</div>
       <div><strong>eBay color:</strong> ${color ? "ready" : "missing"}</div>
+      <div><strong>Photos:</strong> ${photos.length ? `${photos.length} ready` : "missing"}</div>
     `;
   }
 
@@ -171,6 +174,17 @@
 
     const runState = actionModel.createRunState();
     const usedElements = new Set();
+    const photoStageDiagnostics = await runPhotoUploadStage(payload);
+
+    if (photoStageDiagnostics.photoStageStatus === "uploaded_verified") {
+      runState.filled.push("Vendoo photos");
+    } else if (photoStageDiagnostics.photoStageStatus === "skipped_no_photos") {
+      runState.skippedForSafety.push("Vendoo photos (no photos in payload)");
+    } else {
+      runState.needsReview.push(
+        `Vendoo photos (${photoStageDiagnostics.uploadVerificationReason})`
+      );
+    }
 
     for (const step of fillSteps) {
       const result = await adapters.runVendooFieldAction(step, {
@@ -239,8 +253,134 @@
       filled: runState.filled,
       needsReview: runState.needsReview,
       skippedForSafety: runState.skippedForSafety,
+      photoStageDiagnostics,
     });
     await refreshPanel();
+  }
+
+  async function runPhotoUploadStage(payload) {
+    const photoResolution = await resolvePhotoPayloadForRun(payload);
+    const photos = photoResolution.photos;
+    const diagnostics = {
+      photosPresentInPayload: photos.length > 0,
+      expectedPhotoCount: photos.length,
+      photoPayloadNames: photos.map((photo) => photo.name || "(unnamed)").slice(0, 20),
+      transientPhotoPayloadPresent: photoResolution.transientPhotoPayloadPresent,
+      transientPhotoPayloadSource: photoResolution.transientPhotoPayloadSource,
+      transientPhotoCountResolved: photoResolution.transientPhotoCountResolved,
+      persistedPhotoMetadataOnly: photoResolution.persistedPhotoMetadataOnly,
+      photoPayloadStrippedForStorage: photoResolution.photoPayloadStrippedForStorage,
+      photoCount: photoResolution.photoCount,
+      storedPayloadByteEstimate: photoResolution.storedPayloadByteEstimate,
+      storageSavePassed: null,
+      storageSaveError: "",
+      uploadSurfaceDetected: false,
+      uploadSurfaceType: "none",
+      fileInputFound: false,
+      associatedFileInputResolved: false,
+      dropzoneNodeFound: false,
+      uploadAttempted: false,
+      uploadMethodUsed: "none",
+      uploadFallbackAttempted: false,
+      uploadFallbackReason: "",
+      uploadedPhotoCountObserved: 0,
+      uploadVerificationPassed: false,
+      uploadVerificationReason: "",
+      photoStageStatus: "skipped_no_photos",
+      photoStageError: "",
+    };
+    try {
+      if (!photos.length) {
+        diagnostics.uploadVerificationReason = "no photos in payload";
+        console.debug("[LPU Vendoo] Photo stage diagnostics", diagnostics);
+        return diagnostics;
+      }
+
+      diagnostics.photoStageStatus = "attempted";
+      const uploadSurface = findVendooUploadSurface();
+      diagnostics.uploadSurfaceDetected = uploadSurface.detected;
+      diagnostics.uploadSurfaceType = uploadSurface.type;
+      diagnostics.fileInputFound = uploadSurface.fileInput instanceof HTMLInputElement;
+      diagnostics.dropzoneNodeFound = uploadSurface.dropzoneNode instanceof Element;
+
+      const files = buildFilesFromPhotoPayload(photos);
+      if (!files.length) {
+        diagnostics.photoStageStatus = "failed";
+        diagnostics.uploadVerificationReason = "no valid photo files from payload";
+        diagnostics.photoStageError = "payload photos could not be converted to File objects";
+        console.debug("[LPU Vendoo] Photo stage diagnostics", diagnostics);
+        return diagnostics;
+      }
+
+      const initialObservedCount = countUploadedPhotoEvidence(uploadSurface.scope);
+      let activeFileInput =
+        uploadSurface.fileInput instanceof HTMLInputElement ? uploadSurface.fileInput : null;
+
+      try {
+        if (activeFileInput) {
+          assignFilesToInput(activeFileInput, files);
+          diagnostics.uploadAttempted = true;
+          diagnostics.uploadMethodUsed = "file_input";
+        } else {
+          diagnostics.uploadFallbackAttempted = true;
+          const associatedFileInput = resolveAssociatedUploadFileInput(uploadSurface);
+          if (associatedFileInput) {
+            activeFileInput = associatedFileInput;
+            diagnostics.associatedFileInputResolved = true;
+            diagnostics.uploadFallbackReason = "associated file input resolved";
+            assignFilesToInput(activeFileInput, files);
+            diagnostics.uploadAttempted = true;
+            diagnostics.uploadMethodUsed = "associated_hidden_input";
+          } else if (uploadSurface.dropzoneNode instanceof Element) {
+            const dropResult = dispatchDropzoneUpload(uploadSurface.dropzoneNode, files);
+            diagnostics.uploadAttempted = dropResult.attempted;
+            diagnostics.uploadMethodUsed = dropResult.attempted
+              ? "dropzone_datatransfer"
+              : "none";
+            diagnostics.uploadFallbackReason = dropResult.reason;
+          } else {
+            diagnostics.uploadFallbackReason = "no associated file input or dropzone node";
+          }
+        }
+      } catch (error) {
+        diagnostics.photoStageStatus = "failed";
+        diagnostics.uploadVerificationReason = "upload assignment failed";
+        diagnostics.photoStageError =
+          error instanceof Error ? error.message : "unknown upload assignment error";
+        console.debug("[LPU Vendoo] Photo stage diagnostics", diagnostics);
+        return diagnostics;
+      }
+
+      if (!diagnostics.uploadAttempted) {
+        diagnostics.photoStageStatus = "needs_review";
+        diagnostics.uploadVerificationReason = "file input not found";
+        if (!diagnostics.uploadFallbackReason) {
+          diagnostics.uploadFallbackReason = "no usable upload fallback";
+        }
+        console.debug("[LPU Vendoo] Photo stage diagnostics", diagnostics);
+        return diagnostics;
+      }
+
+      const verification = await verifyPhotoUpload({
+        scope: uploadSurface.scope,
+        fileInput: activeFileInput,
+        expectedCount: files.length,
+        initialObservedCount,
+      });
+
+      diagnostics.uploadedPhotoCountObserved = verification.uploadedPhotoCountObserved;
+      diagnostics.uploadVerificationPassed = verification.passed;
+      diagnostics.uploadVerificationReason = verification.reason;
+      diagnostics.photoStageStatus = verification.passed ? "uploaded_verified" : "needs_review";
+      console.debug("[LPU Vendoo] Photo stage diagnostics", diagnostics);
+      return diagnostics;
+    } catch (error) {
+      diagnostics.photoStageStatus = "failed";
+      diagnostics.uploadVerificationReason = "unexpected photo stage error";
+      diagnostics.photoStageError = error instanceof Error ? error.message : "unknown error";
+      console.debug("[LPU Vendoo] Photo stage diagnostics", diagnostics);
+      return diagnostics;
+    }
   }
 
   async function tryFillCustomSelect(input) {
@@ -3955,7 +4095,7 @@
   }
 
   function renderLastRunResults(input) {
-    const { filled, needsReview, skippedForSafety } = input;
+    const { filled, needsReview, skippedForSafety, photoStageDiagnostics } = input;
     const lastRunEl = document.getElementById("lpu-vendoo-last-run");
     if (!lastRunEl) return;
 
@@ -3972,8 +4112,477 @@
         ? `Skipped for safety: ${skippedForSafety.join(", ")}`
         : "Skipped for safety: none"
     );
+    if (photoStageDiagnostics) {
+      lines.push(
+        `Photo stage: ${photoStageDiagnostics.photoStageStatus}; ` +
+          `expected: ${photoStageDiagnostics.expectedPhotoCount}; observed: ${photoStageDiagnostics.uploadedPhotoCountObserved}; ` +
+          `reason: ${photoStageDiagnostics.uploadVerificationReason || "none"}`
+      );
+    }
 
     lastRunEl.textContent = lines.join("\n");
+  }
+
+  function pickPayloadPhotos(payload) {
+    const raw = payload?.photos;
+    if (!Array.isArray(raw)) return [];
+
+    return raw
+      .map((photo, index) => {
+        if (!photo || typeof photo !== "object") return null;
+        return {
+          index:
+            typeof photo.index === "number" && Number.isFinite(photo.index)
+              ? photo.index
+              : index,
+          name: typeof photo.name === "string" ? photo.name.trim() : "",
+          type: typeof photo.type === "string" ? photo.type.trim() : "",
+          size:
+            typeof photo.size === "number" && Number.isFinite(photo.size) && photo.size >= 0
+              ? photo.size
+              : 0,
+          dataUrl: typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "",
+        };
+      })
+      .filter(Boolean);
+  }
+
+  async function resolvePhotoPayloadForRun(payload) {
+    const persistedPhotos = pickPayloadPhotos(payload);
+    const persistedWithData = persistedPhotos.filter(
+      (photo) => typeof photo.dataUrl === "string" && photo.dataUrl
+    );
+    const persistedMetadataOnly =
+      persistedPhotos.length > 0 && persistedWithData.length === 0;
+
+    let transientPhotos = [];
+    let transientPhotoPayloadSource = "none";
+    const transientStore = window[TRANSIENT_PHOTO_KEY];
+    if (transientStore && typeof transientStore === "object" && Array.isArray(transientStore.photos)) {
+      transientPhotos = transientStore.photos
+        .map((photo, index) => {
+          if (!photo || typeof photo !== "object") return null;
+          const dataUrl =
+            typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "";
+          if (!dataUrl) return null;
+          return {
+            index:
+              typeof photo.index === "number" && Number.isFinite(photo.index)
+                ? photo.index
+                : index,
+            name: typeof photo.name === "string" ? photo.name.trim() : "",
+            type: typeof photo.type === "string" ? photo.type.trim() : "",
+            size:
+              typeof photo.size === "number" &&
+              Number.isFinite(photo.size) &&
+              photo.size >= 0
+                ? photo.size
+                : 0,
+            dataUrl,
+          };
+        })
+        .filter(Boolean);
+      transientPhotoPayloadSource = transientPhotos.length ? "window_memory" : "none";
+    }
+
+    if (!transientPhotos.length) {
+      const extensionTransient = await getTransientPhotosFromExtension();
+      transientPhotos = extensionTransient.photos;
+      transientPhotoPayloadSource = extensionTransient.source;
+    }
+
+    const fallbackByIndex = new Map(transientPhotos.map((photo) => [photo.index, photo]));
+    const fallbackByName = new Map(
+      transientPhotos
+        .filter((photo) => photo.name)
+        .map((photo) => [normalizeText(photo.name), photo])
+    );
+
+    const merged = persistedPhotos
+      .map((photo) => {
+        if (photo.dataUrl) return photo;
+        const byIndex = fallbackByIndex.get(photo.index);
+        if (byIndex) return { ...photo, dataUrl: byIndex.dataUrl };
+        const byName = photo.name ? fallbackByName.get(normalizeText(photo.name)) : null;
+        if (byName) return { ...photo, dataUrl: byName.dataUrl };
+        return null;
+      })
+      .filter(Boolean);
+
+    const usablePhotos = persistedWithData.length
+      ? persistedWithData
+      : merged.length
+        ? merged
+        : transientPhotos;
+
+    return {
+      photos: usablePhotos,
+      transientPhotoPayloadPresent: transientPhotos.length > 0,
+      transientPhotoPayloadSource,
+      transientPhotoCountResolved: transientPhotos.length,
+      persistedPhotoMetadataOnly: persistedMetadataOnly,
+      photoPayloadStrippedForStorage: persistedMetadataOnly,
+      photoCount: persistedPhotos.length || transientPhotos.length,
+      storedPayloadByteEstimate:
+        typeof payload?.meta?.storedPayloadByteEstimate === "number"
+          ? payload.meta.storedPayloadByteEstimate
+          : -1,
+    };
+  }
+
+  async function getTransientPhotosFromExtension() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "GET_TRANSIENT_PHOTOS" }, (response) => {
+        const runtimeError = chrome.runtime.lastError?.message;
+        if (runtimeError || !response?.ok) {
+          resolve({ photos: [], source: "extension_channel_missing" });
+          return;
+        }
+
+        const photos = Array.isArray(response?.record?.photos)
+          ? response.record.photos
+              .map((photo, index) => {
+                if (!photo || typeof photo !== "object") return null;
+                const dataUrl =
+                  typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "";
+                if (!dataUrl) return null;
+                return {
+                  index:
+                    typeof photo.index === "number" && Number.isFinite(photo.index)
+                      ? photo.index
+                      : index,
+                  name: typeof photo.name === "string" ? photo.name.trim() : "",
+                  type: typeof photo.type === "string" ? photo.type.trim() : "",
+                  size:
+                    typeof photo.size === "number" &&
+                    Number.isFinite(photo.size) &&
+                    photo.size >= 0
+                      ? photo.size
+                      : 0,
+                  dataUrl,
+                };
+              })
+              .filter(Boolean)
+          : [];
+
+        resolve({
+          photos,
+          source: photos.length ? "extension_transient_store" : "extension_transient_empty",
+        });
+      });
+    });
+  }
+
+  function findVendooUploadSurface() {
+    const fileInputs = Array.from(document.querySelectorAll("input[type='file']")).filter(
+      (input) => input instanceof HTMLInputElement && isVisible(input)
+    );
+
+    const bestFileInput = fileInputs
+      .map((input) => {
+        const scope = input.closest("section, form, fieldset, [role='region'], div") ?? document;
+        const metadata = normalizeText(
+          [
+            input.getAttribute("accept"),
+            input.getAttribute("name"),
+            input.getAttribute("id"),
+            input.getAttribute("aria-label"),
+            scope instanceof Element ? scope.textContent || "" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        );
+        let score = 0;
+        if (metadata.includes("image")) score += 3;
+        if (metadata.includes("photo")) score += 3;
+        if (metadata.includes("upload")) score += 2;
+        if (metadata.includes("media")) score += 1;
+        return { input, score, scope };
+      })
+      .sort((a, b) => b.score - a.score)[0];
+
+    if (bestFileInput) {
+      return {
+        detected: true,
+        type: "file_input",
+        fileInput: bestFileInput.input,
+        scope: bestFileInput.scope,
+        dropzoneNode: null,
+      };
+    }
+
+    const uploadButton = Array.from(
+      document.querySelectorAll("button, [role='button'], [aria-label]")
+    ).find((element) => {
+      if (!(element instanceof Element)) return false;
+      if (!isVisible(element)) return false;
+      const text = normalizeText(
+        [
+          element.textContent || "",
+          element.getAttribute("aria-label") || "",
+          element.getAttribute("title") || "",
+        ].join(" ")
+      );
+      return text.includes("upload") && (text.includes("photo") || text.includes("image"));
+    });
+
+    if (uploadButton) {
+      return {
+        detected: true,
+        type: "upload_button_no_input",
+        fileInput: null,
+        scope: uploadButton.closest("section, form, fieldset, [role='region'], div") ?? document,
+        dropzoneNode: uploadButton,
+      };
+    }
+
+    const dropzone = Array.from(
+      document.querySelectorAll(
+        "[data-testid*='drop'], [class*='dropzone'], [aria-label*='drop'], [aria-label*='upload']"
+      )
+    ).find((element) => element instanceof Element && isVisible(element));
+
+    if (dropzone instanceof Element) {
+      return {
+        detected: true,
+        type: "dropzone_no_input",
+        fileInput: null,
+        scope: dropzone,
+        dropzoneNode: dropzone,
+      };
+    }
+
+    return {
+      detected: false,
+      type: "none",
+      fileInput: null,
+      scope: document,
+      dropzoneNode: null,
+    };
+  }
+
+  function resolveAssociatedUploadFileInput(uploadSurface) {
+    const localRoots = [];
+    if (uploadSurface?.dropzoneNode instanceof Element) {
+      localRoots.push(uploadSurface.dropzoneNode);
+      if (uploadSurface.dropzoneNode.parentElement) {
+        localRoots.push(uploadSurface.dropzoneNode.parentElement);
+      }
+    }
+    if (uploadSurface?.scope instanceof Element) {
+      localRoots.push(uploadSurface.scope);
+      if (uploadSurface.scope.parentElement) {
+        localRoots.push(uploadSurface.scope.parentElement);
+      }
+    }
+
+    for (const root of localRoots) {
+      const localInput = root.querySelector("input[type='file']");
+      if (localInput instanceof HTMLInputElement) {
+        return localInput;
+      }
+    }
+
+    const globalInputs = Array.from(document.querySelectorAll("input[type='file']"));
+    const scopedMetadata = normalizeText(
+      [
+        uploadSurface?.scope instanceof Element ? uploadSurface.scope.className : "",
+        uploadSurface?.scope instanceof Element
+          ? uploadSurface.scope.getAttribute("aria-label") || ""
+          : "",
+        uploadSurface?.dropzoneNode instanceof Element
+          ? uploadSurface.dropzoneNode.className
+          : "",
+        uploadSurface?.dropzoneNode instanceof Element
+          ? uploadSurface.dropzoneNode.getAttribute("aria-label") || ""
+          : "",
+      ].join(" ")
+    );
+
+    for (const input of globalInputs) {
+      if (!(input instanceof HTMLInputElement)) continue;
+      const metadata = normalizeText(
+        [
+          input.getAttribute("accept"),
+          input.getAttribute("name"),
+          input.getAttribute("id"),
+          input.getAttribute("aria-label"),
+          input.className,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
+      if (
+        metadata.includes("image") ||
+        metadata.includes("photo") ||
+        metadata.includes("upload") ||
+        (scopedMetadata && metadata && scopedMetadata.includes(metadata))
+      ) {
+        return input;
+      }
+    }
+
+    return null;
+  }
+
+  function assignFilesToInput(fileInput, files) {
+    const transfer = new DataTransfer();
+    for (const file of files) {
+      transfer.items.add(file);
+    }
+    fileInput.files = transfer.files;
+    fileInput.dispatchEvent(new Event("input", { bubbles: true }));
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function dispatchDropzoneUpload(dropzoneNode, files) {
+    if (!(dropzoneNode instanceof Element)) {
+      return { attempted: false, reason: "dropzone node missing" };
+    }
+
+    const transfer = new DataTransfer();
+    for (const file of files) {
+      transfer.items.add(file);
+    }
+
+    const eventTypes = ["dragenter", "dragover", "drop"];
+    try {
+      for (const type of eventTypes) {
+        const event = new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer,
+        });
+        dropzoneNode.dispatchEvent(event);
+      }
+      return { attempted: true, reason: "dropzone datatransfer dispatched" };
+    } catch {
+      try {
+        for (const type of eventTypes) {
+          const fallbackEvent = new Event(type, { bubbles: true, cancelable: true });
+          Object.defineProperty(fallbackEvent, "dataTransfer", {
+            value: transfer,
+            enumerable: true,
+          });
+          dropzoneNode.dispatchEvent(fallbackEvent);
+        }
+        return { attempted: true, reason: "dropzone fallback events dispatched" };
+      } catch {
+        return { attempted: false, reason: "dropzone dispatch failed" };
+      }
+    }
+  }
+
+  function buildFilesFromPhotoPayload(photos) {
+    const files = [];
+
+    for (let index = 0; index < photos.length; index += 1) {
+      const photo = photos[index];
+      if (!photo?.dataUrl || typeof photo.dataUrl !== "string") continue;
+      const built = buildFileFromDataUrl(photo, index);
+      if (built) files.push(built);
+    }
+
+    return files;
+  }
+
+  function buildFileFromDataUrl(photo, index) {
+    const dataUrl = String(photo.dataUrl ?? "");
+    const match = dataUrl.match(/^data:([^;,]+)?(?:;charset=[^;,]+)?;base64,(.+)$/);
+    if (!match) return null;
+
+    try {
+      const mimeType = (photo.type || match[1] || "image/jpeg").trim();
+      const base64 = match[2];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+
+      const name = photo.name?.trim() || `photo-${index + 1}.${mimeType.split("/")[1] || "jpg"}`;
+      return new File([bytes], name, { type: mimeType });
+    } catch {
+      return null;
+    }
+  }
+
+  async function verifyPhotoUpload(input) {
+    const { scope, fileInput, expectedCount, initialObservedCount } = input;
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      if (attempt > 0) {
+        await wait(180);
+      }
+
+      const currentObservedCount = countUploadedPhotoEvidence(scope);
+      const acceptedCount = fileInput?.files?.length ?? 0;
+      const uploadInProgress = hasUploadInProgress(scope);
+
+      if (currentObservedCount >= Math.max(expectedCount, initialObservedCount + expectedCount)) {
+        return {
+          passed: true,
+          reason: "visible photo previews observed",
+          uploadedPhotoCountObserved: currentObservedCount,
+        };
+      }
+
+      if (acceptedCount >= expectedCount && !uploadInProgress) {
+        return {
+          passed: true,
+          reason: "file input accepted expected photo count",
+          uploadedPhotoCountObserved: currentObservedCount || acceptedCount,
+        };
+      }
+    }
+
+    const finalObservedCount = countUploadedPhotoEvidence(scope);
+    const finalAcceptedCount = fileInput?.files?.length ?? 0;
+    return {
+      passed: false,
+      reason:
+        finalAcceptedCount >= expectedCount
+          ? "accepted files but upload verification not confirmed"
+          : "input did not reflect expected photo count",
+      uploadedPhotoCountObserved: finalObservedCount || finalAcceptedCount,
+    };
+  }
+
+  function countUploadedPhotoEvidence(scope) {
+    const root = scope instanceof Element ? scope : document;
+    const selectors = [
+      '[data-testid*="photo"] img',
+      '[data-testid*="image"] img',
+      '[class*="photo"] img',
+      '[class*="image"] img',
+      'img[src^="blob:"]',
+      'img[src^="data:image/"]',
+    ];
+    const seen = new Set();
+    let count = 0;
+
+    for (const selector of selectors) {
+      const images = Array.from(root.querySelectorAll(selector));
+      for (const image of images) {
+        if (!(image instanceof HTMLImageElement)) continue;
+        if (!isVisible(image)) continue;
+        if (seen.has(image)) continue;
+        seen.add(image);
+        const src = image.getAttribute("src") || "";
+        if (!src) continue;
+        count += 1;
+      }
+    }
+
+    return count;
+  }
+
+  function hasUploadInProgress(scope) {
+    const root = scope instanceof Element ? scope : document;
+    const busy = root.querySelector(
+      '[aria-busy="true"], [data-loading="true"], [class*="loading"], [class*="progress"]'
+    );
+    return busy instanceof Element && isVisible(busy);
   }
 
   function extractSafeBaseColor(value) {
