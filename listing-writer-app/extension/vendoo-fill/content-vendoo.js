@@ -1520,19 +1520,48 @@
     stepOutcomes.size = "skipped_for_safety";
   }
 
-  const DYNAMIC_FIELD_SYNONYMS = {
+  const CANONICAL_LPU_FIELD_SCHEMA = {
     brand: ["brand", "maker"],
-    signed: ["signed", "signed/maker", "signed maker", "maker", "designer"],
-    signedmaker: ["signed", "signed maker", "signed/maker", "designer", "maker"],
-    material: ["material", "materials", "metal", "base material", "base metal"],
-    style: ["style", "type", "style type", "style/theme", "style theme"],
-    type: ["type", "style", "style type", "style/theme"],
-    styletype: ["style", "type", "style type", "style/theme", "style theme", "theme"],
-    setincludes: ["set includes", "includes", "included"],
     color: ["color", "colour"],
     size: ["size"],
     department: ["department"],
     jewelrydepartment: ["jewelry department"],
+    material: ["material", "materials", "metal", "base material", "base metal"],
+    mainstone: ["main stone"],
+    vintage: ["vintage"],
+    signed: ["signed", "signed/maker", "signed maker", "maker", "designer"],
+    signedmaker: ["signed", "signed maker", "signed/maker", "designer", "maker"],
+    occasion: ["occasion"],
+    theme: ["theme", "style theme"],
+    closure: ["closure"],
+    shape: ["shape"],
+    style: ["style", "type", "style type", "style/theme", "style theme"],
+    type: ["type", "style", "style type", "style/theme"],
+    styletype: ["style", "type", "style type", "style/theme", "style theme", "theme"],
+    features: ["features", "feature"],
+    accents: ["accents", "accent"],
+    pattern: ["pattern"],
+    fabrictype: ["fabric type", "fabric"],
+    fit: ["fit"],
+    sizetype: ["size type"],
+    setincludes: ["set includes", "includes", "included"],
+    basemetal: ["base metal"],
+    mainstonecolor: ["main stone color"],
+    mainstonecreation: ["main stone creation"],
+    countryregionofmanufacture: [
+      "country/region of manufacture",
+      "country of manufacture",
+      "region of manufacture",
+    ],
+    dresslength: ["dress length"],
+    neckline: ["neckline"],
+    sleevelength: ["sleeve length"],
+    sleevetype: ["sleeve type"],
+    handmade: ["handmade", "hand made"],
+  };
+
+  const DYNAMIC_FIELD_SYNONYMS = {
+    ...CANONICAL_LPU_FIELD_SCHEMA,
   };
 
   async function fillDynamicVisibleFieldsAfterCategory(input) {
@@ -1575,16 +1604,10 @@
 
     const {
       candidates,
+      canonicalPayloadKeysAvailable,
       excludedPayloadKeys,
-      hasVisibleDepartmentLikeField,
-      visibleDepartmentLikeLabels,
-      departmentOverrideApplied,
       exclusionReasonByKey,
-    } = buildDynamicPayloadCandidates(
-      payload,
-      stepOutcomes,
-      visibleRegistry
-    );
+    } = buildDynamicPayloadCandidates(payload);
     if (!candidates.length) {
       skippedForSafety.push("Dynamic optional fields (no payload values)");
       return;
@@ -1646,14 +1669,26 @@
         continue;
       }
 
-      const result = await fillDynamicFieldValue(field, candidate.value, selectors);
+      let result = await fillDynamicFieldValue(field, candidate.value, selectors);
+      const verification = await verifyDynamicFillResult(field, candidate.value, result);
+      if (result.status === "filled" && !verification.passed) {
+        result = {
+          ...result,
+          status: "needs_review",
+          reason: verification.reason || "post-fill verification failed",
+        };
+      }
       adapterAttemptedByField.push({
         label: field.label,
         payloadKey: candidate.key,
+        canonicalPayloadKey: candidate.canonicalKey,
         controlFamily: result.controlFamily ?? field.controlFamily,
         adapterSelected: result.adapterSelected ?? "unknown",
         status: result.status,
         reason: result.reason ?? "",
+        verification,
+        chipDiagnostics: result.chipDiagnostics ?? null,
+        entryDiagnostics: result.entryDiagnostics ?? null,
       });
       if (result.status === "filled") {
         usedElements.add(field.control);
@@ -1700,10 +1735,8 @@
         allowedOptions: field.allowedOptions.slice(0, 8),
       })),
       candidateKeys: candidates.map((candidate) => candidate.key),
+      canonicalPayloadKeysAvailable,
       excludedPayloadKeys,
-      hasVisibleDepartmentLikeField,
-      visibleDepartmentLikeLabels,
-      departmentOverrideApplied,
       exclusionReasonByKey,
       adapterAttemptedByField,
       unattemptedFieldReasons,
@@ -1790,36 +1823,18 @@
     return visibleLabels.length > 0;
   }
 
-  function buildDynamicPayloadCandidates(payload, _stepOutcomes, visibleRegistry) {
+  function buildDynamicPayloadCandidates(payload) {
     const ebay = payload?.marketplaces?.ebay ?? {};
     const specifics = ebay?.itemSpecifics ?? {};
     const candidates = [];
     const excludedPayloadKeys = [];
     const seenKeys = new Set();
-    const visibleLabels = new Set(
-      Array.isArray(visibleRegistry)
-        ? visibleRegistry.map((field) => normalizeText(field.label)).filter(Boolean)
-        : []
-    );
-    const visibleDepartmentLikeLabels = Array.from(visibleLabels).filter((label) =>
-      /\bdepartment\b/.test(label)
-    );
-    const hasVisibleDepartmentLikeField = visibleDepartmentLikeLabels.length > 0;
-    const departmentOverrideApplied = {};
     const exclusionReasonByKey = {};
-
-    function isDepartmentLikeKey(rawKey) {
-      const normalized = normalizeText(rawKey).replace(/[^a-z0-9]/g, "");
-      return normalized === "department" || normalized === "jewelrydepartment";
-    }
+    const canonicalPayloadKeysAvailable = [];
 
     function addCandidateEntry(key, value) {
       const rawKey = String(key);
-      const allowDepartmentOverride =
-        hasVisibleDepartmentLikeField && isDepartmentLikeKey(rawKey);
-      if (isDepartmentLikeKey(rawKey)) {
-        departmentOverrideApplied[rawKey] = allowDepartmentOverride;
-      }
+      const canonicalKey = toCanonicalPayloadKey(rawKey);
       if (typeof value !== "string" || !value.trim()) {
         excludedPayloadKeys.push(rawKey);
         exclusionReasonByKey[rawKey] = "missing_or_blank_value";
@@ -1831,7 +1846,7 @@
         exclusionReasonByKey[rawKey] = "not_applicable";
         return;
       }
-      const dedupeKey = normalizeText(rawKey).replace(/[^a-z0-9]/g, "");
+      const dedupeKey = canonicalKey;
       if (!dedupeKey) return;
       if (seenKeys.has(dedupeKey)) {
         excludedPayloadKeys.push(rawKey);
@@ -1839,13 +1854,16 @@
         return;
       }
       seenKeys.add(dedupeKey);
+      canonicalPayloadKeysAvailable.push(canonicalKey);
 
-      const normalizedKey = normalizeText(rawKey).replace(/[^a-z0-9]/g, "");
-      const synonyms = DYNAMIC_FIELD_SYNONYMS[normalizedKey] ?? [];
-      const keyTerms = buildKeyTermsFromKey(rawKey);
+      const synonyms = DYNAMIC_FIELD_SYNONYMS[canonicalKey] ?? [];
+      const keyTerms = Array.from(
+        new Set([...buildKeyTermsFromKey(rawKey), ...buildKeyTermsFromKey(canonicalKey)])
+      );
       const matchTerms = Array.from(new Set([...synonyms, ...keyTerms].map(normalizeText)));
       candidates.push({
-        key: rawKey,
+        key: canonicalKey,
+        canonicalKey,
         value: String(value).trim(),
         matchTerms,
       });
@@ -1861,10 +1879,8 @@
 
     return {
       candidates,
+      canonicalPayloadKeysAvailable: Array.from(new Set(canonicalPayloadKeysAvailable)),
       excludedPayloadKeys: Array.from(new Set(excludedPayloadKeys)),
-      hasVisibleDepartmentLikeField,
-      visibleDepartmentLikeLabels,
-      departmentOverrideApplied,
       exclusionReasonByKey,
     };
   }
@@ -1877,6 +1893,25 @@
     const normalized = normalizeText(expanded);
     if (!normalized) return [];
     return [normalized];
+  }
+
+  function toCanonicalPayloadKey(rawKey) {
+    const normalizedRaw = normalizePayloadKey(rawKey);
+    if (!normalizedRaw) return "";
+    if (Object.prototype.hasOwnProperty.call(CANONICAL_LPU_FIELD_SCHEMA, normalizedRaw)) {
+      return normalizedRaw;
+    }
+
+    for (const [canonicalKey, aliases] of Object.entries(CANONICAL_LPU_FIELD_SCHEMA)) {
+      if (!Array.isArray(aliases)) continue;
+      for (const alias of aliases) {
+        if (normalizePayloadKey(alias) === normalizedRaw) {
+          return canonicalKey;
+        }
+      }
+    }
+
+    return normalizedRaw;
   }
 
   function discoverVisibleFieldRegistry(root) {
@@ -2036,6 +2071,7 @@
     if (label.includes("category") && (controlType === "combobox" || controlType === "select")) {
       return "category_picker";
     }
+    if (isLikelyMultiValueControl(control)) return "multi_value_chip";
     if (controlType === "text") return "text_input";
     if (controlType === "textarea") return "textarea";
     if (controlType === "select") return "single_select_combobox";
@@ -2175,21 +2211,56 @@
 
   async function fillDynamicFieldValue(field, value, selectors) {
     const route = resolveDynamicAdapterRoute(field);
+    const entryAnalysis = analyzeDynamicEntryCapability(field);
+    const payloadValues = buildNormalizedPayloadValues(value);
+    const entryDiagnostics = {
+      fieldScopeResolved: entryAnalysis.fieldScopeResolved,
+      fieldScopeHelperTexts: entryAnalysis.fieldScopeHelperTexts,
+      fieldScopeChipEvidenceFound: entryAnalysis.fieldScopeChipEvidenceFound,
+      entryCapability: entryAnalysis.entryCapability,
+      entryCapabilityResolutionPath: entryAnalysis.entryCapabilityResolutionPath,
+      entryCapabilityResolutionReasons: entryAnalysis.entryCapabilityResolutionReasons,
+      contradictoryLockEvidence: entryAnalysis.contradictoryLockEvidence,
+      multiEntryEvidenceReasons: entryAnalysis.multiEntryEvidenceReasons,
+      originalPayloadValue: String(value ?? "").trim(),
+      parsedValueMode: payloadValues.multiValue ? "multi-value" : "single-value",
+      parsedTokens: payloadValues.values,
+      executionRouteSelected: "unresolved",
+      executionRouteReasons: [],
+      blockedBySingleValueGuard: false,
+      blockReason: "",
+      customCommitAttempted: false,
+      customCommitAccepted: false,
+      optionMatchAttempted: false,
+      optionMatchAccepted: false,
+      finalStatusByToken: {},
+      finalStatusByField: "needs_review",
+      controlFamily: route.controlFamily,
+    };
+
     if (!value || !value.trim()) {
+      entryDiagnostics.finalStatusByField = "needs_review";
+      entryDiagnostics.executionRouteSelected = "payload_missing";
+      entryDiagnostics.executionRouteReasons.push("payload_blank");
       return {
         status: "needs_review",
         reason: "payload missing",
         controlFamily: route.controlFamily,
         adapterSelected: route.adapterSelected,
+        entryDiagnostics,
       };
     }
 
     if (route.controlFamily === "text_input" || route.controlFamily === "textarea") {
       setElementValue(field.control, value);
+      entryDiagnostics.finalStatusByField = "filled";
+      entryDiagnostics.executionRouteSelected = "text_set_value";
+      entryDiagnostics.executionRouteReasons.push("text_or_textarea_control_family");
       return {
         status: "filled",
         controlFamily: route.controlFamily,
         adapterSelected: route.adapterSelected,
+        entryDiagnostics,
       };
     }
 
@@ -2198,21 +2269,30 @@
       field.controlType === "select" &&
       field.control instanceof HTMLSelectElement
     ) {
-      const payloadValues = buildNormalizedPayloadValues(value);
       if (!payloadValues.values.length) {
+        entryDiagnostics.finalStatusByField = "needs_review";
+        entryDiagnostics.executionRouteSelected = "select_payload_missing";
+        entryDiagnostics.executionRouteReasons.push("normalized_payload_empty");
         return {
           status: "needs_review",
           reason: "payload missing after normalization",
           controlFamily: route.controlFamily,
           adapterSelected: route.adapterSelected,
+          entryDiagnostics,
         };
       }
       if (payloadValues.multiValue) {
+        entryDiagnostics.finalStatusByField = "skipped_for_safety";
+        entryDiagnostics.executionRouteSelected = "single_select_blocked";
+        entryDiagnostics.executionRouteReasons.push("native_select_single_value");
+        entryDiagnostics.blockedBySingleValueGuard = true;
+        entryDiagnostics.blockReason = "multi-value payload for single-value select";
         return {
           status: "skipped_for_safety",
           reason: "multi-value payload for single-value select",
           controlFamily: route.controlFamily,
           adapterSelected: route.adapterSelected,
+          entryDiagnostics,
         };
       }
       const normalizedValue = payloadValues.values[0];
@@ -2222,28 +2302,52 @@
       });
 
       if (exactOptions.length !== 1) {
+        entryDiagnostics.optionMatchAttempted = true;
+        entryDiagnostics.optionMatchAccepted = false;
+        entryDiagnostics.finalStatusByField = "needs_review";
+        entryDiagnostics.executionRouteSelected = "select_exact_option_match";
+        entryDiagnostics.executionRouteReasons.push("exact_select_option_not_unique");
         return {
           status: "needs_review",
           reason: exactOptions.length > 1 ? "multiple exact select options" : "no exact select option",
           controlFamily: route.controlFamily,
           adapterSelected: route.adapterSelected,
+          entryDiagnostics,
         };
       }
 
+      entryDiagnostics.optionMatchAttempted = true;
+      entryDiagnostics.optionMatchAccepted = true;
+      entryDiagnostics.executionRouteSelected = "select_exact_option_match";
+      entryDiagnostics.executionRouteReasons.push("exact_select_option_committed");
       field.control.value = exactOptions[0].value;
       field.control.dispatchEvent(new Event("change", { bubbles: true }));
       field.control.dispatchEvent(new Event("blur", { bubbles: true }));
+      entryDiagnostics.finalStatusByField = "filled";
       return {
         status: "filled",
         controlFamily: route.controlFamily,
         adapterSelected: route.adapterSelected,
+        entryDiagnostics,
       };
     }
 
     if (
-      route.controlFamily === "single_select_combobox" ||
-      route.controlFamily === "multi_value_chip"
+      route.controlFamily === "multi_value_chip" ||
+      entryAnalysis.entryCapability === "multi_entry_custom"
     ) {
+      entryDiagnostics.executionRouteSelected = "multi_value_chip_tokens";
+      entryDiagnostics.executionRouteReasons.push("multi_entry_capability_or_family");
+      const optionSelectors = selectors?.color?.optionSelectors ?? [
+        '[role="option"]',
+        '[data-radix-collection-item]',
+        '.react-select__option',
+        'li[role="option"]',
+      ];
+      return fillMultiValueChipField(field, value, optionSelectors, route, entryDiagnostics);
+    }
+
+    if (route.controlFamily === "single_select_combobox") {
       const optionSelectors = selectors?.color?.optionSelectors ?? [
         '[role="option"]',
         '[data-radix-collection-item]',
@@ -2251,17 +2355,44 @@
         'li[role="option"]',
       ];
 
-      const payloadValues = buildNormalizedPayloadValues(value);
       if (!payloadValues.values.length) {
+        entryDiagnostics.finalStatusByField = "needs_review";
+        entryDiagnostics.executionRouteSelected = "combobox_payload_missing";
+        entryDiagnostics.executionRouteReasons.push("normalized_payload_empty");
         return {
           status: "needs_review",
           reason: "payload missing after normalization",
           controlFamily: route.controlFamily,
           adapterSelected: route.adapterSelected,
+          entryDiagnostics,
         };
       }
       const valueMode = payloadValues.multiValue ? "multi-value" : "single-value";
-      if (payloadValues.multiValue && route.controlFamily !== "multi_value_chip") {
+      if (payloadValues.multiValue) {
+        const hasContradictoryLockEvidence =
+          Array.isArray(entryAnalysis.contradictoryLockEvidence) &&
+          entryAnalysis.contradictoryLockEvidence.length > 0;
+        if (
+          entryAnalysis.entryCapability === "multi_entry_custom" ||
+          (entryAnalysis.entryCapability === "single_entry_custom" && !hasContradictoryLockEvidence)
+        ) {
+          entryDiagnostics.executionRouteSelected = "custom_entry_multi_token_handoff";
+          entryDiagnostics.executionRouteReasons.push(
+            `entry_capability:${entryAnalysis.entryCapability}`
+          );
+          if (hasContradictoryLockEvidence) {
+            entryDiagnostics.executionRouteReasons.push("contradictory_lock_evidence_present");
+          }
+          return fillMultiValueChipField(field, value, optionSelectors, route, entryDiagnostics);
+        }
+        entryDiagnostics.executionRouteSelected = "single_select_guard_block";
+        entryDiagnostics.executionRouteReasons.push(`entry_capability:${entryAnalysis.entryCapability}`);
+        entryDiagnostics.blockedBySingleValueGuard = true;
+        entryDiagnostics.blockReason =
+          hasContradictoryLockEvidence && entryAnalysis.contradictoryLockEvidence.length
+            ? `contradictory evidence: ${entryAnalysis.contradictoryLockEvidence.join(", ")}`
+            : `${valueMode} payload for single-value control`;
+        entryDiagnostics.finalStatusByField = "skipped_for_safety";
         return {
           status: "skipped_for_safety",
           reason: `${valueMode} payload for single-value control (raw: "${String(
@@ -2269,10 +2400,14 @@
           ).trim()}"; canonical: "${payloadValues.canonicalValue}")`,
           controlFamily: route.controlFamily,
           adapterSelected: route.adapterSelected,
+          entryDiagnostics,
         };
       }
 
       for (const target of payloadValues.values) {
+        entryDiagnostics.optionMatchAttempted = true;
+        entryDiagnostics.executionRouteSelected = "combobox_option_match_then_custom";
+        entryDiagnostics.executionRouteReasons.push("single_token_combobox_attempt");
         const selectResult = await selectComboboxValueByNormalizedMatch({
           control: field.control,
           optionSelectors,
@@ -2283,27 +2418,827 @@
           valueMode,
         });
 
-        if (selectResult.status !== "filled") {
-          return {
-            ...selectResult,
-            controlFamily: route.controlFamily,
-            adapterSelected: route.adapterSelected,
-          };
+        if (selectResult.status === "filled") {
+          entryDiagnostics.optionMatchAccepted = true;
+          entryDiagnostics.finalStatusByToken[target] = "filled_option_match";
+          continue;
         }
+
+        if (entryAnalysis.entryCapability === "single_entry_custom") {
+          entryDiagnostics.customCommitAttempted = true;
+          const committed = tryCommitChipToken(field.control, target);
+          entryDiagnostics.customCommitAccepted = committed;
+          entryDiagnostics.finalStatusByToken[target] = committed
+            ? "filled_custom_commit"
+            : "rejected";
+          if (committed) {
+            continue;
+          }
+        }
+
+        entryDiagnostics.finalStatusByField = selectResult.status;
+        entryDiagnostics.blockedBySingleValueGuard = false;
+        return {
+          ...selectResult,
+          controlFamily: route.controlFamily,
+          adapterSelected: route.adapterSelected,
+          entryDiagnostics,
+        };
       }
 
+      entryDiagnostics.finalStatusByField = "filled";
+      entryDiagnostics.executionRouteSelected = "combobox_single_token_filled";
+      entryDiagnostics.executionRouteReasons.push("token_fill_completed");
       return {
         status: "filled",
         controlFamily: route.controlFamily,
         adapterSelected: route.adapterSelected,
+        entryDiagnostics,
       };
     }
 
+    entryDiagnostics.finalStatusByField = "skipped_for_safety";
+    entryDiagnostics.executionRouteSelected = "unsupported_control_family";
+    entryDiagnostics.executionRouteReasons.push(`control_family:${route.controlFamily}`);
     return {
       status: "skipped_for_safety",
       reason: `unsupported control family (${route.controlFamily})`,
       controlFamily: route.controlFamily,
       adapterSelected: route.adapterSelected,
+      entryDiagnostics,
+    };
+  }
+
+  async function fillMultiValueChipField(field, value, optionSelectors, route, entryDiagnostics) {
+    const payloadValues = buildNormalizedPayloadValues(value);
+    const parsedTokens = payloadValues.values;
+    const chipDiagnostics = ensureChipDiagnosticsShape(
+      entryDiagnostics ?? {
+      originalPayloadValue: String(value ?? "").trim(),
+      parsedValueMode: payloadValues.multiValue ? "multi-value" : "single-value",
+      parsedTokens,
+      controlFamily: route.controlFamily,
+      chipAttemptedTokens: [],
+      chipAcceptedTokens: [],
+      chipRejectedTokens: [],
+      finalStatusByToken: {},
+      finalStatusByField: "needs_review",
+      customCommitAttempted: false,
+      customCommitAccepted: false,
+      optionMatchAttempted: false,
+      optionMatchAccepted: false,
+      }
+    );
+    chipDiagnostics.parsedValueMode = payloadValues.multiValue ? "multi-value" : "single-value";
+    chipDiagnostics.parsedTokens = parsedTokens;
+    chipDiagnostics.controlFamily = route.controlFamily;
+
+    if (!parsedTokens.length) {
+      chipDiagnostics.finalStatusByField = "needs_review";
+      return {
+        status: "needs_review",
+        reason: "payload missing after normalization",
+        controlFamily: route.controlFamily,
+        adapterSelected: route.adapterSelected,
+        chipDiagnostics,
+      };
+    }
+
+    try {
+      for (const token of parsedTokens) {
+        chipDiagnostics.chipAttemptedTokens.push(token);
+        let accepted = false;
+
+        if (field.controlType === "combobox") {
+          chipDiagnostics.optionMatchAttempted = true;
+          const selectResult = await selectComboboxValueByNormalizedMatch({
+            control: field.control,
+            optionSelectors,
+            target: token,
+            fieldLabel: field.label,
+            payloadRaw: String(value ?? "").trim(),
+            payloadCanonical: payloadValues.canonicalValue,
+            valueMode: payloadValues.multiValue ? "multi-value" : "single-value",
+          });
+          accepted = selectResult.status === "filled";
+          if (accepted) {
+            chipDiagnostics.optionMatchAccepted = true;
+          }
+        }
+
+        if (!accepted) {
+          chipDiagnostics.customCommitAttempted = true;
+          accepted = tryCommitChipToken(field.control, token);
+          if (accepted) {
+            chipDiagnostics.customCommitAccepted = true;
+          }
+        }
+
+        if (accepted) {
+          chipDiagnostics.chipAcceptedTokens.push(token);
+          chipDiagnostics.finalStatusByToken[token] = "filled";
+          await wait(80);
+        } else {
+          chipDiagnostics.chipRejectedTokens.push(token);
+          chipDiagnostics.finalStatusByToken[token] = "rejected";
+        }
+      }
+    } catch (error) {
+      chipDiagnostics.finalStatusByField = "needs_review";
+      return {
+        status: "needs_review",
+        reason: `token entry runtime error: ${error instanceof Error ? error.message : "unknown error"}`,
+        controlFamily: route.controlFamily,
+        adapterSelected: route.adapterSelected,
+        entryDiagnostics: chipDiagnostics,
+        chipDiagnostics,
+      };
+    }
+
+    if (chipDiagnostics.chipAcceptedTokens.length === parsedTokens.length) {
+      chipDiagnostics.finalStatusByField = "filled";
+      return {
+        status: "filled",
+        controlFamily: route.controlFamily,
+        adapterSelected: route.adapterSelected,
+        entryDiagnostics: chipDiagnostics,
+        chipDiagnostics,
+      };
+    }
+
+    if (chipDiagnostics.chipAcceptedTokens.length > 0) {
+      chipDiagnostics.finalStatusByField = "needs_review";
+      return {
+        status: "needs_review",
+        reason: "partial multi-value entry",
+        controlFamily: route.controlFamily,
+        adapterSelected: route.adapterSelected,
+        entryDiagnostics: chipDiagnostics,
+        chipDiagnostics,
+      };
+    }
+
+    chipDiagnostics.finalStatusByField = "skipped_for_safety";
+    return {
+      status: "skipped_for_safety",
+      reason: "no safe entry method exists for multi-value control",
+      controlFamily: route.controlFamily,
+      adapterSelected: route.adapterSelected,
+      entryDiagnostics: chipDiagnostics,
+      chipDiagnostics,
+    };
+  }
+
+  function ensureChipDiagnosticsShape(input) {
+    const base = input && typeof input === "object" ? input : {};
+    return {
+      originalPayloadValue: String(base.originalPayloadValue ?? "").trim(),
+      parsedValueMode: String(base.parsedValueMode ?? "single-value"),
+      parsedTokens: Array.isArray(base.parsedTokens) ? base.parsedTokens : [],
+      controlFamily: String(base.controlFamily ?? "multi_value_chip"),
+      chipAttemptedTokens: Array.isArray(base.chipAttemptedTokens) ? base.chipAttemptedTokens : [],
+      chipAcceptedTokens: Array.isArray(base.chipAcceptedTokens) ? base.chipAcceptedTokens : [],
+      chipRejectedTokens: Array.isArray(base.chipRejectedTokens) ? base.chipRejectedTokens : [],
+      finalStatusByToken:
+        base.finalStatusByToken && typeof base.finalStatusByToken === "object"
+          ? base.finalStatusByToken
+          : {},
+      finalStatusByField: String(base.finalStatusByField ?? "needs_review"),
+      customCommitAttempted: Boolean(base.customCommitAttempted),
+      customCommitAccepted: Boolean(base.customCommitAccepted),
+      optionMatchAttempted: Boolean(base.optionMatchAttempted),
+      optionMatchAccepted: Boolean(base.optionMatchAccepted),
+      executionRouteSelected: String(base.executionRouteSelected ?? ""),
+      executionRouteReasons: Array.isArray(base.executionRouteReasons)
+        ? base.executionRouteReasons
+        : [],
+      blockedBySingleValueGuard: Boolean(base.blockedBySingleValueGuard),
+      blockReason: String(base.blockReason ?? ""),
+      entryCapability: String(base.entryCapability ?? ""),
+      entryCapabilityResolutionPath: String(base.entryCapabilityResolutionPath ?? ""),
+      entryCapabilityResolutionReasons: Array.isArray(base.entryCapabilityResolutionReasons)
+        ? base.entryCapabilityResolutionReasons
+        : [],
+      contradictoryLockEvidence: Array.isArray(base.contradictoryLockEvidence)
+        ? base.contradictoryLockEvidence
+        : [],
+      multiEntryEvidenceReasons: Array.isArray(base.multiEntryEvidenceReasons)
+        ? base.multiEntryEvidenceReasons
+        : [],
+      fieldScopeResolved: Boolean(base.fieldScopeResolved),
+      fieldScopeHelperTexts: Array.isArray(base.fieldScopeHelperTexts) ? base.fieldScopeHelperTexts : [],
+      fieldScopeChipEvidenceFound: Boolean(base.fieldScopeChipEvidenceFound),
+    };
+  }
+
+  function tryCommitChipToken(control, token) {
+    if (!(control instanceof Element)) return false;
+
+    const tokenInput =
+      (control.matches("input:not([type='hidden'])") ? control : null) ||
+      control.querySelector("input:not([type='hidden'])");
+    if (!(tokenInput instanceof HTMLInputElement) || !isVisible(tokenInput)) {
+      return false;
+    }
+
+    setElementValue(tokenInput, token);
+    tokenInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    tokenInput.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+    tokenInput.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
+  function analyzeDynamicEntryCapability(field) {
+    const control = field?.control instanceof Element ? field.control : null;
+    const scope = control?.closest("div, section, fieldset, form") ?? control;
+    const helperTexts = collectFieldScopeHelperTexts(scope);
+    const normalizedHelper = helperTexts.map((text) => normalizeText(text));
+    const reasons = [];
+
+    const chipEvidenceFound = isLikelyMultiValueControl(control);
+    if (chipEvidenceFound) reasons.push("chip_or_multi_ui_evidence");
+    if (normalizedHelper.some((text) => text.includes("add up to"))) {
+      reasons.push("helper_add_up_to");
+    }
+    if (
+      normalizedHelper.some(
+        (text) =>
+          text.includes("add ") ||
+          text.includes("enter ") ||
+          text.includes("type ") ||
+          text.includes("custom")
+      )
+    ) {
+      reasons.push("helper_custom_entry_language");
+    }
+
+    const hasEditableInput =
+      control instanceof Element &&
+      (control.matches("input:not([type='hidden'])") ||
+        !!control.querySelector("input:not([type='hidden'])"));
+    if (hasEditableInput) {
+      reasons.push("editable_input_present");
+    }
+
+    const contradictoryLockEvidence = [];
+    if (control instanceof HTMLSelectElement) {
+      contradictoryLockEvidence.push("native_select_option_locked");
+    }
+    if (
+      control instanceof Element &&
+      control.matches("input:not([type='hidden'])") &&
+      ((control instanceof HTMLInputElement && control.readOnly) || control.getAttribute("readonly"))
+    ) {
+      contradictoryLockEvidence.push("input_readonly");
+    }
+    if (
+      control instanceof Element &&
+      control.matches("input:not([type='hidden'])") &&
+      ((control instanceof HTMLInputElement && control.disabled) || control.getAttribute("disabled"))
+    ) {
+      contradictoryLockEvidence.push("input_disabled");
+    }
+
+    let entryCapability = "locked_option_only";
+    let entryCapabilityResolutionPath = "default_locked";
+    const entryCapabilityResolutionReasons = [];
+    const hasMultiEntryHints =
+      chipEvidenceFound || normalizedHelper.some((text) => text.includes("add up to"));
+    const hasSingleEntryHints =
+      hasEditableInput ||
+      normalizedHelper.some(
+        (text) =>
+          text.includes("add ") ||
+          text.includes("enter ") ||
+          text.includes("type ") ||
+          text.includes("custom")
+      );
+    const hasContradictoryLockEvidence = contradictoryLockEvidence.length > 0;
+
+    if (hasMultiEntryHints && !hasContradictoryLockEvidence) {
+      entryCapability = "multi_entry_custom";
+      entryCapabilityResolutionPath = "multi_entry_evidence";
+      entryCapabilityResolutionReasons.push(...reasons);
+    } else if (hasSingleEntryHints && !hasContradictoryLockEvidence) {
+      entryCapability = "single_entry_custom";
+      entryCapabilityResolutionPath = hasEditableInput
+        ? "editable_input_upgrade"
+        : "single_entry_hint_upgrade";
+      entryCapabilityResolutionReasons.push(...reasons);
+    } else if (hasContradictoryLockEvidence) {
+      entryCapability = "locked_option_only";
+      entryCapabilityResolutionPath = "contradictory_lock_evidence";
+      entryCapabilityResolutionReasons.push(...contradictoryLockEvidence);
+    } else if (!control) {
+      entryCapability = "unknown";
+      entryCapabilityResolutionPath = "no_control";
+      entryCapabilityResolutionReasons.push("control_missing");
+    }
+
+    return {
+      fieldScopeResolved: scope instanceof Element,
+      fieldScopeHelperTexts: helperTexts.slice(0, 8),
+      fieldScopeChipEvidenceFound: chipEvidenceFound,
+      entryCapability,
+      entryCapabilityResolutionPath,
+      entryCapabilityResolutionReasons,
+      contradictoryLockEvidence,
+      multiEntryEvidenceReasons: reasons,
+    };
+  }
+
+  function collectFieldScopeHelperTexts(scope) {
+    if (!(scope instanceof Element)) return [];
+    const selectors = "small, p, span, div, label";
+    const texts = [];
+    const seen = new Set();
+    for (const node of Array.from(scope.querySelectorAll(selectors)).slice(0, 60)) {
+      if (!(node instanceof Element)) continue;
+      if (!isVisible(node)) continue;
+      const text = cleanCategoryStage(node.textContent || "");
+      const normalized = normalizeText(text);
+      if (!normalized || normalized.length < 4 || seen.has(normalized)) continue;
+      if (normalized.length > 120) continue;
+      seen.add(normalized);
+      texts.push(text);
+      if (texts.length >= 12) break;
+    }
+    return texts;
+  }
+
+  async function verifyDynamicFillResult(field, value, result) {
+    const expectedRawValue = String(value ?? "").trim();
+    const normalizedPayloadValues = buildNormalizedPayloadValues(value).values;
+    const expectedNormalizedValue = normalizedPayloadValues[0] ?? "";
+
+    if (result.status !== "filled") {
+      return {
+        status: "not_applicable",
+        passed: true,
+        reason: "",
+        expectedRawValue,
+        expectedNormalizedValue,
+      };
+    }
+
+    if (!expectedNormalizedValue) {
+      return {
+        status: "failed",
+        passed: false,
+        reason: "verification missing expected value",
+        expectedRawValue,
+        expectedNormalizedValue,
+      };
+    }
+
+    if (result.controlFamily === "single_select_combobox") {
+      let lastReadback = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        if (attempt > 0) {
+          await wait(90);
+        }
+
+        const readback = readSingleSelectComboboxVerification(field);
+        lastReadback = readback;
+        const sourceOrder = [
+          "actualRenderedText",
+          "actualTriggerText",
+          "actualVisibleInputValue",
+          "actualBackingInputValue",
+          "selectedOptionText",
+          "selectedOptionValue",
+          "activeDescendantText",
+          "activeDescendantValue",
+        ];
+        let matchedVerificationSource = "";
+        for (const source of sourceOrder) {
+          const normalized = normalizeOptionValue(readback[source]);
+          if (normalized && normalized === expectedNormalizedValue) {
+            matchedVerificationSource = source;
+            break;
+          }
+        }
+
+        if (matchedVerificationSource) {
+          return {
+            status: "verified",
+            passed: true,
+            reason: "",
+            expectedRawValue,
+            expectedNormalizedValue,
+            actualRenderedText: readback.actualRenderedText,
+            actualRenderedTextRaw: readback.actualRenderedTextRaw,
+            actualRenderedTextNormalized: readback.actualRenderedTextNormalized,
+            renderedTextCandidates: readback.renderedTextCandidates,
+            renderedTextChosenFrom: readback.renderedTextChosenFrom,
+            renderedTextExtractionMode: readback.renderedTextExtractionMode,
+            actualTriggerText: readback.actualTriggerText,
+            actualVisibleInputValue: readback.actualVisibleInputValue,
+            actualBackingInputValue: readback.actualBackingInputValue,
+            selectedOptionText: readback.selectedOptionText,
+            selectedOptionValue: readback.selectedOptionValue,
+            activeDescendantText: readback.activeDescendantText,
+            activeDescendantValue: readback.activeDescendantValue,
+            readbackMethodsTried: readback.readbackMethodsTried,
+            matchedVerificationSource,
+            verificationFieldResolved: readback.verificationFieldResolved,
+            verificationControlResolved: readback.verificationControlResolved,
+            verificationControlState: readback.verificationControlState,
+            renderedTextNodeFound: readback.renderedTextNodeFound,
+            triggerNodeFound: readback.triggerNodeFound,
+            backingInputFound: readback.backingInputFound,
+            visibleInputFound: readback.visibleInputFound,
+            readbackSourceDetails: readback.readbackSourceDetails,
+            finalFailedReason: "",
+          };
+        }
+      }
+
+      const readback = lastReadback ?? readSingleSelectComboboxVerification(field);
+      return {
+        status: "failed",
+        passed: false,
+        reason: "verification missing control value",
+        expectedRawValue,
+        expectedNormalizedValue,
+        actualRenderedText: readback.actualRenderedText,
+        actualRenderedTextRaw: readback.actualRenderedTextRaw,
+        actualRenderedTextNormalized: readback.actualRenderedTextNormalized,
+        renderedTextCandidates: readback.renderedTextCandidates,
+        renderedTextChosenFrom: readback.renderedTextChosenFrom,
+        renderedTextExtractionMode: readback.renderedTextExtractionMode,
+        actualTriggerText: readback.actualTriggerText,
+        actualVisibleInputValue: readback.actualVisibleInputValue,
+        actualBackingInputValue: readback.actualBackingInputValue,
+        selectedOptionText: readback.selectedOptionText,
+        selectedOptionValue: readback.selectedOptionValue,
+        activeDescendantText: readback.activeDescendantText,
+        activeDescendantValue: readback.activeDescendantValue,
+        readbackMethodsTried: readback.readbackMethodsTried,
+        matchedVerificationSource: "",
+        verificationFieldResolved: readback.verificationFieldResolved,
+        verificationControlResolved: readback.verificationControlResolved,
+        verificationControlState: readback.verificationControlState,
+        renderedTextNodeFound: readback.renderedTextNodeFound,
+        triggerNodeFound: readback.triggerNodeFound,
+        backingInputFound: readback.backingInputFound,
+        visibleInputFound: readback.visibleInputFound,
+        readbackSourceDetails: readback.readbackSourceDetails,
+        finalFailedReason: "no readback source matched expected normalized value",
+      };
+    }
+
+    const actual = readDynamicControlNormalizedValues(field);
+    const passed = actual.includes(expectedNormalizedValue);
+    return {
+      status: passed ? "verified" : "failed",
+      passed,
+      reason: passed ? "" : "control state does not reflect expected value",
+      expectedRawValue,
+      expectedNormalizedValue,
+      finalFailedReason: passed ? "" : "normalized value not found in generic control readback",
+    };
+  }
+
+  function readDynamicControlNormalizedValues(field) {
+    const values = [];
+    const seen = new Set();
+
+    function add(raw) {
+      const normalized = normalizeOptionValue(raw);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      values.push(normalized);
+    }
+
+    const control = field?.control;
+    if (!(control instanceof Element)) return values;
+
+    if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) {
+      add(control.value);
+      add(control.getAttribute("value"));
+    } else if (control instanceof HTMLSelectElement) {
+      add(control.value);
+      const selected = control.selectedOptions?.[0];
+      if (selected) {
+        add(selected.value);
+        add(selected.textContent || "");
+      }
+    } else {
+      add(control.getAttribute("value"));
+      add(control.getAttribute("aria-valuetext"));
+      add(control.textContent || "");
+    }
+
+    const verificationScope =
+      control.closest("div, section, fieldset, form") ?? control.parentElement ?? control;
+    if (verificationScope instanceof Element) {
+      const hiddenInputs = Array.from(
+        verificationScope.querySelectorAll("input[type='hidden'][value], input[type='text'][value]")
+      ).slice(0, 8);
+      for (const input of hiddenInputs) {
+        if (!(input instanceof HTMLInputElement)) continue;
+        add(input.value);
+        add(input.getAttribute("value"));
+      }
+    }
+
+    return values;
+  }
+
+  function readSingleSelectComboboxVerification(field) {
+    const readbackMethodsTried = [];
+    const sourceDetails = [];
+    const resolved = resolveVerificationFieldContext(field);
+    const control = resolved.control;
+    const scope = resolved.scope;
+    const verificationFieldResolved = resolved.fieldResolved;
+    const verificationControlResolved = resolved.controlResolved;
+    const verificationControlState = resolved.controlState;
+
+    let actualRenderedText = "";
+    let actualRenderedTextRaw = "";
+    let actualRenderedTextNormalized = "";
+    let renderedTextCandidates = [];
+    let renderedTextChosenFrom = "";
+    let renderedTextExtractionMode = "fallback";
+    let actualTriggerText = "";
+    let actualVisibleInputValue = "";
+    let actualBackingInputValue = "";
+    let selectedOptionText = "";
+    let selectedOptionValue = "";
+    let activeDescendantText = "";
+    let activeDescendantValue = "";
+
+    if (control instanceof Element) {
+      readbackMethodsTried.push("rendered_control_text");
+      const renderedExtraction = extractCollapsedControlRenderedText(control);
+      actualRenderedText = renderedExtraction.text;
+      actualRenderedTextRaw = renderedExtraction.raw;
+      actualRenderedTextNormalized = normalizeOptionValue(renderedExtraction.text);
+      renderedTextCandidates = renderedExtraction.candidates;
+      renderedTextChosenFrom = renderedExtraction.chosenFrom;
+      renderedTextExtractionMode = renderedExtraction.mode;
+      sourceDetails.push({
+        method: "rendered_control_text",
+        nodeFound: Boolean(renderedExtraction.text),
+        value: actualRenderedText,
+      });
+
+      readbackMethodsTried.push("trigger_button_text");
+      const trigger =
+        control.matches("button, [role='button']")
+          ? control
+          : control.querySelector("button, [role='button']");
+      if (trigger instanceof Element) {
+        actualTriggerText = cleanCategoryStage(trigger.innerText || trigger.textContent || "");
+        sourceDetails.push({
+          method: "trigger_button_text",
+          nodeFound: true,
+          value: actualTriggerText,
+        });
+      } else {
+        sourceDetails.push({ method: "trigger_button_text", nodeFound: false, value: "" });
+      }
+
+      readbackMethodsTried.push("visible_input_value");
+      const visibleInput = control.querySelector("input:not([type='hidden'])");
+      if (visibleInput instanceof HTMLInputElement && isVisible(visibleInput)) {
+        actualVisibleInputValue = cleanCategoryStage(visibleInput.value || "");
+        sourceDetails.push({
+          method: "visible_input_value",
+          nodeFound: true,
+          value: actualVisibleInputValue,
+        });
+      } else {
+        sourceDetails.push({ method: "visible_input_value", nodeFound: false, value: "" });
+      }
+
+      readbackMethodsTried.push("active_descendant");
+      const activeDescendantId =
+        visibleInput instanceof HTMLInputElement
+          ? visibleInput.getAttribute("aria-activedescendant")
+          : null;
+      if (activeDescendantId) {
+        const activeDescendant = document.getElementById(activeDescendantId);
+        if (activeDescendant instanceof Element) {
+          activeDescendantText = cleanCategoryStage(
+            activeDescendant.innerText || activeDescendant.textContent || ""
+          );
+          activeDescendantValue = cleanCategoryStage(
+            activeDescendant.getAttribute("data-value") || activeDescendant.getAttribute("value") || ""
+          );
+          sourceDetails.push({
+            method: "active_descendant",
+            nodeFound: true,
+            value: `${activeDescendantText} ${activeDescendantValue}`.trim(),
+          });
+        } else {
+          sourceDetails.push({ method: "active_descendant", nodeFound: false, value: "" });
+        }
+      } else {
+        sourceDetails.push({ method: "active_descendant", nodeFound: false, value: "" });
+      }
+    } else {
+      sourceDetails.push({ method: "rendered_control_text", nodeFound: false, value: "" });
+      sourceDetails.push({ method: "trigger_button_text", nodeFound: false, value: "" });
+      sourceDetails.push({ method: "visible_input_value", nodeFound: false, value: "" });
+      sourceDetails.push({ method: "active_descendant", nodeFound: false, value: "" });
+    }
+
+    if (scope instanceof Element) {
+      readbackMethodsTried.push("backing_input_value");
+      const backingInput = scope.querySelector("input[type='hidden'][value], input[value]");
+      if (backingInput instanceof HTMLInputElement) {
+        actualBackingInputValue = cleanCategoryStage(backingInput.value || "");
+        sourceDetails.push({
+          method: "backing_input_value",
+          nodeFound: true,
+          value: actualBackingInputValue,
+        });
+      } else {
+        sourceDetails.push({ method: "backing_input_value", nodeFound: false, value: "" });
+      }
+
+      readbackMethodsTried.push("selected_option_text_value");
+      const selectedOption = scope.querySelector(
+        "[aria-selected='true'][role='option'], option:checked"
+      );
+      if (selectedOption instanceof Element) {
+        selectedOptionText = cleanCategoryStage(
+          selectedOption.innerText || selectedOption.textContent || ""
+        );
+        selectedOptionValue = cleanCategoryStage(
+          selectedOption.getAttribute("data-value") ||
+            selectedOption.getAttribute("value") ||
+            ""
+        );
+        sourceDetails.push({
+          method: "selected_option_text_value",
+          nodeFound: true,
+          value: `${selectedOptionText} ${selectedOptionValue}`.trim(),
+        });
+      } else {
+        sourceDetails.push({ method: "selected_option_text_value", nodeFound: false, value: "" });
+      }
+    } else {
+      sourceDetails.push({ method: "backing_input_value", nodeFound: false, value: "" });
+      sourceDetails.push({ method: "selected_option_text_value", nodeFound: false, value: "" });
+    }
+
+    return {
+      actualRenderedText,
+      actualRenderedTextRaw,
+      actualRenderedTextNormalized,
+      renderedTextCandidates,
+      renderedTextChosenFrom,
+      renderedTextExtractionMode,
+      actualTriggerText,
+      actualVisibleInputValue,
+      actualBackingInputValue,
+      selectedOptionText,
+      selectedOptionValue,
+      activeDescendantText,
+      activeDescendantValue,
+      readbackMethodsTried,
+      verificationFieldResolved,
+      verificationControlResolved,
+      verificationControlState,
+      renderedTextNodeFound: Boolean(renderedTextChosenFrom),
+      triggerNodeFound: sourceDetails.some(
+        (detail) => detail.method === "trigger_button_text" && detail.nodeFound
+      ),
+      backingInputFound: sourceDetails.some(
+        (detail) => detail.method === "backing_input_value" && detail.nodeFound
+      ),
+      visibleInputFound: sourceDetails.some(
+        (detail) => detail.method === "visible_input_value" && detail.nodeFound
+      ),
+      readbackSourceDetails: sourceDetails,
+    };
+  }
+
+  function extractCollapsedControlRenderedText(control) {
+    const directRaw = String(control.innerText || control.textContent || "");
+    const directText = cleanCategoryStage(directRaw);
+    if (directText) {
+      return {
+        text: directText,
+        raw: directRaw,
+        normalized: normalizeOptionValue(directText),
+        mode: "direct_node",
+        chosenFrom: describeVerificationNode(control),
+        candidates: [directText],
+      };
+    }
+
+    const candidates = [];
+    const seen = new Set();
+    const nodes = [control, ...Array.from(control.querySelectorAll("*"))];
+
+    for (const node of nodes) {
+      if (!(node instanceof Element)) continue;
+      if (!isVisible(node)) continue;
+      if (node.matches("svg, path, use, img")) continue;
+      if (node.getAttribute("aria-hidden") === "true") continue;
+
+      const raw = String(node.innerText || node.textContent || "");
+      const cleaned = cleanCategoryStage(raw);
+      if (!cleaned) continue;
+      if (/^[\s\-–—_•·|:()[\]{}.,/\\]+$/.test(cleaned)) continue;
+
+      const normalized = normalizeOptionValue(cleaned);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      candidates.push({
+        text: cleaned,
+        raw,
+        normalized,
+        from: describeVerificationNode(node),
+      });
+    }
+
+    if (candidates.length) {
+      const chosen = candidates[0];
+      return {
+        text: chosen.text,
+        raw: chosen.raw,
+        normalized: chosen.normalized,
+        mode: "descendant_scan",
+        chosenFrom: chosen.from,
+        candidates: candidates.map((candidate) => candidate.text).slice(0, 8),
+      };
+    }
+
+    return {
+      text: "",
+      raw: "",
+      normalized: "",
+      mode: "fallback",
+      chosenFrom: "",
+      candidates: [],
+    };
+  }
+
+  function describeVerificationNode(node) {
+    if (!(node instanceof Element)) return "";
+    const tag = node.tagName.toLowerCase();
+    const testId = node.getAttribute("data-testid");
+    if (testId) return `${tag}[data-testid="${testId}"]`;
+    const role = node.getAttribute("role");
+    if (role) return `${tag}[role="${role}"]`;
+    const className = typeof node.className === "string" ? node.className.trim() : "";
+    if (className) {
+      const firstClass = className.split(/\s+/).filter(Boolean)[0];
+      if (firstClass) return `${tag}.${firstClass}`;
+    }
+    return tag;
+  }
+
+  function resolveVerificationFieldContext(field) {
+    const normalizedLabel = normalizeText(field?.normalizedLabel ?? field?.label ?? "");
+    const allLabels = Array.from(document.querySelectorAll("label")).filter(
+      (label) => label instanceof Element && isVisible(label)
+    );
+    const exactLabelMatch = allLabels.find(
+      (label) => normalizeText(cleanCategoryStage(label.textContent || "")) === normalizedLabel
+    );
+    const labelEl = exactLabelMatch ?? null;
+
+    const container =
+      labelEl?.closest("div, section, fieldset, form") ??
+      (field?.control instanceof Element
+        ? field.control.closest("div, section, fieldset, form")
+        : null) ??
+      (field?.control instanceof Element ? field.control : null);
+
+    let control = null;
+    if (container instanceof Element) {
+      const resolvedControl = findControlForVisibleLabel(labelEl ?? container, container);
+      if (resolvedControl instanceof Element) {
+        control = resolvedControl;
+      }
+    }
+    if (!(control instanceof Element) && field?.control instanceof Element) {
+      control = field.control;
+    }
+
+    let controlState = "unknown";
+    if (control instanceof Element) {
+      const expanded = control.getAttribute("aria-expanded");
+      if (expanded === "true" || control.className.includes("menu-is-open")) {
+        controlState = "open";
+      } else if (expanded === "false" || control.className.includes("react-select__control")) {
+        controlState = "collapsed";
+      }
+    }
+
+    return {
+      fieldResolved: labelEl instanceof Element,
+      controlResolved: control instanceof Element,
+      controlState,
+      control,
+      scope: container,
     };
   }
 
@@ -2625,6 +3560,7 @@
   }
 
   function isLikelyMultiValueControl(control) {
+    if (!(control instanceof Element)) return false;
     const metadata = normalizeText(
       [
         control.getAttribute("aria-multiselectable"),
@@ -2640,10 +3576,21 @@
     if (metadata.includes("multi") || metadata.includes("tags")) return true;
     if (metadata.includes("checkbox")) return true;
 
+    const scope = control.closest("div, section, fieldset, form") ?? control.parentElement ?? control;
+    const scopeText = normalizeText(scope?.textContent || "");
+    if (scopeText.includes("add up to") || scopeText.includes("add up")) return true;
+    if (scopeText.includes("add tag") || scopeText.includes("add value")) return true;
+
     const multiChip = control.querySelector(
       ".react-select__multi-value, [class*='multi-value'], [class*='chip']"
     );
-    return multiChip instanceof Element;
+    if (multiChip instanceof Element) return true;
+
+    const scopeMultiChip =
+      scope instanceof Element
+        ? scope.querySelector(".react-select__multi-value, [class*='chip'], [class*='token']")
+        : null;
+    return scopeMultiChip instanceof Element;
   }
 
   async function findPostCategorySizeField(sizeConfig) {
