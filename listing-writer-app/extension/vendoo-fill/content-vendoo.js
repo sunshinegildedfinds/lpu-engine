@@ -119,6 +119,11 @@
     const statusEl = document.getElementById("lpu-vendoo-status");
     const reportEl = document.getElementById("lpu-vendoo-report");
 
+    if (!canUseChromeRuntimeMessaging()) {
+      reportEl.textContent = "Clear failed: extension messaging unavailable.";
+      return;
+    }
+
     chrome.runtime.sendMessage({ type: "CLEAR_PAYLOAD" }, async (response) => {
       const runtimeError = chrome.runtime.lastError?.message;
       if (runtimeError) {
@@ -150,12 +155,54 @@
 
     const receivedResolvedPrice =
       typeof payload?.resolvedPrice === "string" ? payload.resolvedPrice : "";
+    const receivedConditionRaw =
+      typeof payload?.marketplaces?.ebay?.itemSpecifics?.condition === "string"
+        ? payload.marketplaces.ebay.itemSpecifics.condition.trim()
+        : typeof payload?.marketplaces?.ebay?.itemSpecifics?.itemCondition === "string"
+          ? payload.marketplaces.ebay.itemSpecifics.itemCondition.trim()
+        : typeof payload?.marketplaces?.ebay?.condition === "string"
+          ? payload.marketplaces.ebay.condition.trim()
+          : typeof payload?.marketplaces?.ebay?.itemCondition === "string"
+            ? payload.marketplaces.ebay.itemCondition.trim()
+          : "";
     console.debug("[Vendoo][ReceivedPayload]", {
       hasResolvedPrice: Boolean(receivedResolvedPrice),
       resolvedPrice: receivedResolvedPrice,
       hasPricing: Boolean(payload?.pricing && typeof payload.pricing === "object"),
       topLevelPayloadKeys:
         payload && typeof payload === "object" ? Object.keys(payload) : [],
+    });
+    console.debug("[Vendoo][ConditionPayload]", {
+      hasConditionLikeValue: Boolean(receivedConditionRaw),
+      conditionPath:
+        typeof payload?.marketplaces?.ebay?.itemSpecifics?.condition === "string"
+          ? "payload.marketplaces.ebay.itemSpecifics.condition"
+          : typeof payload?.marketplaces?.ebay?.itemSpecifics?.itemCondition === "string"
+            ? "payload.marketplaces.ebay.itemSpecifics.itemCondition"
+          : typeof payload?.marketplaces?.ebay?.condition === "string"
+            ? "payload.marketplaces.ebay.condition"
+            : typeof payload?.marketplaces?.ebay?.itemCondition === "string"
+              ? "payload.marketplaces.ebay.itemCondition"
+            : "",
+      rawValue: receivedConditionRaw,
+      normalizedValue: receivedConditionRaw ? normalizeText(receivedConditionRaw) : "",
+    });
+    const receivedUsSizeRaw =
+      typeof payload?.marketplaces?.ebay?.itemSpecifics?.size === "string"
+        ? payload.marketplaces.ebay.itemSpecifics.size.trim()
+        : typeof payload?.marketplaces?.ebay?.size === "string"
+          ? payload.marketplaces.ebay.size.trim()
+          : "";
+    console.debug("[Vendoo][BaseUSSizePayload]", {
+      hasSizeLikeValue: Boolean(receivedUsSizeRaw),
+      sizePath:
+        typeof payload?.marketplaces?.ebay?.itemSpecifics?.size === "string"
+          ? "payload.marketplaces.ebay.itemSpecifics.size"
+          : typeof payload?.marketplaces?.ebay?.size === "string"
+            ? "payload.marketplaces.ebay.size"
+            : "",
+      rawValue: receivedUsSizeRaw,
+      normalizedValue: receivedUsSizeRaw ? normalizeText(receivedUsSizeRaw) : "",
     });
 
     const selectors = getSelectorMap().ebay;
@@ -194,6 +241,19 @@
       payload,
       selectors,
     });
+    const baseConditionDiagnostics = await fillBaseConditionIfPresent({
+      payload,
+      usedElements,
+      selectors,
+    });
+    runState.diagnosticsByField.baseCondition = baseConditionDiagnostics;
+    if (baseConditionDiagnostics.status === "filled") {
+      runState.filled.push("Condition");
+    } else if (baseConditionDiagnostics.status === "needs_review") {
+      runState.needsReview.push(`Condition (${baseConditionDiagnostics.reason})`);
+    } else if (baseConditionDiagnostics.status === "skipped_for_safety") {
+      runState.skippedForSafety.push(`Condition (${baseConditionDiagnostics.reason})`);
+    }
     const marketplaceStageDiagnostics = await runMarketplaceActivationStage({
       targetMarketplace: "ebay",
       selectors,
@@ -423,6 +483,195 @@
       console.debug("[Vendoo][ListingPrice]", result);
       return result;
     }
+  }
+
+  async function fillBaseConditionIfPresent(input) {
+    const { payload, usedElements, selectors } = input;
+    const rawCondition = pickEbayCondition(payload);
+    const diagnostic = {
+      fieldLabel: "Condition",
+      payloadKey: "condition",
+      controlFamily: "single_select_combobox",
+      status: "skipped_for_safety",
+      reason: "",
+      expectedValue: rawCondition || "",
+      actualValue: "",
+    };
+
+    if (!rawCondition) {
+      const result = {
+        ...diagnostic,
+        status: "skipped_for_safety",
+        reason: "condition missing",
+      };
+      console.debug("[Vendoo][BaseCondition]", result);
+      return result;
+    }
+
+    const control = findBaseConditionControl();
+    if (!(control instanceof Element)) {
+      const result = {
+        ...diagnostic,
+        status: "skipped_for_safety",
+        reason: "base condition field not found",
+      };
+      console.debug("[Vendoo][BaseCondition]", result);
+      return result;
+    }
+
+    if (usedElements.has(control)) {
+      const result = {
+        ...diagnostic,
+        status: "skipped_for_safety",
+        reason: "collision prevention",
+      };
+      console.debug("[Vendoo][BaseCondition]", result);
+      return result;
+    }
+
+    const payloadValues = buildNormalizedPayloadValues(rawCondition);
+    const target = payloadValues.values[0] ?? "";
+    if (!target) {
+      const result = {
+        ...diagnostic,
+        status: "needs_review",
+        reason: "condition missing after normalization",
+      };
+      console.debug("[Vendoo][BaseCondition]", result);
+      return result;
+    }
+
+    const optionSelectors = selectors?.color?.optionSelectors ?? [
+      '[role="option"]',
+      '[data-radix-collection-item]',
+      '.react-select__option',
+      'li[role="option"]',
+    ];
+
+    const selectResult = await selectComboboxValueByNormalizedMatch({
+      control,
+      optionSelectors,
+      target,
+      fieldLabel: "Condition",
+      payloadRaw: rawCondition,
+      payloadCanonical: payloadValues.canonicalValue,
+      valueMode: payloadValues.multiValue ? "multi-value" : "single-value",
+    });
+
+    if (selectResult.status !== "filled") {
+      const result = {
+        ...diagnostic,
+        status: selectResult.status === "needs_review" ? "needs_review" : "skipped_for_safety",
+        reason: selectResult.reason || "condition fill failed",
+      };
+      console.debug("[Vendoo][BaseCondition]", result);
+      return result;
+    }
+
+    const expectedConditionValue =
+      typeof selectResult.resolvedOption === "string" && selectResult.resolvedOption.trim()
+        ? selectResult.resolvedOption.trim()
+        : rawCondition;
+
+    const verification = await verifyDynamicFillResult(
+      {
+        label: "Condition",
+        normalizedLabel: "condition",
+        control,
+        controlType: "combobox",
+        controlFamily: "single_select_combobox",
+        allowedOptions: [],
+      },
+      expectedConditionValue,
+      {
+        status: "filled",
+        controlFamily: "single_select_combobox",
+      }
+    );
+
+    if (!verification.passed) {
+      const result = {
+        ...diagnostic,
+        status: "needs_review",
+        reason: verification.reason || "verification failed",
+        expectedValue: expectedConditionValue,
+        actualValue:
+          verification.actualRenderedText ||
+          verification.actualTriggerText ||
+          verification.actualVisibleInputValue ||
+          verification.actualBackingInputValue ||
+          "",
+      };
+      console.debug("[Vendoo][BaseCondition]", result);
+      return result;
+    }
+
+    usedElements.add(control);
+    const result = {
+      ...diagnostic,
+      status: "filled",
+      reason: "value persisted after selection",
+      expectedValue: expectedConditionValue,
+      actualValue:
+        verification.actualRenderedText ||
+        verification.actualTriggerText ||
+        verification.actualVisibleInputValue ||
+        verification.actualBackingInputValue ||
+        "",
+    };
+    console.debug("[Vendoo][BaseCondition]", result);
+    return result;
+  }
+
+  function findBaseConditionControl() {
+    const selectors = [
+      'input[name="generalDetails.condition"]',
+      'input#generalDetails\\.condition',
+      'input[aria-label="Condition"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidates = Array.from(document.querySelectorAll(selector));
+      for (const candidate of candidates) {
+        if (!(candidate instanceof HTMLInputElement)) continue;
+        if (!isVisible(candidate)) continue;
+        if (!isBaseConditionInput(candidate)) continue;
+        const comboboxControl = candidate.closest(".react-select__control");
+        if (comboboxControl instanceof Element && isVisible(comboboxControl)) {
+          return comboboxControl;
+        }
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  function isBaseConditionInput(input) {
+    if (!(input instanceof HTMLInputElement)) return false;
+    const name = normalizeText(input.name || "");
+    const id = normalizeText(input.id || "");
+    const testId = normalizeText(input.getAttribute("data-testid") || "");
+    const aria = normalizeText(input.getAttribute("aria-label") || "");
+    const signature = [name, id, testId].join(" ");
+    if (signature.includes("generaldetails.condition")) return true;
+    if (aria === "condition" && !signature.includes("listings.ebay")) return true;
+    return false;
+  }
+
+  function isBaseConditionControl(control) {
+    if (!(control instanceof Element)) return false;
+    const directInput =
+      control instanceof HTMLInputElement
+        ? control
+        : control.querySelector("input");
+    if (directInput instanceof HTMLInputElement && isBaseConditionInput(directInput)) {
+      return true;
+    }
+    const nestedMatch = control.querySelector(
+      'input[name="generalDetails.condition"], input#generalDetails\\.condition, input[data-testid="generalDetails.condition"]'
+    );
+    return nestedMatch instanceof HTMLInputElement;
   }
 
   function findListingPriceInput() {
@@ -916,6 +1165,13 @@
         }
       }
 
+      await runBaseCategoryDependentRerun({
+        categoryPersisted: diagnostics.baseCategorySelectionVerified,
+        payload,
+        selectors,
+        usedElements,
+      });
+
       diagnostics.baseStageCompleted = true;
       diagnostics.baseStageCompletedBeforeMarketplaceSwitch = true;
       diagnostics.baseStageReason = "base stage attempted before marketplace switch";
@@ -996,6 +1252,146 @@
     }
 
     return targets;
+  }
+
+  async function runBaseCategoryDependentRerun(input) {
+    const { categoryPersisted, payload, selectors, usedElements } = input;
+    const rerunDiagnostics = {
+      categoryPersisted: Boolean(categoryPersisted),
+      rerunTriggered: false,
+      rerunFieldsDiscovered: [],
+      rerunFieldsFilled: [],
+      rerunFieldsSkipped: [],
+      usedDirectFieldDiscovery: false,
+    };
+
+    if (!categoryPersisted) {
+      console.debug("[Vendoo][BaseCategoryRerun]", rerunDiagnostics);
+      return rerunDiagnostics;
+    }
+
+    const targetLabels = new Set(["us size", "size type"]);
+    const specificsSelectors = selectors?.size?.postCategorySpecificsContainerSelectors ?? [];
+    const specificsRoot = await waitForSpecificsContainer(specificsSelectors);
+
+    let rerunFields = [];
+    if (specificsRoot) {
+      const discovered = discoverVisibleFieldRegistry(specificsRoot);
+      rerunFields = discovered.filter((field) => targetLabels.has(field.normalizedLabel));
+    } else {
+      rerunDiagnostics.usedDirectFieldDiscovery = true;
+      const directFields = discoverBaseCategoryRerunFieldsDirect(targetLabels);
+      rerunFields = directFields;
+    }
+
+    rerunDiagnostics.rerunFieldsDiscovered = rerunFields.map((field) => field.label);
+    rerunDiagnostics.rerunTriggered = true;
+
+    if (!rerunFields.length) {
+      if (!specificsRoot) {
+        rerunDiagnostics.rerunFieldsSkipped.push("specifics container not found");
+      }
+      console.debug("[Vendoo][BaseCategoryRerun]", rerunDiagnostics);
+      return rerunDiagnostics;
+    }
+
+    const { candidates } = buildDynamicPayloadCandidates(payload);
+    if (!candidates.length) {
+      rerunDiagnostics.rerunFieldsSkipped.push("no payload values");
+      console.debug("[Vendoo][BaseCategoryRerun]", rerunDiagnostics);
+      return rerunDiagnostics;
+    }
+
+    for (const field of rerunFields) {
+      const initialMatches = candidates.filter((candidate) =>
+        isDynamicLabelMatch(field.normalizedLabel, candidate.matchTerms)
+      );
+      const resolved = resolveFinalMatchesByPrecedence(
+        field.normalizedLabel,
+        initialMatches,
+        candidates
+      );
+      const matches = resolved.matches;
+      if (field.normalizedLabel === "us size") {
+        console.debug("[Vendoo][BaseUSSizeRouting]", {
+          discoveredLabel: field.label,
+          candidatePayloadKeysConsidered: initialMatches.map((candidate) => candidate.key),
+          matchedKeysBeforeResolution: initialMatches.map((candidate) => candidate.key),
+          matchedKeysAfterResolution: matches.map((candidate) => candidate.key),
+          reasonWhenNoMatch: matches.length === 0 ? "no_payload_match" : "",
+        });
+      }
+      if (matches.length !== 1) {
+        rerunDiagnostics.rerunFieldsSkipped.push(
+          `${field.label}: ${matches.length > 1 ? "ambiguous payload match" : "no payload match"}`
+        );
+        continue;
+      }
+
+      if (usedElements.has(field.control)) {
+        rerunDiagnostics.rerunFieldsSkipped.push(`${field.label}: collision prevention`);
+        continue;
+      }
+
+      const candidate = matches[0];
+      let result = await fillDynamicFieldValue(field, candidate.value, selectors);
+      const verification = await verifyDynamicFillResult(field, candidate.value, result);
+      if (result.status === "filled" && !verification.passed) {
+        result = {
+          ...result,
+          status: "needs_review",
+          reason: verification.reason || "post-fill verification failed",
+        };
+      }
+
+      if (result.status === "filled") {
+        usedElements.add(field.control);
+        rerunDiagnostics.rerunFieldsFilled.push(field.label);
+      } else {
+        rerunDiagnostics.rerunFieldsSkipped.push(
+          `${field.label}: ${result.reason || result.status}`
+        );
+      }
+    }
+
+    console.debug("[Vendoo][BaseCategoryRerun]", rerunDiagnostics);
+    return rerunDiagnostics;
+  }
+
+  function discoverBaseCategoryRerunFieldsDirect(targetLabels) {
+    const fields = [];
+    const seenControls = new Set();
+    const labels = Array.from(document.querySelectorAll("label"));
+    const root = document.documentElement;
+    for (const labelEl of labels) {
+      if (!(labelEl instanceof Element)) continue;
+      if (!isVisible(labelEl)) continue;
+      const label = cleanCategoryStage(labelEl.textContent || "");
+      const normalizedLabel = normalizeText(label);
+      if (!targetLabels.has(normalizedLabel)) continue;
+      const control = findControlForVisibleLabel(labelEl, root);
+      if (!(control instanceof Element)) continue;
+      if (!isVisible(control)) continue;
+      if (seenControls.has(control)) continue;
+      seenControls.add(control);
+      const controlType = detectDynamicControlType(control);
+      const controlFamily = classifyDynamicControlFamily({
+        label,
+        normalizedLabel,
+        control,
+        controlType,
+      });
+      const allowedOptions = discoverAllowedOptions(control, controlType);
+      fields.push({
+        label,
+        normalizedLabel,
+        control,
+        controlType,
+        controlFamily,
+        allowedOptions,
+      });
+    }
+    return fields;
   }
 
   async function runMarketplaceActivationStage(input) {
@@ -1811,7 +2207,7 @@
       }
     }
 
-    return score;
+    return null;
   }
 
   function findPickerSearchInput(pickerRoot, searchInputSelectors) {
@@ -1843,7 +2239,7 @@
       if (safeInput) return safeInput;
     }
 
-    return score;
+    return null;
   }
 
   function resolveCategoryOptionScope(pickerRoot, optionSelectors) {
@@ -2849,10 +3245,12 @@
     sleevelength: ["sleeve length"],
     sleevetype: ["sleeve type"],
     handmade: ["handmade", "hand made"],
+    condition: ["condition", "item condition"],
   };
 
   const DYNAMIC_FIELD_SYNONYMS = {
     ...CANONICAL_LPU_FIELD_SCHEMA,
+    ussize: ["us size", "size", "ussize"],
   };
 
   async function fillDynamicVisibleFieldsAfterCategory(input) {
@@ -2866,6 +3264,12 @@
 
     const specificsSelectors = selectors?.size?.postCategorySpecificsContainerSelectors ?? [];
     const revealStatus = await revealOptionalFieldsIfPresent(specificsSelectors);
+    console.debug("[Vendoo][EbayOptionalFields]", {
+      buttonVisible: Boolean(revealStatus.buttonFound),
+      clickAttempted: Boolean(revealStatus.clicked),
+      expandDetected: Boolean(revealStatus.expandedDetected),
+      reason: String(revealStatus.reason || ""),
+    });
     await wait(180);
 
     const specificsRoot = await waitForSpecificsContainer(specificsSelectors);
@@ -2909,8 +3313,25 @@
     const adapterAttemptedByField = [];
     const unattemptedFieldReasons = [];
     const finalRouteByKey = [];
+    const PAUSE_EBAY_CONDITION_SKIP = true;
 
     for (const field of visibleRegistry) {
+      if (
+        !PAUSE_EBAY_CONDITION_SKIP &&
+        field.normalizedLabel === "condition" &&
+        !isBaseConditionControl(field.control)
+      ) {
+        console.debug("[Vendoo][EbayConditionSkip]", {
+          status: "skipped_for_safety",
+          reason: "non-base condition field skipped",
+        });
+        unattemptedFieldReasons.push({
+          label: field.label,
+          controlFamily: field.controlFamily,
+          reason: "ebay_condition_stage_skipped",
+        });
+        continue;
+      }
       const initialMatches = candidates.filter((candidate) =>
         isDynamicLabelMatch(field.normalizedLabel, candidate.matchTerms)
       );
@@ -2920,6 +3341,15 @@
         candidates
       );
       const matches = resolved.matches;
+      if (field.normalizedLabel === "condition") {
+        console.debug("[Vendoo][ConditionRouting]", {
+          discoveredLabel: field.label,
+          candidatePayloadKeysConsidered: initialMatches.map((candidate) => candidate.key),
+          matchedKeysBeforeResolution: initialMatches.map((candidate) => candidate.key),
+          matchedKeysAfterResolution: matches.map((candidate) => candidate.key),
+          reasonWhenNoMatch: matches.length === 0 ? "no_payload_match" : "",
+        });
+      }
       finalRouteByKey.push({
         label: field.label,
         matchedKeysBeforeResolution: initialMatches.map((candidate) => candidate.key),
@@ -3038,13 +3468,20 @@
   }
 
   async function revealOptionalFieldsIfPresent(specificsSelectors) {
-    const buttons = Array.from(document.querySelectorAll("button, [role='button']"));
-    const showOptional = buttons.find((button) => {
-      if (!(button instanceof Element)) return false;
-      if (!isVisible(button)) return false;
-      const text = normalizeText(button.textContent || "");
-      return text.includes("show optional fields") || text === "show optional";
-    });
+    let showOptional = null;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const buttons = Array.from(document.querySelectorAll("button, [role='button']"));
+      showOptional = buttons.find((button) => {
+        if (!(button instanceof Element)) return false;
+        if (!isVisible(button)) return false;
+        const text = normalizeText(button.textContent || "");
+        return text.includes("show optional fields") || text === "show optional";
+      });
+      if (showOptional) break;
+      if (attempt < 5) {
+        await wait(120);
+      }
+    }
 
     if (!showOptional) {
       return {
@@ -3052,6 +3489,18 @@
         clicked: false,
         expandedDetected: false,
         reason: "button not found",
+      };
+    }
+
+    if (
+      (showOptional instanceof HTMLButtonElement && showOptional.disabled) ||
+      showOptional.getAttribute("aria-disabled") === "true"
+    ) {
+      return {
+        buttonFound: true,
+        clicked: false,
+        expandedDetected: false,
+        reason: "button disabled",
       };
     }
 
@@ -3096,7 +3545,7 @@
     return null;
   }
 
-  function isOptionalFieldsExpanded(button, specificsSelectors) {
+  function isOptionalFieldsExpanded(button) {
     if (!(button instanceof Element)) return false;
 
     const ariaExpanded = button.getAttribute("aria-expanded");
@@ -3104,14 +3553,8 @@
 
     const buttonText = normalizeText(button.textContent || "");
     if (buttonText.includes("hide optional fields")) return true;
-
-    const specificsRoot = findVisibleSpecificsContainer(specificsSelectors ?? []);
-    if (!specificsRoot) return false;
-
-    const visibleLabels = Array.from(specificsRoot.querySelectorAll("label")).filter(
-      (label) => label instanceof Element && isVisible(label)
-    );
-    return visibleLabels.length > 0;
+    if (!button.isConnected || !isVisible(button)) return true;
+    return false;
   }
 
   function buildDynamicPayloadCandidates(payload) {
@@ -3164,9 +3607,10 @@
       addCandidateEntry(key, value);
     }
 
-    for (const key of ["department", "jewelryDepartment"]) {
+    for (const key of ["department", "jewelryDepartment", "condition"]) {
       addCandidateEntry(key, ebay?.[key]);
     }
+    addCandidateEntry("condition", ebay?.itemCondition);
 
     return {
       candidates,
@@ -3485,6 +3929,11 @@
       if (terms.some((term) => normalizeText(term) === normalizedFieldLabel)) {
         aliasKeys.add(normalizePayloadKey(key));
       }
+    }
+
+    // Base shared "US Size" must resolve to payload key "size".
+    if (normalizedFieldLabel === "us size") {
+      aliasKeys.add(normalizePayloadKey("size"));
     }
 
     return aliasKeys;
@@ -4658,9 +5107,22 @@
       }));
       const normalizedOptions = getUniqueComboboxNormalizedValues(normalizedEntries, 18);
       const normalizedPayloadValue = normalizeOptionValue(target);
-      const matches = normalizedEntries.filter((candidate) =>
+      let matches = normalizedEntries.filter((candidate) =>
         candidate.values.some((value) => normalizeOptionValue(value) === normalizedPayloadValue)
       );
+      let conditionResolution = null;
+      const isConditionField = normalizeText(fieldLabel) === "condition";
+      if (!matches.length && isConditionField) {
+        conditionResolution = resolveConditionOptionMatch({
+          rawValue: payloadRaw,
+          normalizedPayloadValue,
+          availableOptions: normalizedOptions,
+          normalizedEntries,
+        });
+        if (conditionResolution?.match) {
+          matches = [conditionResolution.match];
+        }
+      }
       const debugSummary = buildComboboxDebugSummary({
         fieldLabel,
         payloadRaw,
@@ -4674,6 +5136,18 @@
         exactMatchFound: matches.length > 0,
       });
       console.debug("[LPU Vendoo] Combobox debug", debugSummary);
+      if (isConditionField) {
+        console.debug("[Vendoo][ConditionResolution]", {
+          rawValue: payloadRaw,
+          normalizedPayloadValue,
+          availableOptions: normalizedOptions,
+          resolvedOption:
+            conditionResolution?.resolvedOption ||
+            getResolvedOptionFromMatch(matches[0]) ||
+            "",
+          resolutionReason: conditionResolution?.resolutionReason || "exact_normalized_match",
+        });
+      }
 
       if (!matches.length) {
         return {
@@ -4694,7 +5168,13 @@
 
       clickElement(matches[0].entry.clickTarget);
       await wait(110);
-      return { status: "filled" };
+      return {
+        status: "filled",
+        resolvedOption:
+          conditionResolution?.resolvedOption ||
+          getResolvedOptionFromMatch(matches[0]) ||
+          target,
+      };
     }
 
     return {
@@ -4729,6 +5209,98 @@
       }
     }
     return values;
+  }
+
+  function resolveConditionOptionMatch(input) {
+    const { rawValue, normalizedPayloadValue, availableOptions, normalizedEntries } = input;
+    const normalizedRaw = normalizeOptionValue(rawValue);
+    const normalized = normalizedPayloadValue || normalizedRaw;
+    const options = Array.isArray(availableOptions) ? availableOptions : [];
+
+    const has = (phrases) =>
+      phrases.some((phrase) => normalized.includes(normalizeOptionValue(phrase)));
+
+    let targetOption = "";
+    let resolutionReason = "";
+
+    if (
+      has(["new with tags", "nwt"]) ||
+      (has(["new"]) && has(["with tags", "tag"]))
+    ) {
+      targetOption = "new with tags";
+      resolutionReason = "new_with_tags_cues";
+    } else if (
+      has(["new without tags", "nwot"]) ||
+      (has(["new"]) && has(["without tags", "no tags"]))
+    ) {
+      targetOption = "new without tags";
+      resolutionReason = "new_without_tags_cues";
+    } else if (
+      has(["new with imperfections"]) ||
+      (has(["new"]) && has(["imperfection", "defect", "blemish"]))
+    ) {
+      targetOption = "new with imperfections";
+      resolutionReason = "new_with_imperfections_cues";
+    } else if (
+      has(["used", "pre owned", "preowned", "worn", "wear", "condition"]) &&
+      has(["excellent", "barely used", "minimal signs", "like new"])
+    ) {
+      targetOption = "pre owned excellent";
+      resolutionReason = "pre_owned_excellent_cues";
+    } else if (
+      has(["used", "pre owned", "preowned", "worn", "wear", "condition"]) &&
+      has(["good", "minor wear", "no major flaws", "light wear", "normal wear"])
+    ) {
+      targetOption = "pre owned good";
+      resolutionReason = "pre_owned_good_cues";
+    } else if (
+      has(["used", "pre owned", "preowned", "worn", "wear", "condition"]) &&
+      has(["fair", "visible wear", "heavier wear", "heavy wear", "major flaw", "significant wear", "flaws"])
+    ) {
+      targetOption = "pre owned fair";
+      resolutionReason = "pre_owned_fair_cues";
+    }
+
+    if (!targetOption) {
+      return {
+        match: null,
+        resolvedOption: "",
+        resolutionReason: "no_condition_bucket_match",
+      };
+    }
+
+    if (!options.includes(targetOption)) {
+      return {
+        match: null,
+        resolvedOption: targetOption,
+        resolutionReason: "bucket_resolved_option_not_available",
+      };
+    }
+
+    const matchingEntries = normalizedEntries.filter((candidate) =>
+      candidate.values.some((value) => normalizeOptionValue(value) === targetOption)
+    );
+    if (matchingEntries.length !== 1) {
+      return {
+        match: null,
+        resolvedOption: targetOption,
+        resolutionReason:
+          matchingEntries.length > 1
+            ? "bucket_option_ambiguous"
+            : "bucket_option_entry_not_found",
+      };
+    }
+
+    return {
+      match: matchingEntries[0],
+      resolvedOption: targetOption,
+      resolutionReason,
+    };
+  }
+
+  function getResolvedOptionFromMatch(match) {
+    if (!match || !Array.isArray(match.values) || !match.values.length) return "";
+    return match.values[0] || "";
   }
 
   function buildComboboxDebugSummary(input) {
@@ -5419,6 +5991,10 @@
 
   async function getTransientPhotosFromExtension() {
     return new Promise((resolve) => {
+      if (!canUseChromeRuntimeMessaging()) {
+        resolve({ photos: [], source: "extension_channel_missing" });
+        return;
+      }
       chrome.runtime.sendMessage({ type: "GET_TRANSIENT_PHOTOS" }, (response) => {
         const runtimeError = chrome.runtime.lastError?.message;
         if (runtimeError || !response?.ok) {
@@ -6540,6 +7116,16 @@
     return typeof brand === "string" ? brand.trim() : "";
   }
 
+  function pickEbayCondition(payload) {
+    const condition =
+      payload?.marketplaces?.ebay?.itemSpecifics?.condition ??
+      payload?.marketplaces?.ebay?.itemSpecifics?.itemCondition ??
+      payload?.marketplaces?.ebay?.condition ??
+      payload?.marketplaces?.ebay?.itemCondition ??
+      "";
+    return typeof condition === "string" ? condition.trim() : "";
+  }
+
   function pickEbaySignedMaker(payload) {
     const signedMaker =
       payload?.marketplaces?.ebay?.itemSpecifics?.signedMaker ??
@@ -6606,6 +7192,10 @@
 
   function getStoredPayload() {
     return new Promise((resolve) => {
+      if (!canUseChromeRuntimeMessaging()) {
+        resolve(null);
+        return;
+      }
       chrome.runtime.sendMessage({ type: "GET_PAYLOAD" }, (response) => {
         const runtimeError = chrome.runtime.lastError?.message;
         if (runtimeError || !response?.ok) {
@@ -6738,5 +7328,14 @@
       .toLowerCase()
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  function canUseChromeRuntimeMessaging() {
+    return (
+      typeof chrome !== "undefined" &&
+      !!chrome &&
+      !!chrome.runtime &&
+      typeof chrome.runtime.sendMessage === "function"
+    );
   }
 })();

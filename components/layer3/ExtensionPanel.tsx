@@ -187,6 +187,7 @@ function getMappedEbayFields(section: string): {
   };
 
   const optionalSpecificFields: Array<[keyof EbayItemSpecifics, readonly string[], readonly string[]]> = [
+    ["condition", ["Condition", "Item Condition"], ["Condition", "Item Condition"]],
     ["signedMaker", ["Signed/Maker", "Signed Maker", "Maker", "Designer"], ["Signed/Maker", "Signed Maker", "Maker", "Designer"]],
     ["material", ["Material"], ["Material"]],
     ["styleType", ["Style/Type", "Style Type"], ["Style/Type", "Style Type"]],
@@ -353,6 +354,30 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       });
       return;
     }
+
+    const preBuildConditionRaw =
+      typeof mappedSeed.itemSpecifics.condition === "string"
+        ? mappedSeed.itemSpecifics.condition.trim()
+        : "";
+    console.debug("[LPU][ConditionPayload]", {
+      stage: "pre_build",
+      hasConditionLikeValue: Boolean(preBuildConditionRaw),
+      conditionPath: preBuildConditionRaw ? "mappedSeed.itemSpecifics.condition" : "",
+      rawValue: preBuildConditionRaw,
+      normalizedValue: preBuildConditionRaw ? normalizeToken(preBuildConditionRaw) : "",
+    });
+
+    const finalConditionRaw =
+      typeof payload?.marketplaces?.ebay?.itemSpecifics?.condition === "string"
+        ? payload.marketplaces.ebay.itemSpecifics.condition.trim()
+        : "";
+    console.debug("[LPU][ConditionPayload]", {
+      stage: "final_payload",
+      hasConditionLikeValue: Boolean(finalConditionRaw),
+      conditionPath: finalConditionRaw ? "payload.marketplaces.ebay.itemSpecifics.condition" : "",
+      rawValue: finalConditionRaw,
+      normalizedValue: finalConditionRaw ? normalizeToken(finalConditionRaw) : "",
+    });
 
     const sent = sendVendooPayloadToExtension(payload);
     if (sent) {

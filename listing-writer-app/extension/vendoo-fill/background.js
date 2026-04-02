@@ -146,7 +146,12 @@ function normalizeTransientPhotos(value) {
 
 function setTransientPhotoRecord(record) {
   if (!chrome.storage?.session?.set) return;
-  chrome.storage.session.set({ [TRANSIENT_PHOTO_KEY]: record }, () => {});
+  chrome.storage.session.set({ [TRANSIENT_PHOTO_KEY]: record }, () => {
+    if (chrome.runtime.lastError) {
+      // Keep in-memory transient photos available even when session quota is exceeded.
+      return;
+    }
+  });
 }
 
 function clearTransientPhotoRecord(done) {

@@ -18,6 +18,11 @@
     cacheTransientPhotos(normalized.photos ?? []);
     const prepared = preparePayloadForStorage(normalized);
 
+    if (!canUseChromeRuntimeMessaging()) {
+      showToast("Save failed: extension messaging unavailable.", false);
+      return;
+    }
+
     chrome.runtime.sendMessage(
       {
         type: "STORE_PAYLOAD",
@@ -158,6 +163,21 @@
       ["ebay", "itemSpecifics", "styleType"],
       ["ebay", "styleType"]
     );
+    const condition = pickString(
+      input,
+      ["marketplaces", "ebay", "itemSpecifics", "condition"],
+      ["marketplaces", "ebay", "itemSpecifics", "itemCondition"],
+      ["marketplaces", "ebay", "condition"],
+      ["marketplaces", "ebay", "itemCondition"],
+      ["ebay", "itemSpecifics", "condition"],
+      ["ebay", "itemSpecifics", "itemCondition"],
+      ["ebay", "condition"],
+      ["ebay", "itemCondition"],
+      ["payloadMap", "ebay", "itemSpecifics", "condition"],
+      ["payloadMap", "ebay", "itemSpecifics", "itemCondition"],
+      ["payloadMap", "ebay", "condition"],
+      ["payloadMap", "ebay", "itemCondition"]
+    );
 
     const incomingItemSpecifics = pickObject(
       input,
@@ -187,6 +207,9 @@
       brand: normalizedItemSpecifics.brand || brand,
       size: normalizedItemSpecifics.size || size,
       color: normalizedItemSpecifics.color || color,
+      ...(normalizedItemSpecifics.condition || condition
+        ? { condition: normalizedItemSpecifics.condition || condition }
+        : {}),
       ...(signedMaker ? { signedMaker } : {}),
       ...(material ? { material } : {}),
       ...(styleType ? { styleType } : {}),
@@ -291,6 +314,15 @@
     } catch {
       return -1;
     }
+  }
+
+  function canUseChromeRuntimeMessaging() {
+    return (
+      typeof chrome !== "undefined" &&
+      !!chrome &&
+      !!chrome.runtime &&
+      typeof chrome.runtime.sendMessage === "function"
+    );
   }
 
   function pickString(obj, ...paths) {

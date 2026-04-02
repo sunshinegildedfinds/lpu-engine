@@ -2,6 +2,7 @@ export type EbayItemSpecifics = {
   brand: string;
   size: string;
   color: string;
+  condition?: string;
   signedMaker?: string;
   material?: string;
   styleType?: string;
@@ -110,6 +111,7 @@ export function buildVendooExtensionPayload(input: {
   };
 
   const optionalItemSpecificKeys = [
+    "condition",
     "signedMaker",
     "material",
     "styleType",
