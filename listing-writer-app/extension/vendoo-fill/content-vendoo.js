@@ -179,6 +179,38 @@
       topLevelPayloadKeys:
         payload && typeof payload === "object" ? Object.keys(payload) : [],
     });
+    const depopBlock = payload?.depop ?? payload?.marketplaces?.depop;
+    const depopDescription =
+      typeof depopBlock?.description === "string" ? depopBlock.description.trim() : "";
+    const depopHashtags =
+      typeof depopBlock?.hashtags === "string" ? depopBlock.hashtags.trim() : "";
+    const depopSize = typeof depopBlock?.size === "string" ? depopBlock.size.trim() : "";
+    const depopBrand = typeof depopBlock?.brand === "string" ? depopBlock.brand.trim() : "";
+    const depopStyle = typeof depopBlock?.style === "string" ? depopBlock.style.trim() : "";
+    console.debug("[Vendoo][DepopPayload]", {
+      hasDepopBlock: Boolean(depopBlock && typeof depopBlock === "object"),
+      depopTopLevelKeys: depopBlock && typeof depopBlock === "object" ? Object.keys(depopBlock) : [],
+      descriptionLike: {
+        path: depopDescription ? "payload.depop.description|payload.marketplaces.depop.description" : "",
+        present: Boolean(depopDescription),
+      },
+      hashtagsLike: {
+        path: depopHashtags ? "payload.depop.hashtags|payload.marketplaces.depop.hashtags" : "",
+        present: Boolean(depopHashtags),
+      },
+      sizeLike: {
+        path: depopSize ? "payload.depop.size|payload.marketplaces.depop.size" : "",
+        value: depopSize,
+      },
+      brandLike: {
+        path: depopBrand ? "payload.depop.brand|payload.marketplaces.depop.brand" : "",
+        value: depopBrand,
+      },
+      styleLike: {
+        path: depopStyle ? "payload.depop.style|payload.marketplaces.depop.style" : "",
+        value: depopStyle,
+      },
+    });
     console.debug("[Vendoo][ConditionPayload]", {
       hasConditionLikeValue: Boolean(receivedConditionRaw),
       conditionPath:
@@ -238,6 +270,13 @@
 
     const runState = actionModel.createRunState();
     const usedElements = new Set();
+    const marketplaceOrderDiagnostics = {
+      baseCompleted: false,
+      ebayStarted: false,
+      ebayCompleted: false,
+      depopStarted: false,
+      depopBlockedReason: "",
+    };
     const photoStageDiagnostics = await runPhotoUploadStage(payload);
     const baseStageDiagnostics = await runBaseGeneralVendooStage({
       fillSteps,
@@ -248,6 +287,9 @@
       payload,
       selectors,
     });
+    marketplaceOrderDiagnostics.baseCompleted = Boolean(
+      baseStageDiagnostics.baseStageCompletedBeforeMarketplaceSwitch
+    );
     const baseConditionDiagnostics = await fillBaseConditionIfPresent({
       payload,
       usedElements,
@@ -291,6 +333,8 @@
     }
 
     if (!marketplaceStageDiagnostics.handoffToMarketplaceFill) {
+      marketplaceOrderDiagnostics.depopBlockedReason = "ebay_stage_not_ready";
+      console.debug("[Vendoo][MarketplaceOrder]", marketplaceOrderDiagnostics);
       runState.needsReview.push(
         `Marketplace stage (${marketplaceStageDiagnostics.marketplaceReadyReason || marketplaceStageDiagnostics.marketplaceActivationReason || "marketplace not ready"})`
       );
@@ -307,6 +351,7 @@
       await refreshPanel();
       return;
     }
+    marketplaceOrderDiagnostics.ebayStarted = true;
 
     for (const step of fillSteps) {
       if (
@@ -375,6 +420,27 @@
       needsReview: runState.needsReview,
       skippedForSafety: runState.skippedForSafety,
     });
+    marketplaceOrderDiagnostics.ebayCompleted = true;
+
+    if (marketplaceOrderDiagnostics.ebayStarted && marketplaceOrderDiagnostics.ebayCompleted) {
+      marketplaceOrderDiagnostics.depopStarted = true;
+      await ensureDepopStageOpenForDepopFill();
+      await fillDepopSizeIfPresent({
+        payload,
+        usedElements,
+      });
+      await fillDepopDescriptionIfPresent({
+        payload,
+        usedElements,
+      });
+      await fillDepopTagsIfPresent({
+        payload,
+        usedElements,
+      });
+    } else {
+      marketplaceOrderDiagnostics.depopBlockedReason = "ebay_stage_not_completed";
+    }
+    console.debug("[Vendoo][MarketplaceOrder]", marketplaceOrderDiagnostics);
 
     reportEl.textContent = "Fill run completed.";
     renderLastRunResults({
@@ -630,6 +696,462 @@
     return result;
   }
 
+  async function fillDepopSizeIfPresent(input) {
+    const { payload, usedElements } = input;
+    const payloadValueRaw =
+      typeof payload?.depop?.size === "string"
+        ? payload.depop.size.trim()
+        : typeof payload?.marketplaces?.depop?.size === "string"
+          ? payload.marketplaces.depop.size.trim()
+          : "";
+    const diagnostic = {
+      payloadValue: payloadValueRaw,
+      attemptedValue: "",
+      selectedValue: "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    if (!payloadValueRaw) {
+      diagnostic.reason = "depop.size missing";
+      console.debug("[Vendoo][DepopSize]", diagnostic);
+      return diagnostic;
+    }
+
+    const depopSizeInput = findDepopSizeInput();
+    if (!(depopSizeInput instanceof HTMLInputElement)) {
+      diagnostic.reason = "Depop Size field not found";
+      console.debug("[Vendoo][DepopSize]", diagnostic);
+      return diagnostic;
+    }
+
+    const control =
+      depopSizeInput.closest(".react-select__control, [role='combobox']") ?? depopSizeInput;
+    if (!(control instanceof Element) || !isVisible(control)) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "Depop Size control not found";
+      console.debug("[Vendoo][DepopSize]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(control)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][DepopSize]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.attemptedValue = payloadValueRaw;
+    const selectResult = await selectComboboxValueByNormalizedMatch({
+      control,
+      optionSelectors: ['[role="option"]', '[data-radix-collection-item]', '.react-select__option', 'li[role="option"]'],
+      target: payloadValueRaw,
+      fieldLabel: "Depop Size",
+      payloadRaw: payloadValueRaw,
+      payloadCanonical: payloadValueRaw,
+      valueMode: "single-value",
+    });
+
+    if (selectResult.status !== "filled") {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = selectResult.reason || "Depop Size select failed";
+      console.debug("[Vendoo][DepopSize]", diagnostic);
+      return diagnostic;
+    }
+
+    await wait(120);
+    const verification = await verifyDynamicFillResult(
+      {
+        label: "Depop Size",
+        normalizedLabel: "depop size",
+        control,
+        controlType: "combobox",
+        controlFamily: "single_select_combobox",
+        allowedOptions: [],
+      },
+      payloadValueRaw,
+      {
+        status: "filled",
+        controlFamily: "single_select_combobox",
+      }
+    );
+
+    diagnostic.selectedValue =
+      verification.actualRenderedText ||
+      verification.actualTriggerText ||
+      verification.actualVisibleInputValue ||
+      verification.actualBackingInputValue ||
+      "";
+
+    if (!verification.passed) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = verification.reason || "verification failed";
+      console.debug("[Vendoo][DepopSize]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(control);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value persisted after selection";
+    console.debug("[Vendoo][DepopSize]", diagnostic);
+    return diagnostic;
+  }
+
+  async function fillDepopDescriptionIfPresent(input) {
+    const { payload, usedElements } = input;
+    const depopDescription =
+      typeof payload?.depop?.description === "string"
+        ? payload.depop.description.trim()
+        : "";
+    const diagnostic = {
+      payloadSource: depopDescription ? "payload.depop.description" : "",
+      attemptedValuePresent: Boolean(depopDescription),
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const depopStageGate = evaluateDepopStageGate();
+    console.debug("[Vendoo][DepopStageGate]", depopStageGate);
+    if (!depopStageGate.stageDetected) {
+      diagnostic.reason = "not depop stage";
+      console.debug("[Vendoo][DepopDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!depopDescription) {
+      diagnostic.reason = "depop.description missing";
+      console.debug("[Vendoo][DepopDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    const field = findDepopDescriptionField();
+    if (!(field instanceof Element)) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "Depop Description field not found";
+      console.debug("[Vendoo][DepopDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][DepopDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    setElementValue(field, depopDescription);
+    field.dispatchEvent(new Event("blur", { bubbles: true }));
+    await wait(120);
+    const actual =
+      field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement
+        ? String(field.value || "")
+        : cleanCategoryStage(field.textContent || "");
+    if (normalizeOptionValue(actual) !== normalizeOptionValue(depopDescription)) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "verification failed";
+      console.debug("[Vendoo][DepopDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value persisted after set";
+    console.debug("[Vendoo][DepopDescription]", diagnostic);
+    return diagnostic;
+  }
+
+  async function ensureDepopStageOpenForDepopFill() {
+    const diagnostics = {
+      clickAttempted: false,
+      activeDetected: false,
+      formReadyDetected: false,
+      reason: "",
+    };
+
+    const depopTab = findMarketplaceTab("depop");
+    if (!(depopTab instanceof Element)) {
+      diagnostics.reason = "depop tab not found";
+      console.debug("[Vendoo][DepopStageOpen]", diagnostics);
+      return diagnostics;
+    }
+
+    diagnostics.activeDetected = isDepopTabSpecificallyActive(depopTab);
+
+    if (!diagnostics.activeDetected) {
+      clickElement(depopTab);
+      diagnostics.clickAttempted = true;
+    }
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (attempt > 0) {
+        await wait(140);
+      }
+
+      diagnostics.activeDetected = isDepopTabSpecificallyActive(depopTab);
+      diagnostics.formReadyDetected = isDepopFormReadyInDom();
+
+      if (diagnostics.activeDetected && diagnostics.formReadyDetected) {
+        diagnostics.reason = "depop stage active and form ready";
+        console.debug("[Vendoo][DepopStageOpen]", diagnostics);
+        return diagnostics;
+      }
+    }
+
+    diagnostics.reason = diagnostics.activeDetected
+      ? "depop active but form not ready"
+      : "depop stage not active";
+    console.debug("[Vendoo][DepopStageOpen]", diagnostics);
+    return diagnostics;
+  }
+
+  function isDepopTabSpecificallyActive(tabElement) {
+    if (!(tabElement instanceof Element)) return false;
+    const tabText = normalizeText(
+      [
+        tabElement.textContent || "",
+        tabElement.getAttribute("aria-label") || "",
+        tabElement.getAttribute("title") || "",
+        tabElement.getAttribute("data-testid") || "",
+        tabElement.getAttribute("name") || "",
+      ].join(" ")
+    );
+    if (!tabText.includes("depop")) return false;
+
+    const selectedAttr = normalizeText(tabElement.getAttribute("aria-selected") || "");
+    const dataState = normalizeText(tabElement.getAttribute("data-state") || "");
+    const ariaCurrent = normalizeText(tabElement.getAttribute("aria-current") || "");
+    const className = normalizeText(
+      typeof tabElement.className === "string" ? tabElement.className : ""
+    );
+
+    return (
+      selectedAttr === "true" ||
+      dataState === "active" ||
+      ariaCurrent === "true" ||
+      ariaCurrent === "page" ||
+      className.includes("active") ||
+      className.includes("selected")
+    );
+  }
+
+  async function fillDepopTagsIfPresent(input) {
+    const { payload, usedElements } = input;
+    const hashtags = typeof payload?.depop?.hashtags === "string" ? payload.depop.hashtags : "";
+    const optionalBrandHashtags =
+      typeof payload?.depop?.optionalBrandHashtags === "string"
+        ? payload.depop.optionalBrandHashtags
+        : "";
+    const payloadTags = parseDepopTagsFromPayload(hashtags, optionalBrandHashtags);
+    const diagnostic = {
+      payloadTags,
+      attemptedTags: [],
+      insertedTags: [],
+      skippedTags: [],
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const depopStageGate = evaluateDepopStageGate();
+    console.debug("[Vendoo][DepopStageGate]", depopStageGate);
+    if (!depopStageGate.stageDetected) {
+      diagnostic.reason = "not depop stage";
+      console.debug("[Vendoo][DepopTags]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!payloadTags.length) {
+      diagnostic.reason = "depop.hashtags missing";
+      console.debug("[Vendoo][DepopTags]", diagnostic);
+      return diagnostic;
+    }
+
+    const control = findDepopTagsControl();
+    if (!(control instanceof Element)) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "Depop Tags field not found";
+      diagnostic.skippedTags = [...payloadTags];
+      console.debug("[Vendoo][DepopTags]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(control)) {
+      diagnostic.reason = "collision prevention";
+      diagnostic.skippedTags = [...payloadTags];
+      console.debug("[Vendoo][DepopTags]", diagnostic);
+      return diagnostic;
+    }
+
+    const tagLimit = 5;
+    const tagsToAttempt = payloadTags.slice(0, tagLimit);
+    for (const tag of tagsToAttempt) {
+      diagnostic.attemptedTags.push(tag);
+      if (isBaseTagPresent(control, tag)) {
+        diagnostic.skippedTags.push(`${tag} (already present)`);
+        continue;
+      }
+      const committed = tryCommitChipToken(control, tag);
+      if (!committed) {
+        diagnostic.skippedTags.push(`${tag} (token commit failed)`);
+        continue;
+      }
+      await wait(100);
+      if (isBaseTagPresent(control, tag)) {
+        diagnostic.insertedTags.push(tag);
+      } else {
+        diagnostic.skippedTags.push(`${tag} (verification failed)`);
+      }
+    }
+
+    if (diagnostic.insertedTags.length === tagsToAttempt.length) {
+      diagnostic.status = "filled";
+      diagnostic.reason = "all tags inserted";
+      usedElements.add(control);
+      console.debug("[Vendoo][DepopTags]", diagnostic);
+      return diagnostic;
+    }
+
+    if (diagnostic.insertedTags.length > 0) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "partial tag insert";
+      usedElements.add(control);
+      console.debug("[Vendoo][DepopTags]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.status = "needs_review";
+    diagnostic.reason = "no tags inserted";
+    console.debug("[Vendoo][DepopTags]", diagnostic);
+    return diagnostic;
+  }
+
+  function parseDepopTagsFromPayload(hashtagsRaw, optionalBrandHashtagsRaw) {
+    const seen = new Set();
+    const tags = [];
+
+    function pushTag(raw) {
+      const cleaned = String(raw ?? "").trim().replace(/^#+/, "");
+      if (!cleaned) return;
+      if (seen.has(cleaned)) return;
+      seen.add(cleaned);
+      tags.push(cleaned);
+    }
+
+    function parseTagString(raw, allowLoose) {
+      if (typeof raw !== "string" || !raw.trim()) return;
+      const hashtagMatches = raw.match(/#[A-Za-z0-9][A-Za-z0-9_-]*/g) ?? [];
+      if (hashtagMatches.length) {
+        for (const match of hashtagMatches) {
+          pushTag(match);
+        }
+        return;
+      }
+
+      const split = raw
+        .split(/[\n,;]+/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+      for (const part of split) {
+        if (!allowLoose) continue;
+        if (/\s/.test(part)) continue;
+        if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(part)) continue;
+        pushTag(part);
+      }
+    }
+
+    parseTagString(hashtagsRaw, true);
+    parseTagString(optionalBrandHashtagsRaw, false);
+    return tags;
+  }
+
+  function findDepopDescriptionField() {
+    const exactSelectors = [
+      'textarea#listings\\.depop\\.description',
+      'textarea[name="listings.depop.description"]',
+      'textarea[data-testid="listings.depop.description"]',
+      'textarea#listings\\.depop\\.marketplaceSpecifics\\.description',
+      'textarea[name="listings.depop.marketplaceSpecifics.description"]',
+    ];
+    for (const selector of exactSelectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof Element && isVisible(candidate)) return candidate;
+    }
+
+    const scopedCandidates = Array.from(
+      document.querySelectorAll("textarea, [contenteditable='true'], input:not([type='hidden'])")
+    ).filter((candidate) => {
+      if (!(candidate instanceof Element)) return false;
+      if (!isVisible(candidate)) return false;
+      const metadata = normalizeText(
+        [
+          candidate.getAttribute("id") || "",
+          candidate.getAttribute("name") || "",
+          candidate.getAttribute("data-testid") || "",
+          candidate.getAttribute("aria-label") || "",
+          candidate.getAttribute("placeholder") || "",
+        ].join(" ")
+      );
+      return metadata.includes("listings.depop") && metadata.includes("description");
+    });
+    return scopedCandidates[0] ?? null;
+  }
+
+  function findDepopTagsControl() {
+    const exactSelectors = [
+      'input#listings\\.depop\\.hashtags',
+      'input[name="listings.depop.hashtags"]',
+      'input[data-testid="listings.depop.hashtags"]',
+      'input#listings\\.depop\\.tags',
+      'input[name="listings.depop.tags"]',
+      'input[data-testid="listings.depop.tags"]',
+    ];
+
+    for (const selector of exactSelectors) {
+      const input = document.querySelector(selector);
+      if (!(input instanceof HTMLInputElement) || !isVisible(input)) continue;
+      const control =
+        input.closest(".react-select__control, [role='combobox']") ?? input.closest("div");
+      if (control instanceof Element && isVisible(control)) return control;
+      return input;
+    }
+
+    const candidateInputs = Array.from(document.querySelectorAll("input:not([type='hidden'])")).filter(
+      (candidate) => {
+        if (!(candidate instanceof HTMLInputElement)) return false;
+        if (!isVisible(candidate)) return false;
+        const metadata = normalizeText(
+          [
+            candidate.id || "",
+            candidate.name || "",
+            candidate.getAttribute("data-testid") || "",
+            candidate.getAttribute("aria-label") || "",
+            candidate.getAttribute("placeholder") || "",
+          ].join(" ")
+        );
+        return (
+          metadata.includes("listings.depop") &&
+          (metadata.includes("tag") || metadata.includes("hashtag"))
+        );
+      }
+    );
+    const first = candidateInputs[0];
+    if (!(first instanceof HTMLInputElement)) return null;
+    const control =
+      first.closest(".react-select__control, [role='combobox']") ?? first.closest("div");
+    return control instanceof Element ? control : first;
+  }
+
+  function findDepopSizeInput() {
+    const selectors = [
+      'input#listings\\.depop\\.categorySpecifics\\.womenswear_dresses_size',
+      'input[id="listings.depop.categorySpecifics.womenswear_dresses_size"]',
+    ];
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
   function findBaseConditionControl() {
     const selectors = [
       'input[name="generalDetails.condition"]',
@@ -782,6 +1304,38 @@
     } catch {
       return normalizeText(window.location.href).includes("marketplace=ebay");
     }
+  }
+
+  function evaluateDepopStageGate() {
+    const depopStageSelectors = [
+      'textarea[name="listings.depop.overrides.description"]',
+      'input[id="listings.depop.categorySpecifics.womenswear_dresses_size"]',
+      'textarea#listings\\.depop\\.overrides\\.description',
+      'input#listings\\.depop\\.categorySpecifics\\.womenswear_dresses_size',
+    ];
+    const matchedSelector = depopStageSelectors.find((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element;
+    });
+    const stageDetected = Boolean(matchedSelector);
+    return {
+      stageDetected,
+      evidenceUsed: matchedSelector || "none",
+      reason: stageDetected ? "depop stage evidence confirmed" : "depop stage evidence missing",
+    };
+  }
+
+  function isDepopFormReadyInDom() {
+    const selectors = [
+      'textarea[name="listings.depop.overrides.description"]',
+      'input[id="listings.depop.categorySpecifics.womenswear_dresses_size"]',
+      'textarea#listings\\.depop\\.overrides\\.description',
+      'input#listings\\.depop\\.categorySpecifics\\.womenswear_dresses_size',
+    ];
+    return selectors.some((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element && isVisible(node);
+    });
   }
 
   async function fillAndVerifyPriceInput(inputField, value) {

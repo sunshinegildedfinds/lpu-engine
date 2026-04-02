@@ -200,6 +200,12 @@
       ["pricing"],
       ["payloadMap", "pricing"]
     );
+    const depop = pickObject(
+      input,
+      ["depop"],
+      ["marketplaces", "depop"],
+      ["payloadMap", "depop"]
+    );
     const vendooBaseTags = pickStringArray(
       input,
       ["vendooBaseTags"],
@@ -220,6 +226,29 @@
       ...(styleType ? { styleType } : {}),
     };
 
+    const normalizedDepop =
+      depop && typeof depop === "object"
+        ? {
+            listing: pickString(depop, ["listing"]),
+            description: pickString(depop, ["description"], ["listing"]),
+            hashtags: pickString(depop, ["hashtags"]),
+            optionalBrandHashtags: pickString(depop, ["optionalBrandHashtags"]),
+            ...(pickString(depop, ["brand"]) ? { brand: pickString(depop, ["brand"]) } : {}),
+            ...(pickString(depop, ["size"]) ? { size: pickString(depop, ["size"]) } : {}),
+            ...(pickString(depop, ["style"]) ? { style: pickString(depop, ["style"]) } : {}),
+          }
+        : null;
+    const includeDepop = Boolean(
+      normalizedDepop &&
+        (normalizedDepop.listing ||
+          normalizedDepop.description ||
+          normalizedDepop.hashtags ||
+          normalizedDepop.optionalBrandHashtags ||
+          normalizedDepop.brand ||
+          normalizedDepop.size ||
+          normalizedDepop.style)
+    );
+
     return {
       version: 1,
       meta: {
@@ -235,6 +264,7 @@
       ...(researchMeta ? { researchMeta } : {}),
       ...(pricing ? { pricing } : {}),
       ...(vendooBaseTags.length ? { vendooBaseTags } : {}),
+      ...(includeDepop && normalizedDepop ? { depop: normalizedDepop } : {}),
       marketplaces: {
         ebay: {
           title,
@@ -245,6 +275,7 @@
           canonicalVendooCategoryPath,
           itemSpecifics,
         },
+        ...(includeDepop && normalizedDepop ? { depop: normalizedDepop } : {}),
       },
     };
   }

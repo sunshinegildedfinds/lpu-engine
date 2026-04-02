@@ -1267,6 +1267,11 @@ export default function LpuPage() {
           researchMeta: researchMetaForPayload,
           pricing: pricingForPayload,
           resolvedPrice: resolvedPriceForPayload,
+          depop: {
+            listing: payloadMap.platforms.depop.listing,
+            hashtags: payloadMap.platforms.depop.hashtags,
+            optionalBrandHashtags: payloadMap.platforms.depop.optionalBrandHashtags,
+          },
         }}
       />
     </main>

@@ -26,6 +26,11 @@ type Layer3Seed = {
   researchMeta?: VendooResearchMeta;
   pricing?: VendooPricingMeta;
   resolvedPrice?: string;
+  depop?: {
+    listing?: string;
+    hashtags?: string;
+    optionalBrandHashtags?: string;
+  };
 };
 
 type SendFeedbackState = {
@@ -89,6 +94,25 @@ function parseVendooBaseTags(raw: string | undefined): string[] {
   }
 
   return normalized;
+}
+
+function extractDepopSingleLineValue(section: string, labels: readonly string[]): string {
+  if (!section.trim()) return "";
+  const lines = section.replace(/\r\n/g, "\n").split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!isLabelLine(line, labels)) continue;
+    const colonIndex = line.indexOf(":");
+    const sameLineValue = colonIndex >= 0 ? normalizeValue(line.slice(colonIndex + 1)) : "";
+    if (sameLineValue) return sameLineValue;
+    for (let next = index + 1; next < lines.length; next += 1) {
+      const candidate = lines[next].trim();
+      if (!candidate) continue;
+      if (/^[a-z][a-z0-9\s/&()-]*:\s*$/i.test(candidate)) break;
+      return normalizeValue(candidate);
+    }
+  }
+  return "";
 }
 
 function isLabelLine(line: string, labels: readonly string[]): boolean {
@@ -262,6 +286,29 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
     () => parseVendooBaseTags(seed.poshmarkStyleTags),
     [seed.poshmarkStyleTags]
   );
+  const depopPayload = useMemo(() => {
+    const section = String(seed.depop?.listing ?? "");
+    const listing = section.trim();
+    const hashtags = String(seed.depop?.hashtags ?? "").trim();
+    const optionalBrandHashtags = String(seed.depop?.optionalBrandHashtags ?? "").trim();
+    const brandFromDepop = extractDepopSingleLineValue(section, ["Brand"]);
+    const sizeFromDepop = extractDepopSingleLineValue(section, ["Size"]);
+    const styleFromDepop = extractDepopSingleLineValue(section, ["Style"]);
+    const styleFromCanonical =
+      mappedSeed.itemSpecifics.styleType || mappedSeed.itemSpecifics.style || "";
+    const depopBrand = brandFromDepop || mappedSeed.itemSpecifics.brand || "";
+    const depopSize = sizeFromDepop || mappedSeed.itemSpecifics.size || "";
+    const depopStyle = styleFromDepop || styleFromCanonical;
+    return {
+      listing,
+      description: listing,
+      hashtags,
+      optionalBrandHashtags,
+      ...(depopBrand ? { brand: depopBrand } : {}),
+      ...(depopSize ? { size: depopSize } : {}),
+      ...(depopStyle ? { style: depopStyle } : {}),
+    };
+  }, [mappedSeed.itemSpecifics, seed.depop]);
 
   const [selectedSource, setSelectedSource] = useState<"A" | "B">(
     seed.titleA.trim() ? "A" : "B"
@@ -346,6 +393,7 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
         researchMeta: seed.researchMeta,
         pricing: seed.pricing,
         resolvedPrice: seed.resolvedPrice,
+        depop: depopPayload,
         itemSpecifics: {
           ...mappedSeed.itemSpecifics,
           brand,
@@ -367,6 +415,7 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       seed.researchMeta,
       seed.pricing,
       seed.resolvedPrice,
+      depopPayload,
       selectedTitle,
       size,
     ]
@@ -415,6 +464,28 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       hasVendooBaseTags: Array.isArray(payload?.vendooBaseTags) && payload.vendooBaseTags.length > 0,
       vendooBaseTags: Array.isArray(payload?.vendooBaseTags) ? payload.vendooBaseTags : [],
       topLevelPayloadKeys: payload && typeof payload === "object" ? Object.keys(payload) : [],
+    });
+    const depopBlock = payload?.marketplaces?.depop;
+    const depopSize = typeof depopBlock?.size === "string" ? depopBlock.size : "";
+    const depopBrand = typeof depopBlock?.brand === "string" ? depopBlock.brand : "";
+    const depopStyle = typeof depopBlock?.style === "string" ? depopBlock.style : "";
+    const depopDescription = typeof depopBlock?.description === "string" ? depopBlock.description : "";
+    console.debug("[LPU][DepopPayload]", {
+      sourceFound: Boolean(
+        depopBlock &&
+          (depopBlock.listing ||
+            depopBlock.description ||
+            depopBlock.hashtags ||
+            depopBlock.optionalBrandHashtags)
+      ),
+      depopTopLevelKeys: depopBlock && typeof depopBlock === "object" ? Object.keys(depopBlock) : [],
+      sizeLike: { path: depopSize ? "payload.marketplaces.depop.size" : "", value: depopSize },
+      brandLike: { path: depopBrand ? "payload.marketplaces.depop.brand" : "", value: depopBrand },
+      styleLike: { path: depopStyle ? "payload.marketplaces.depop.style" : "", value: depopStyle },
+      description: {
+        path: depopDescription ? "payload.marketplaces.depop.description" : "",
+        present: Boolean(depopDescription),
+      },
     });
 
     const sent = sendVendooPayloadToExtension(payload);

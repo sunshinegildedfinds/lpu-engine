@@ -75,6 +75,15 @@ export type VendooExtensionPayload = {
       canonicalVendooCategoryPath?: string;
       itemSpecifics: EbayItemSpecifics;
     };
+    depop?: {
+      listing: string;
+      description: string;
+      hashtags: string;
+      optionalBrandHashtags: string;
+      brand?: string;
+      size?: string;
+      style?: string;
+    };
   };
 };
 
@@ -91,6 +100,15 @@ export function buildVendooExtensionPayload(input: {
   researchMeta?: VendooResearchMeta;
   pricing?: VendooPricingMeta;
   resolvedPrice?: string | null;
+  depop?: {
+    listing?: string;
+    description?: string;
+    hashtags?: string;
+    optionalBrandHashtags?: string;
+    brand?: string;
+    size?: string;
+    style?: string;
+  };
 }): VendooExtensionPayload {
   const canonicalVendooCategoryPath = input.canonicalVendooCategoryPath?.trim();
   const sanitizedPhotos = Array.isArray(input.photos)
@@ -253,6 +271,31 @@ export function buildVendooExtensionPayload(input: {
     resolvedPriceInput && /^[$]?\d+([.,]\d{1,2})?$/.test(resolvedPriceInput)
       ? resolvedPriceInput
       : "";
+  const depop = input.depop && typeof input.depop === "object"
+    ? {
+        listing: typeof input.depop.listing === "string" ? input.depop.listing.trim() : "",
+        description:
+          typeof input.depop.description === "string" ? input.depop.description.trim() : "",
+        hashtags: typeof input.depop.hashtags === "string" ? input.depop.hashtags.trim() : "",
+        optionalBrandHashtags:
+          typeof input.depop.optionalBrandHashtags === "string"
+            ? input.depop.optionalBrandHashtags.trim()
+            : "",
+        brand: typeof input.depop.brand === "string" ? input.depop.brand.trim() : "",
+        size: typeof input.depop.size === "string" ? input.depop.size.trim() : "",
+        style: typeof input.depop.style === "string" ? input.depop.style.trim() : "",
+      }
+    : null;
+  const includeDepop = Boolean(
+    depop &&
+      (depop.listing ||
+        depop.description ||
+        depop.hashtags ||
+        depop.optionalBrandHashtags ||
+        depop.brand ||
+        depop.size ||
+        depop.style)
+  );
 
   return {
     ...(sanitizedPhotos.length ? { photos: sanitizedPhotos } : {}),
@@ -272,6 +315,19 @@ export function buildVendooExtensionPayload(input: {
           : {}),
         itemSpecifics,
       },
+      ...(includeDepop && depop
+        ? {
+            depop: {
+              listing: depop.listing,
+              description: depop.description,
+              hashtags: depop.hashtags,
+              optionalBrandHashtags: depop.optionalBrandHashtags,
+              ...(depop.brand ? { brand: depop.brand } : {}),
+              ...(depop.size ? { size: depop.size } : {}),
+              ...(depop.style ? { style: depop.style } : {}),
+            },
+          }
+        : {}),
     },
   };
 }
