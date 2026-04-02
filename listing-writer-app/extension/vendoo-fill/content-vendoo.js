@@ -425,6 +425,7 @@
     if (marketplaceOrderDiagnostics.ebayStarted && marketplaceOrderDiagnostics.ebayCompleted) {
       marketplaceOrderDiagnostics.depopStarted = true;
       await ensureDepopStageOpenForDepopFill();
+      await ensureDepopOptionalFieldsOpenForDepopFill();
       await fillDepopSizeIfPresent({
         payload,
         usedElements,
@@ -900,6 +901,126 @@
       : "depop stage not active";
     console.debug("[Vendoo][DepopStageOpen]", diagnostics);
     return diagnostics;
+  }
+
+  async function ensureDepopOptionalFieldsOpenForDepopFill() {
+    const diagnostics = {
+      buttonVisible: false,
+      clickAttempted: false,
+      expandDetected: false,
+      reason: "",
+    };
+
+    const button = findDepopShowOptionalFieldsButton();
+    diagnostics.buttonVisible = button instanceof Element;
+
+    if (!(button instanceof Element)) {
+      diagnostics.reason = "button not visible";
+      console.debug("[Vendoo][DepopOptionalFields]", diagnostics);
+      return diagnostics;
+    }
+
+    const disabled =
+      (button instanceof HTMLButtonElement && button.disabled) ||
+      button.getAttribute("aria-disabled") === "true";
+    if (disabled) {
+      diagnostics.reason = "button disabled";
+      console.debug("[Vendoo][DepopOptionalFields]", diagnostics);
+      return diagnostics;
+    }
+
+    const baselineOptionalCount = countVisibleDepopOptionalControls();
+    if (
+      isDepopOptionalFieldsExpanded(button, {
+        baselineCount: baselineOptionalCount,
+        currentCount: baselineOptionalCount,
+        requireCountIncrease: false,
+      })
+    ) {
+      diagnostics.expandDetected = true;
+      diagnostics.reason = "already expanded";
+      console.debug("[Vendoo][DepopOptionalFields]", diagnostics);
+      return diagnostics;
+    }
+
+    clickElement(button);
+    diagnostics.clickAttempted = true;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await wait(140);
+      const latestButton = findDepopShowOptionalFieldsButton();
+      const currentOptionalCount = countVisibleDepopOptionalControls();
+      if (
+        isDepopOptionalFieldsExpanded(latestButton, {
+          baselineCount: baselineOptionalCount,
+          currentCount: currentOptionalCount,
+          requireCountIncrease: true,
+        })
+      ) {
+        diagnostics.expandDetected = true;
+        diagnostics.reason = "expanded after click";
+        console.debug("[Vendoo][DepopOptionalFields]", diagnostics);
+        return diagnostics;
+      }
+    }
+
+    diagnostics.reason = "clicked but expansion not detected";
+    console.debug("[Vendoo][DepopOptionalFields]", diagnostics);
+    return diagnostics;
+  }
+
+  function findDepopShowOptionalFieldsButton() {
+    const candidates = Array.from(document.querySelectorAll("button, [role='button']"));
+    return (
+      candidates.find((candidate) => {
+        if (!(candidate instanceof Element)) return false;
+        if (!isVisible(candidate)) return false;
+        const text = normalizeText(candidate.textContent || "");
+        if (!text.includes("show optional fields")) return false;
+        const scopeText = normalizeText(
+          [
+            candidate.closest("section, form, div")?.textContent || "",
+            window.location.href,
+          ].join(" ")
+        );
+        return scopeText.includes("depop");
+      }) ?? null
+    );
+  }
+
+  function isDepopOptionalFieldsExpanded(button, options = {}) {
+    const baselineCount = Number(options.baselineCount ?? 0) || 0;
+    const currentCount = Number(options.currentCount ?? 0) || 0;
+    const requireCountIncrease = Boolean(options.requireCountIncrease);
+    if (!(button instanceof Element)) return true;
+    if (!button.isConnected || !isVisible(button)) return true;
+    const text = normalizeText(button.textContent || "");
+    if (text.includes("hide optional fields")) return true;
+    const expanded = normalizeText(button.getAttribute("aria-expanded") || "");
+    if (expanded === "true") return true;
+    if (requireCountIncrease && currentCount > baselineCount) return true;
+    return false;
+  }
+
+  function countVisibleDepopOptionalControls() {
+    const selectors = [
+      'input[name*="listings.depop.overrides.brand"]',
+      'input[id*="listings.depop.overrides.brand"]',
+      'input[name*="listings.depop.overrides.style"]',
+      'input[id*="listings.depop.overrides.style"]',
+      'input[name*="listings.depop.overrides.material"]',
+      'input[id*="listings.depop.overrides.material"]',
+      'input[name*="listings.depop.overrides.color"]',
+      'input[id*="listings.depop.overrides.color"]',
+    ];
+    let count = 0;
+    for (const selector of selectors) {
+      const matches = Array.from(document.querySelectorAll(selector)).filter(
+        (node) => node instanceof Element && isVisible(node)
+      );
+      count += matches.length;
+    }
+    return count;
   }
 
   function isDepopTabSpecificallyActive(tabElement) {
