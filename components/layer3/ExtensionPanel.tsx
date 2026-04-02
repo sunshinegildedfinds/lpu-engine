@@ -21,6 +21,7 @@ type Layer3Seed = {
   titleB: string;
   description: string;
   ebaySection: string;
+  poshmarkStyleTags?: string;
   photos?: VendooPhotoPayload[];
   researchMeta?: VendooResearchMeta;
   pricing?: VendooPricingMeta;
@@ -69,6 +70,25 @@ function normalizeValue(value: string): string {
 
 function normalizeLabel(value: string): string {
   return normalizeToken(value.replace(/:$/, ""));
+}
+
+function parseVendooBaseTags(raw: string | undefined): string[] {
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  const tokens = raw
+    .split(/\r?\n|,/)
+    .map((token) => token.trim().replace(/^#+/, ""))
+    .map((token) => token.replace(/\s+/g, " "))
+    .filter(Boolean);
+
+  for (const token of tokens) {
+    if (seen.has(token)) continue;
+    seen.add(token);
+    normalized.push(token);
+  }
+
+  return normalized;
 }
 
 function isLabelLine(line: string, labels: readonly string[]): boolean {
@@ -238,6 +258,10 @@ function getMappedEbayFields(section: string): {
 
 export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
   const mappedSeed = useMemo(() => getMappedEbayFields(seed.ebaySection), [seed.ebaySection]);
+  const vendooBaseTags = useMemo(
+    () => parseVendooBaseTags(seed.poshmarkStyleTags),
+    [seed.poshmarkStyleTags]
+  );
 
   const [selectedSource, setSelectedSource] = useState<"A" | "B">(
     seed.titleA.trim() ? "A" : "B"
@@ -318,6 +342,7 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
         category,
         canonicalVendooCategoryPath,
         photos: seed.photos ?? [],
+        vendooBaseTags,
         researchMeta: seed.researchMeta,
         pricing: seed.pricing,
         resolvedPrice: seed.resolvedPrice,
@@ -338,6 +363,7 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       seed.titleA,
       seed.titleB,
       seed.photos,
+      vendooBaseTags,
       seed.researchMeta,
       seed.pricing,
       seed.resolvedPrice,
@@ -377,6 +403,18 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       conditionPath: finalConditionRaw ? "payload.marketplaces.ebay.itemSpecifics.condition" : "",
       rawValue: finalConditionRaw,
       normalizedValue: finalConditionRaw ? normalizeToken(finalConditionRaw) : "",
+    });
+
+    console.debug("[LPU][VendooBaseTags]", {
+      sourceFound: Boolean(seed.poshmarkStyleTags?.trim()),
+      sourcePath: "seed.poshmarkStyleTags",
+      rawValue: seed.poshmarkStyleTags ?? "",
+      normalizedValue: vendooBaseTags,
+    });
+    console.debug("[LPU][VendooBaseTagsSend]", {
+      hasVendooBaseTags: Array.isArray(payload?.vendooBaseTags) && payload.vendooBaseTags.length > 0,
+      vendooBaseTags: Array.isArray(payload?.vendooBaseTags) ? payload.vendooBaseTags : [],
+      topLevelPayloadKeys: payload && typeof payload === "object" ? Object.keys(payload) : [],
     });
 
     const sent = sendVendooPayloadToExtension(payload);

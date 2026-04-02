@@ -61,6 +61,7 @@ export type VendooPricingMeta = {
 
 export type VendooExtensionPayload = {
   photos?: VendooPhotoPayload[];
+  vendooBaseTags?: string[];
   researchMeta?: VendooResearchMeta;
   pricing?: VendooPricingMeta;
   resolvedPrice?: string;
@@ -86,6 +87,7 @@ export function buildVendooExtensionPayload(input: {
   canonicalVendooCategoryPath?: string | null;
   itemSpecifics: EbayItemSpecifics;
   photos?: VendooPhotoPayload[];
+  vendooBaseTags?: string[];
   researchMeta?: VendooResearchMeta;
   pricing?: VendooPricingMeta;
   resolvedPrice?: string | null;
@@ -230,6 +232,21 @@ export function buildVendooExtensionPayload(input: {
     pricing &&
       (pricing.selectedPrice || pricing.floorPrice || pricing.pricingNote || pricing.source)
   );
+  const vendooBaseTags = Array.isArray(input.vendooBaseTags)
+    ? (() => {
+        const seen = new Set<string>();
+        const normalized: string[] = [];
+        for (const tag of input.vendooBaseTags) {
+          if (typeof tag !== "string") continue;
+          const cleaned = tag.trim().replace(/^#+/, "").replace(/\s+/g, " ");
+          if (!cleaned) continue;
+          if (seen.has(cleaned)) continue;
+          seen.add(cleaned);
+          normalized.push(cleaned);
+        }
+        return normalized;
+      })()
+    : [];
   const resolvedPriceInput =
     typeof input.resolvedPrice === "string" ? input.resolvedPrice.trim() : "";
   const resolvedPrice =
@@ -239,6 +256,7 @@ export function buildVendooExtensionPayload(input: {
 
   return {
     ...(sanitizedPhotos.length ? { photos: sanitizedPhotos } : {}),
+    ...(vendooBaseTags.length ? { vendooBaseTags } : {}),
     ...(includeResearchMeta && researchMeta ? { researchMeta } : {}),
     ...(includePricing && pricing ? { pricing } : {}),
     ...(resolvedPrice ? { resolvedPrice } : {}),

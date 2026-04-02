@@ -172,6 +172,13 @@
       topLevelPayloadKeys:
         payload && typeof payload === "object" ? Object.keys(payload) : [],
     });
+    console.debug("[Vendoo][VendooBaseTagsReceive]", {
+      hasVendooBaseTags:
+        Array.isArray(payload?.vendooBaseTags) && payload.vendooBaseTags.length > 0,
+      vendooBaseTags: Array.isArray(payload?.vendooBaseTags) ? payload.vendooBaseTags : [],
+      topLevelPayloadKeys:
+        payload && typeof payload === "object" ? Object.keys(payload) : [],
+    });
     console.debug("[Vendoo][ConditionPayload]", {
       hasConditionLikeValue: Boolean(receivedConditionRaw),
       conditionPath:
@@ -1172,6 +1179,18 @@
         usedElements,
       });
 
+      const baseTagsDiagnostics = await fillBaseTagsIfPresent({
+        payload,
+        usedElements,
+      });
+      if (baseTagsDiagnostics.status === "filled") {
+        runState.filled.push("Base tags");
+      } else if (baseTagsDiagnostics.status === "needs_review") {
+        runState.needsReview.push(`Base tags (${baseTagsDiagnostics.reason})`);
+      } else if (baseTagsDiagnostics.status === "skipped_for_safety") {
+        runState.skippedForSafety.push(`Base tags (${baseTagsDiagnostics.reason})`);
+      }
+
       diagnostics.baseStageCompleted = true;
       diagnostics.baseStageCompletedBeforeMarketplaceSwitch = true;
       diagnostics.baseStageReason = "base stage attempted before marketplace switch";
@@ -1189,6 +1208,150 @@
 
   function isBaseGeneralFieldKey(key) {
     return ["title", "description", "brand", "color", "category"].includes(String(key));
+  }
+
+  async function fillBaseTagsIfPresent(input) {
+    const { payload, usedElements } = input;
+    const payloadTags = pickVendooBaseTags(payload);
+    console.debug("[Vendoo][BaseTagsPayloadRead]", {
+      hasVendooBaseTags:
+        Array.isArray(payload?.vendooBaseTags) && payload.vendooBaseTags.length > 0,
+      vendooBaseTags: Array.isArray(payload?.vendooBaseTags) ? payload.vendooBaseTags : [],
+      payloadTagsDerived: payloadTags,
+    });
+    const diagnostics = {
+      payloadTags,
+      attemptedTags: [],
+      insertedTags: [],
+      skippedTags: [],
+      reason: "",
+      status: "skipped_for_safety",
+    };
+
+    if (!payloadTags.length) {
+      diagnostics.reason = "vendooBaseTags missing";
+      console.debug("[Vendoo][BaseTags]", diagnostics);
+      return diagnostics;
+    }
+
+    const control = findBaseTagsControl();
+    if (!(control instanceof Element)) {
+      diagnostics.status = "needs_review";
+      diagnostics.reason = "base tags field not found";
+      diagnostics.skippedTags = [...payloadTags];
+      console.debug("[Vendoo][BaseTags]", diagnostics);
+      return diagnostics;
+    }
+
+    if (usedElements.has(control)) {
+      diagnostics.reason = "collision prevention";
+      diagnostics.skippedTags = [...payloadTags];
+      console.debug("[Vendoo][BaseTags]", diagnostics);
+      return diagnostics;
+    }
+
+    for (const tag of payloadTags) {
+      diagnostics.attemptedTags.push(tag);
+      if (isBaseTagPresent(control, tag)) {
+        diagnostics.skippedTags.push(`${tag} (already present)`);
+        continue;
+      }
+
+      const committed = tryCommitChipToken(control, tag);
+      if (!committed) {
+        diagnostics.skippedTags.push(`${tag} (token commit failed)`);
+        continue;
+      }
+
+      await wait(100);
+      if (isBaseTagPresent(control, tag)) {
+        diagnostics.insertedTags.push(tag);
+      } else {
+        diagnostics.skippedTags.push(`${tag} (verification failed)`);
+      }
+    }
+
+    if (diagnostics.insertedTags.length === payloadTags.length) {
+      diagnostics.status = "filled";
+      diagnostics.reason = "all tags inserted";
+      usedElements.add(control);
+      console.debug("[Vendoo][BaseTags]", diagnostics);
+      return diagnostics;
+    }
+
+    if (diagnostics.insertedTags.length > 0) {
+      diagnostics.status = "needs_review";
+      diagnostics.reason = "partial tag insert";
+      usedElements.add(control);
+      console.debug("[Vendoo][BaseTags]", diagnostics);
+      return diagnostics;
+    }
+
+    diagnostics.status = "needs_review";
+    diagnostics.reason = "no tags inserted";
+    console.debug("[Vendoo][BaseTags]", diagnostics);
+    return diagnostics;
+  }
+
+  function pickVendooBaseTags(payload) {
+    const raw = payload?.vendooBaseTags;
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set();
+    const normalized = [];
+    for (const value of raw) {
+      if (typeof value !== "string") continue;
+      const cleaned = value.trim().replace(/^#+/, "");
+      if (!cleaned || seen.has(cleaned)) continue;
+      seen.add(cleaned);
+      normalized.push(cleaned);
+    }
+    return normalized;
+  }
+
+  function findBaseTagsControl() {
+    const selectors = [
+      'input[data-testid="generalDetails.tags"]',
+      'input#generalDetails\\.tags',
+      'input[name="generalDetails.tags"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidates = Array.from(document.querySelectorAll(selector));
+      for (const candidate of candidates) {
+        if (!(candidate instanceof HTMLInputElement)) continue;
+        if (!isVisible(candidate)) continue;
+        const control =
+          candidate.closest(".react-select__control, [role='combobox']") ??
+          candidate.closest("div");
+        if (control instanceof Element && isVisible(control)) {
+          return control;
+        }
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  function isBaseTagPresent(control, tag) {
+    if (!(control instanceof Element)) return false;
+    const expected = normalizeOptionValue(tag);
+    if (!expected) return false;
+    const scope =
+      control.closest("div, section, fieldset, form") ?? control.parentElement ?? control;
+    if (!(scope instanceof Element)) return false;
+
+    const tagNodes = Array.from(
+      scope.querySelectorAll(
+        ".react-select__multi-value__label, .react-select__multi-value, [class*='chip'], [class*='token']"
+      )
+    );
+    for (const node of tagNodes) {
+      if (!(node instanceof Element) || !isVisible(node)) continue;
+      const value = normalizeOptionValue(cleanCategoryStage(node.textContent || ""));
+      if (value === expected) return true;
+    }
+    return false;
   }
 
   function buildBaseStageTargetSteps(input) {

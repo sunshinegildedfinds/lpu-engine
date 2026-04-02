@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { ExtensionPanel } from "@/components/layer3/ExtensionPanel";
 import { ResearchPanel } from "@/components/lpu/ResearchPanel";
 import {
@@ -101,6 +101,53 @@ function previewValue(value: string, max = 120): string {
   if (normalized.length <= max) return normalized;
 
   return `${normalized.slice(0, max)}…`;
+}
+
+function normalizeVendooBaseTags(raw: string | string[] | undefined): string[] {
+  const inputValues = Array.isArray(raw) ? raw : [raw ?? ""];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const input of inputValues) {
+    if (typeof input !== "string" || !input.trim()) continue;
+    const parts = input
+      .split(/\r?\n|,/)
+      .map((part) => part.trim().replace(/^#+/, ""))
+      .map((part) => part.replace(/\s+/g, " "))
+      .filter(Boolean);
+    for (const part of parts) {
+      if (seen.has(part)) continue;
+      seen.add(part);
+      normalized.push(part);
+    }
+  }
+
+  return normalized;
+}
+
+function extractPoshmarkStyleTagsSource(section: string): string {
+  if (!section.trim()) return "";
+  const lines = section.replace(/\r\n/g, "\n").split("\n");
+  const styleTagLabelPattern = /^style tags\s*:?\s*(.*)$/i;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    const match = line.match(styleTagLabelPattern);
+    if (!match) continue;
+
+    const sameLineValue = (match[1] ?? "").trim();
+    if (sameLineValue) return sameLineValue;
+
+    for (let next = index + 1; next < lines.length; next += 1) {
+      const candidate = lines[next].trim();
+      if (!candidate) continue;
+      if (/^[a-z][a-z0-9\s()\/&-]*:\s*$/i.test(candidate)) return "";
+      return candidate;
+    }
+    return "";
+  }
+
+  return "";
 }
 
 function StatusBadge({ pass }: { pass: boolean }) {
@@ -403,6 +450,65 @@ export default function LpuPage() {
     if (!selected) return undefined;
     return /^[$]?\d+([.,]\d{1,2})?$/.test(selected) ? selected : undefined;
   }, [enableResearchPanel, priceDecision.selectedPrice]);
+
+  const vendooBaseTagsSource = useMemo(() => {
+    const styleTagsFromPoshmarkSection = extractPoshmarkStyleTagsSource(
+      payloadMap.platforms.poshmark.section
+    );
+    if (styleTagsFromPoshmarkSection.trim()) {
+      return {
+        sourceFound: true,
+        sourcePath: "payloadMap.platforms.poshmark.section::Style Tags",
+        rawValue: styleTagsFromPoshmarkSection,
+        normalizedValue: normalizeVendooBaseTags(
+          styleTagsFromPoshmarkSection.split(";")
+        ),
+      };
+    }
+
+    const styleTagsFromPayloadMap = payloadMap.platforms.poshmark.styleTags;
+    if (styleTagsFromPayloadMap.trim()) {
+      return {
+        sourceFound: true,
+        sourcePath: "payloadMap.platforms.poshmark.styleTags",
+        rawValue: styleTagsFromPayloadMap,
+        normalizedValue: normalizeVendooBaseTags(styleTagsFromPayloadMap.split(";")),
+      };
+    }
+
+    const metrics = validation?.platformResults?.poshmark?.metrics;
+    const styleTagsFromMetrics = metrics?.styleTags;
+    if (Array.isArray(styleTagsFromMetrics) && styleTagsFromMetrics.length > 0) {
+      return {
+        sourceFound: true,
+        sourcePath: "validation.platformResults.poshmark.metrics.styleTags",
+        rawValue: styleTagsFromMetrics,
+        normalizedValue: normalizeVendooBaseTags(
+          styleTagsFromMetrics.filter((value): value is string => typeof value === "string")
+        ),
+      };
+    }
+
+    return {
+      sourceFound: false,
+      sourcePath: "",
+      rawValue: "",
+      normalizedValue: [] as string[],
+    };
+  }, [
+    payloadMap.platforms.poshmark.section,
+    payloadMap.platforms.poshmark.styleTags,
+    validation,
+  ]);
+
+  useEffect(() => {
+    console.debug("[LPU][VendooBaseTags]", {
+      sourceFound: vendooBaseTagsSource.sourceFound,
+      sourcePath: vendooBaseTagsSource.sourcePath,
+      rawValue: vendooBaseTagsSource.rawValue,
+      normalizedValue: vendooBaseTagsSource.normalizedValue,
+    });
+  }, [vendooBaseTagsSource]);
 
   async function handleCopy(target: string) {
     const text = copyMap[target];
@@ -1156,6 +1262,7 @@ export default function LpuPage() {
           titleB: payloadMap.platforms.ebay.titleB,
           description: payloadMap.platforms.ebay.description,
           ebaySection: payloadMap.platforms.ebay.section,
+          poshmarkStyleTags: vendooBaseTagsSource.normalizedValue.join(", "),
           photos: layer3Photos,
           researchMeta: researchMetaForPayload,
           pricing: pricingForPayload,

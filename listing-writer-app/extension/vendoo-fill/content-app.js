@@ -200,6 +200,11 @@
       ["pricing"],
       ["payloadMap", "pricing"]
     );
+    const vendooBaseTags = pickStringArray(
+      input,
+      ["vendooBaseTags"],
+      ["payloadMap", "vendooBaseTags"]
+    );
 
     const normalizedItemSpecifics = normalizeItemSpecifics(incomingItemSpecifics);
     const itemSpecifics = {
@@ -229,6 +234,7 @@
         : {}),
       ...(researchMeta ? { researchMeta } : {}),
       ...(pricing ? { pricing } : {}),
+      ...(vendooBaseTags.length ? { vendooBaseTags } : {}),
       marketplaces: {
         ebay: {
           title,
@@ -383,6 +389,24 @@
       if (photos.length) return photos;
     }
 
+    return [];
+  }
+
+  function pickStringArray(obj, ...paths) {
+    for (const path of paths) {
+      const value = getAtPath(obj, path);
+      if (!Array.isArray(value)) continue;
+      const seen = new Set();
+      const normalized = [];
+      for (const item of value) {
+        if (typeof item !== "string") continue;
+        const cleaned = item.trim().replace(/^#+/, "");
+        if (!cleaned || seen.has(cleaned)) continue;
+        seen.add(cleaned);
+        normalized.push(cleaned);
+      }
+      if (normalized.length) return normalized;
+    }
     return [];
   }
 
