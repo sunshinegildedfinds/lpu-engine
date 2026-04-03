@@ -206,6 +206,18 @@
       ["marketplaces", "depop"],
       ["payloadMap", "depop"]
     );
+    const poshmark = pickObject(
+      input,
+      ["poshmark"],
+      ["marketplaces", "poshmark"],
+      ["payloadMap", "poshmark"]
+    );
+    const etsy = pickObject(
+      input,
+      ["etsy"],
+      ["marketplaces", "etsy"],
+      ["payloadMap", "etsy"]
+    );
     const vendooBaseTags = pickStringArray(
       input,
       ["vendooBaseTags"],
@@ -248,6 +260,34 @@
           normalizedDepop.size ||
           normalizedDepop.style)
     );
+    const normalizedPoshmark =
+      poshmark && typeof poshmark === "object"
+        ? {
+            title: pickString(poshmark, ["title"]),
+            description: pickString(poshmark, ["description"]),
+            categoryPath: pickString(poshmark, ["categoryPath"], ["category"]),
+            styleTags: pickStringArray(poshmark, ["styleTags"]),
+          }
+        : null;
+    const includePoshmark = Boolean(
+      normalizedPoshmark &&
+        (normalizedPoshmark.title ||
+          normalizedPoshmark.description ||
+          normalizedPoshmark.categoryPath ||
+          normalizedPoshmark.styleTags.length)
+    );
+    const normalizedEtsy =
+      etsy && typeof etsy === "object"
+        ? {
+            title: pickString(etsy, ["title"]),
+            description: pickString(etsy, ["description"]),
+            tags: pickStringArray(etsy, ["tags"]),
+          }
+        : null;
+    const includeEtsy = Boolean(
+      normalizedEtsy &&
+        (normalizedEtsy.title || normalizedEtsy.description || normalizedEtsy.tags.length)
+    );
 
     return {
       version: 1,
@@ -265,6 +305,8 @@
       ...(pricing ? { pricing } : {}),
       ...(vendooBaseTags.length ? { vendooBaseTags } : {}),
       ...(includeDepop && normalizedDepop ? { depop: normalizedDepop } : {}),
+      ...(includePoshmark && normalizedPoshmark ? { poshmark: normalizedPoshmark } : {}),
+      ...(includeEtsy && normalizedEtsy ? { etsy: normalizedEtsy } : {}),
       marketplaces: {
         ebay: {
           title,
@@ -276,6 +318,8 @@
           itemSpecifics,
         },
         ...(includeDepop && normalizedDepop ? { depop: normalizedDepop } : {}),
+        ...(includePoshmark && normalizedPoshmark ? { poshmark: normalizedPoshmark } : {}),
+        ...(includeEtsy && normalizedEtsy ? { etsy: normalizedEtsy } : {}),
       },
     };
   }

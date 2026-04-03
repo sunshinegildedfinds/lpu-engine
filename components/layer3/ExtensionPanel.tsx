@@ -31,6 +31,17 @@ type Layer3Seed = {
     hashtags?: string;
     optionalBrandHashtags?: string;
   };
+  poshmark?: {
+    title?: string;
+    description?: string;
+    styleTags?: string;
+    categoryPath?: string;
+  };
+  etsy?: {
+    title?: string;
+    description?: string;
+    tags?: string;
+  };
 };
 
 type SendFeedbackState = {
@@ -113,6 +124,74 @@ function extractDepopSingleLineValue(section: string, labels: readonly string[])
     }
   }
   return "";
+}
+
+function toPoshmarkBaseCategoryPath(value: string): string {
+  const normalized = normalizeToken(value);
+  if (!normalized) return "";
+  if (normalized.includes("women") && normalized.includes("dresses")) {
+    return "Women > Dresses";
+  }
+  if (normalized.includes("women") && normalized.includes("tops")) {
+    return "Women > Tops";
+  }
+  if (normalized.includes("women") && normalized.includes("skirts")) {
+    return "Women > Skirts";
+  }
+  return "";
+}
+
+function derivePoshmarkCategoryLeafFromSpecifics(itemSpecifics: EbayItemSpecifics): string {
+  const dressLength = normalizeToken(String(itemSpecifics.dressLength ?? ""));
+  if (dressLength.includes("maxi")) return "Maxi";
+  if (dressLength.includes("midi")) return "Midi";
+  if (dressLength.includes("mini")) return "Mini";
+  if (dressLength.includes("knee")) return "Knee-Length";
+
+  const styleType = normalizeValue(
+    String(itemSpecifics.styleType || itemSpecifics.style || "")
+  );
+  return styleType || "";
+}
+
+function buildPoshmarkCategoryGuidance(input: {
+  directCategoryPath: string;
+  canonicalCategoryPath: string;
+  fallbackCategory: string;
+  itemSpecifics: EbayItemSpecifics;
+}): { sourceFound: boolean; sourcePath: string; rawValue: string } {
+  const direct = normalizeValue(input.directCategoryPath);
+  if (direct) {
+    return {
+      sourceFound: true,
+      sourcePath: "seed.poshmark.categoryPath",
+      rawValue: direct,
+    };
+  }
+
+  const canonical = normalizeValue(input.canonicalCategoryPath);
+  const category = normalizeValue(input.fallbackCategory);
+  const base =
+    toPoshmarkBaseCategoryPath(canonical) || toPoshmarkBaseCategoryPath(category);
+  if (!base) {
+    return {
+      sourceFound: false,
+      sourcePath: "",
+      rawValue: "",
+    };
+  }
+
+  const leaf = normalizeValue(derivePoshmarkCategoryLeafFromSpecifics(input.itemSpecifics));
+  const refined = leaf ? `${base} > ${leaf}` : base;
+  return {
+    sourceFound: true,
+    sourcePath: leaf
+      ? "mappedSeed.canonicalCategoryPath+mappedSeed.itemSpecifics"
+      : canonical
+        ? "mappedSeed.canonicalCategoryPath"
+        : "mappedSeed.category",
+    rawValue: refined,
+  };
 }
 
 function isLabelLine(line: string, labels: readonly string[]): boolean {
@@ -286,6 +365,33 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
     () => parseVendooBaseTags(seed.poshmarkStyleTags),
     [seed.poshmarkStyleTags]
   );
+  const poshmarkCategoryPayloadInfo = useMemo(
+    () =>
+      buildPoshmarkCategoryGuidance({
+        directCategoryPath: String(seed.poshmark?.categoryPath ?? ""),
+        canonicalCategoryPath: String(mappedSeed.canonicalCategoryPath ?? ""),
+        fallbackCategory: String(mappedSeed.category ?? ""),
+        itemSpecifics: mappedSeed.itemSpecifics,
+      }),
+    [
+      mappedSeed.canonicalCategoryPath,
+      mappedSeed.category,
+      mappedSeed.itemSpecifics,
+      seed.poshmark?.categoryPath,
+    ]
+  );
+  const poshmarkPayload = useMemo(() => {
+    const title = String(seed.poshmark?.title ?? "").trim();
+    const description = String(seed.poshmark?.description ?? "").trim();
+    const styleTags = parseVendooBaseTags(seed.poshmark?.styleTags);
+    const categoryPath = normalizeValue(poshmarkCategoryPayloadInfo.rawValue);
+    return {
+      title,
+      description,
+      styleTags,
+      ...(categoryPath ? { categoryPath } : {}),
+    };
+  }, [poshmarkCategoryPayloadInfo.rawValue, seed.poshmark]);
   const depopPayload = useMemo(() => {
     const section = String(seed.depop?.listing ?? "");
     const listing = section.trim();
@@ -309,6 +415,26 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       ...(depopStyle ? { style: depopStyle } : {}),
     };
   }, [mappedSeed.itemSpecifics, seed.depop]);
+  const etsyPayload = useMemo(() => {
+    const title = String(seed.etsy?.title ?? "").trim();
+    const description = String(seed.etsy?.description ?? "").trim();
+    const tags = parseVendooBaseTags(seed.etsy?.tags);
+    return {
+      title,
+      description,
+      tags,
+    };
+  }, [seed.etsy]);
+  const vintageValue = String(mappedSeed.itemSpecifics.vintage ?? "").trim();
+  const etsyIncludedForVintage = useMemo(() => {
+    const normalized = normalizeToken(vintageValue);
+    return (
+      normalized === "yes" ||
+      normalized === "y" ||
+      normalized === "true" ||
+      normalized === "vintage"
+    );
+  }, [vintageValue]);
 
   const [selectedSource, setSelectedSource] = useState<"A" | "B">(
     seed.titleA.trim() ? "A" : "B"
@@ -394,6 +520,8 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
         pricing: seed.pricing,
         resolvedPrice: seed.resolvedPrice,
         depop: depopPayload,
+        poshmark: poshmarkPayload,
+        ...(etsyIncludedForVintage ? { etsy: etsyPayload } : {}),
         itemSpecifics: {
           ...mappedSeed.itemSpecifics,
           brand,
@@ -416,6 +544,9 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       seed.pricing,
       seed.resolvedPrice,
       depopPayload,
+      poshmarkPayload,
+      etsyIncludedForVintage,
+      etsyPayload,
       selectedTitle,
       size,
     ]
@@ -486,6 +617,52 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
         path: depopDescription ? "payload.marketplaces.depop.description" : "",
         present: Boolean(depopDescription),
       },
+    });
+    const poshmarkBlock = payload?.marketplaces?.poshmark;
+    const poshmarkTitle = typeof poshmarkBlock?.title === "string" ? poshmarkBlock.title : "";
+    const poshmarkDescription =
+      typeof poshmarkBlock?.description === "string" ? poshmarkBlock.description : "";
+    const poshmarkStyleTags = Array.isArray(poshmarkBlock?.styleTags)
+      ? poshmarkBlock.styleTags
+      : [];
+    const poshmarkCategoryPath =
+      typeof poshmarkBlock?.categoryPath === "string" ? poshmarkBlock.categoryPath : "";
+    console.debug("[LPU][PoshmarkCategoryPayload]", {
+      sourceFound: poshmarkCategoryPayloadInfo.sourceFound,
+      sourcePath: poshmarkCategoryPayloadInfo.sourcePath,
+      rawValue: poshmarkCategoryPayloadInfo.rawValue,
+      normalizedValue: poshmarkCategoryPayloadInfo.rawValue
+        ? normalizeToken(poshmarkCategoryPayloadInfo.rawValue)
+        : "",
+    });
+    console.debug("[LPU][PoshmarkPayload]", {
+      sourceFound: Boolean(poshmarkBlock && typeof poshmarkBlock === "object"),
+      poshmarkTopLevelKeys:
+        poshmarkBlock && typeof poshmarkBlock === "object" ? Object.keys(poshmarkBlock) : [],
+      titleLike: {
+        path: poshmarkTitle ? "payload.marketplaces.poshmark.title" : "",
+        present: Boolean(poshmarkTitle),
+      },
+      descriptionLike: {
+        path: poshmarkDescription ? "payload.marketplaces.poshmark.description" : "",
+        present: Boolean(poshmarkDescription),
+      },
+      styleTagsLike: {
+        path: poshmarkStyleTags.length ? "payload.marketplaces.poshmark.styleTags" : "",
+        present: poshmarkStyleTags.length > 0,
+      },
+      categoryLike: {
+        path: poshmarkCategoryPath ? "payload.marketplaces.poshmark.categoryPath" : "",
+        present: Boolean(poshmarkCategoryPath),
+      },
+    });
+    const etsyBlock = payload?.etsy;
+    console.debug("[LPU][EtsyPayload]", {
+      vintageSourcePath: "mappedSeed.itemSpecifics.vintage",
+      vintageValue,
+      etsyIncluded: Boolean(etsyIncludedForVintage && etsyBlock && typeof etsyBlock === "object"),
+      etsyTopLevelKeys:
+        etsyBlock && typeof etsyBlock === "object" ? Object.keys(etsyBlock) : [],
     });
 
     const sent = sendVendooPayloadToExtension(payload);

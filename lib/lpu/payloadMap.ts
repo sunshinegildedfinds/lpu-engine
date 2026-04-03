@@ -21,6 +21,7 @@ export type PoshmarkPayload = {
   title: string;
   description: string;
   styleTags: string;
+  categoryPath: string;
 };
 
 export type MercariPayload = {
@@ -63,6 +64,7 @@ const FIELD_LABELS = {
     title: ["Title"],
     description: ["Description"],
     styleTags: ["Style Tags", "Style tags"],
+    categoryPath: ["Category Path", "Category"],
   },
   mercari: {
     title: ["Title"],
@@ -172,6 +174,10 @@ export function buildPayloadMap(
           poshmarkSection,
           FIELD_LABELS.poshmark.styleTags
         ),
+        categoryPath: extractLabeledBlock(
+          poshmarkSection,
+          FIELD_LABELS.poshmark.categoryPath
+        ),
       },
       mercari: {
         section: mercariSection,
@@ -210,6 +216,7 @@ export function buildCopyMap(payloadMap: StructuredPayloadMap): Record<string, s
     "poshmark-title": payloadMap.platforms.poshmark.title,
     "poshmark-description": payloadMap.platforms.poshmark.description,
     "poshmark-style-tags": payloadMap.platforms.poshmark.styleTags,
+    "poshmark-category-path": payloadMap.platforms.poshmark.categoryPath,
 
     mercari: payloadMap.platforms.mercari.section,
     "mercari-title": payloadMap.platforms.mercari.title,
@@ -244,6 +251,7 @@ export function buildPayloadSummary(
       payloadMap.platforms.poshmark.title,
       payloadMap.platforms.poshmark.description,
       payloadMap.platforms.poshmark.styleTags,
+      payloadMap.platforms.poshmark.categoryPath,
     ]),
     mercari: countReadyFields([
       payloadMap.platforms.mercari.section,

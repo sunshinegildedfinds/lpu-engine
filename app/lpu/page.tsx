@@ -1272,6 +1272,17 @@ export default function LpuPage() {
             hashtags: payloadMap.platforms.depop.hashtags,
             optionalBrandHashtags: payloadMap.platforms.depop.optionalBrandHashtags,
           },
+          poshmark: {
+            title: payloadMap.platforms.poshmark.title,
+            description: payloadMap.platforms.poshmark.description,
+            styleTags: payloadMap.platforms.poshmark.styleTags,
+            categoryPath: payloadMap.platforms.poshmark.categoryPath,
+          },
+          etsy: {
+            title: payloadMap.platforms.etsy.title,
+            description: payloadMap.platforms.etsy.description,
+            tags: payloadMap.platforms.etsy.tags,
+          },
         }}
       />
     </main>

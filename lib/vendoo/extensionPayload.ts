@@ -62,6 +62,11 @@ export type VendooPricingMeta = {
 export type VendooExtensionPayload = {
   photos?: VendooPhotoPayload[];
   vendooBaseTags?: string[];
+  etsy?: {
+    title: string;
+    description: string;
+    tags: string[];
+  };
   researchMeta?: VendooResearchMeta;
   pricing?: VendooPricingMeta;
   resolvedPrice?: string;
@@ -83,6 +88,12 @@ export type VendooExtensionPayload = {
       brand?: string;
       size?: string;
       style?: string;
+    };
+    poshmark?: {
+      title: string;
+      description: string;
+      styleTags: string[];
+      categoryPath?: string;
     };
   };
 };
@@ -108,6 +119,17 @@ export function buildVendooExtensionPayload(input: {
     brand?: string;
     size?: string;
     style?: string;
+  };
+  poshmark?: {
+    title?: string;
+    description?: string;
+    styleTags?: string[];
+    categoryPath?: string;
+  };
+  etsy?: {
+    title?: string;
+    description?: string;
+    tags?: string[];
   };
 }): VendooExtensionPayload {
   const canonicalVendooCategoryPath = input.canonicalVendooCategoryPath?.trim();
@@ -296,10 +318,77 @@ export function buildVendooExtensionPayload(input: {
         depop.size ||
         depop.style)
   );
+  const poshmark = input.poshmark && typeof input.poshmark === "object"
+    ? {
+        title: typeof input.poshmark.title === "string" ? input.poshmark.title.trim() : "",
+        description:
+          typeof input.poshmark.description === "string"
+            ? input.poshmark.description.trim()
+            : "",
+        categoryPath:
+          typeof input.poshmark.categoryPath === "string"
+            ? input.poshmark.categoryPath.trim()
+            : "",
+        styleTags: Array.isArray(input.poshmark.styleTags)
+          ? (() => {
+              const seen = new Set<string>();
+              const normalized: string[] = [];
+              for (const tag of input.poshmark.styleTags) {
+                if (typeof tag !== "string") continue;
+                const cleaned = tag.trim().replace(/^#+/, "").replace(/\s+/g, " ");
+                if (!cleaned || seen.has(cleaned)) continue;
+                seen.add(cleaned);
+                normalized.push(cleaned);
+              }
+              return normalized;
+            })()
+          : [],
+      }
+    : null;
+  const includePoshmark = Boolean(
+    poshmark &&
+      (poshmark.title ||
+        poshmark.description ||
+        poshmark.styleTags.length ||
+        poshmark.categoryPath)
+  );
+  const etsy = input.etsy && typeof input.etsy === "object"
+    ? {
+        title: typeof input.etsy.title === "string" ? input.etsy.title.trim() : "",
+        description:
+          typeof input.etsy.description === "string" ? input.etsy.description.trim() : "",
+        tags: Array.isArray(input.etsy.tags)
+          ? (() => {
+              const seen = new Set<string>();
+              const normalized: string[] = [];
+              for (const tag of input.etsy.tags) {
+                if (typeof tag !== "string") continue;
+                const cleaned = tag.trim().replace(/^#+/, "").replace(/\s+/g, " ");
+                if (!cleaned || seen.has(cleaned)) continue;
+                seen.add(cleaned);
+                normalized.push(cleaned);
+              }
+              return normalized;
+            })()
+          : [],
+      }
+    : null;
+  const includeEtsy = Boolean(
+    etsy && (etsy.title || etsy.description || etsy.tags.length)
+  );
 
   return {
     ...(sanitizedPhotos.length ? { photos: sanitizedPhotos } : {}),
     ...(vendooBaseTags.length ? { vendooBaseTags } : {}),
+    ...(includeEtsy && etsy
+      ? {
+          etsy: {
+            title: etsy.title,
+            description: etsy.description,
+            tags: etsy.tags,
+          },
+        }
+      : {}),
     ...(includeResearchMeta && researchMeta ? { researchMeta } : {}),
     ...(includePricing && pricing ? { pricing } : {}),
     ...(resolvedPrice ? { resolvedPrice } : {}),
@@ -325,6 +414,16 @@ export function buildVendooExtensionPayload(input: {
               ...(depop.brand ? { brand: depop.brand } : {}),
               ...(depop.size ? { size: depop.size } : {}),
               ...(depop.style ? { style: depop.style } : {}),
+            },
+          }
+        : {}),
+      ...(includePoshmark && poshmark
+        ? {
+            poshmark: {
+              title: poshmark.title,
+              description: poshmark.description,
+              styleTags: poshmark.styleTags,
+              ...(poshmark.categoryPath ? { categoryPath: poshmark.categoryPath } : {}),
             },
           }
         : {}),

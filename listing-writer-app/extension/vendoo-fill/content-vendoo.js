@@ -4,6 +4,16 @@
 
   const PANEL_ID = "lpu-vendoo-panel";
   const TRANSIENT_PHOTO_KEY = "__LPU_VENDOO_TRANSIENT_PHOTO_PAYLOAD__";
+  let lastPoshmarkStageOpenState = {
+    formReadyDetected: false,
+    activeDetected: false,
+    savedAt: 0,
+  };
+  let lastPoshmarkCategoryInput = {
+    sourcePath: "",
+    rawValue: "",
+    normalizedValue: "",
+  };
 
   init();
 
@@ -209,6 +219,79 @@
       styleLike: {
         path: depopStyle ? "payload.depop.style|payload.marketplaces.depop.style" : "",
         value: depopStyle,
+      },
+    });
+    const poshmarkBlock = payload?.poshmark ?? payload?.marketplaces?.poshmark;
+    const poshmarkTitle =
+      typeof poshmarkBlock?.title === "string" ? poshmarkBlock.title.trim() : "";
+    const poshmarkDescription =
+      typeof poshmarkBlock?.description === "string" ? poshmarkBlock.description.trim() : "";
+    const poshmarkStyleTags = Array.isArray(poshmarkBlock?.styleTags)
+      ? poshmarkBlock.styleTags.filter((value) => typeof value === "string" && value.trim())
+      : [];
+    const poshmarkCategoryGuidance = resolvePoshmarkCategoryGuidance(payload);
+    lastPoshmarkCategoryInput = {
+      sourcePath: poshmarkCategoryGuidance.path,
+      rawValue: poshmarkCategoryGuidance.value,
+      normalizedValue: poshmarkCategoryGuidance.value
+        ? normalizeText(poshmarkCategoryGuidance.value)
+        : "",
+    };
+    console.debug("[Vendoo][PoshmarkPayload]", {
+      hasPoshmarkBlock: Boolean(poshmarkBlock && typeof poshmarkBlock === "object"),
+      poshmarkTopLevelKeys:
+        poshmarkBlock && typeof poshmarkBlock === "object" ? Object.keys(poshmarkBlock) : [],
+      titleLike: {
+        path: poshmarkTitle ? "payload.poshmark.title|payload.marketplaces.poshmark.title" : "",
+        present: Boolean(poshmarkTitle),
+      },
+      descriptionLike: {
+        path:
+          poshmarkDescription
+            ? "payload.poshmark.description|payload.marketplaces.poshmark.description"
+            : "",
+        present: Boolean(poshmarkDescription),
+      },
+      styleTagsLike: {
+        path:
+          poshmarkStyleTags.length
+            ? "payload.poshmark.styleTags|payload.marketplaces.poshmark.styleTags"
+            : "",
+        present: poshmarkStyleTags.length > 0,
+      },
+      categoryLike: {
+        path: poshmarkCategoryGuidance.path,
+        present: Boolean(poshmarkCategoryGuidance.value),
+      },
+    });
+    console.debug("[Vendoo][PoshmarkCategoryInput]", {
+      sourcePath: lastPoshmarkCategoryInput.sourcePath,
+      rawValue: lastPoshmarkCategoryInput.rawValue,
+      normalizedValue: lastPoshmarkCategoryInput.normalizedValue,
+    });
+    const etsyBlock = payload?.etsy ?? payload?.marketplaces?.etsy;
+    const etsyTitle = typeof etsyBlock?.title === "string" ? etsyBlock.title.trim() : "";
+    const etsyDescription =
+      typeof etsyBlock?.description === "string" ? etsyBlock.description.trim() : "";
+    const etsyTags = Array.isArray(etsyBlock?.tags)
+      ? etsyBlock.tags.filter((value) => typeof value === "string" && value.trim())
+      : [];
+    console.debug("[Vendoo][EtsyPayload]", {
+      hasEtsyBlock: Boolean(etsyBlock && typeof etsyBlock === "object"),
+      etsyTopLevelKeys: etsyBlock && typeof etsyBlock === "object" ? Object.keys(etsyBlock) : [],
+      titleLike: {
+        path: etsyTitle ? "payload.etsy.title|payload.marketplaces.etsy.title" : "",
+        present: Boolean(etsyTitle),
+      },
+      descriptionLike: {
+        path: etsyDescription
+          ? "payload.etsy.description|payload.marketplaces.etsy.description"
+          : "",
+        present: Boolean(etsyDescription),
+      },
+      tagsLike: {
+        path: etsyTags.length ? "payload.etsy.tags|payload.marketplaces.etsy.tags" : "",
+        present: etsyTags.length > 0,
       },
     });
     console.debug("[Vendoo][ConditionPayload]", {
@@ -435,6 +518,16 @@
         usedElements,
       });
       await fillDepopTagsIfPresent({
+        payload,
+        usedElements,
+      });
+      await ensurePoshmarkStageOpenForPoshmarkFill();
+      await ensureEtsyStageOpenForEtsyFill(payload);
+      await fillEtsyTitleAndDescriptionIfPresent({
+        payload,
+        usedElements,
+      });
+      await fillEtsyTagsIfPresent({
         payload,
         usedElements,
       });
@@ -1446,6 +1539,273 @@
     };
   }
 
+  async function ensurePoshmarkStageOpenForPoshmarkFill() {
+    const diagnostics = {
+      clickAttempted: false,
+      activeDetected: false,
+      formReadyDetected: false,
+      reason: "",
+    };
+
+    const poshmarkTab = findMarketplaceTab("poshmark");
+    if (!(poshmarkTab instanceof Element)) {
+      diagnostics.reason = "poshmark tab not found";
+      console.debug("[Vendoo][PoshmarkStageOpen]", diagnostics);
+      const gate = evaluatePoshmarkStageGate();
+      console.debug("[Vendoo][PoshmarkStageGate]", gate);
+      return diagnostics;
+    }
+
+    diagnostics.activeDetected = isPoshmarkTabSpecificallyActive(poshmarkTab);
+    if (!diagnostics.activeDetected) {
+      clickElement(poshmarkTab);
+      diagnostics.clickAttempted = true;
+    }
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (attempt > 0) {
+        await wait(140);
+      }
+      const currentPoshmarkTab = findMarketplaceTab("poshmark");
+      diagnostics.activeDetected = isPoshmarkTabSpecificallyActive(currentPoshmarkTab);
+      diagnostics.formReadyDetected = isPoshmarkFormReadyInDom();
+      if (diagnostics.activeDetected && diagnostics.formReadyDetected) {
+        diagnostics.reason = "poshmark stage active and form ready";
+        lastPoshmarkStageOpenState = {
+          formReadyDetected: true,
+          activeDetected: true,
+          savedAt: Date.now(),
+        };
+        console.debug("[Vendoo][PoshmarkStageOpen]", diagnostics);
+        const gate = evaluatePoshmarkStageGate();
+        console.debug("[Vendoo][PoshmarkStageGate]", gate);
+        return diagnostics;
+      }
+    }
+
+    diagnostics.reason = diagnostics.activeDetected
+      ? "poshmark active but form not ready"
+      : "poshmark stage not active";
+    lastPoshmarkStageOpenState = {
+      formReadyDetected: diagnostics.formReadyDetected,
+      activeDetected: diagnostics.activeDetected,
+      savedAt: Date.now(),
+    };
+    console.debug("[Vendoo][PoshmarkStageOpen]", diagnostics);
+    const gate = evaluatePoshmarkStageGate();
+    console.debug("[Vendoo][PoshmarkStageGate]", gate);
+    return diagnostics;
+  }
+
+  async function ensureEtsyStageOpenForEtsyFill(payload) {
+    const diagnostics = {
+      clickAttempted: false,
+      activeDetected: false,
+      formReadyDetected: false,
+      reason: "",
+    };
+
+    const etsyBlock = payload?.etsy ?? payload?.marketplaces?.etsy;
+    if (!(etsyBlock && typeof etsyBlock === "object")) {
+      diagnostics.reason = "etsy payload missing";
+      console.debug("[Vendoo][EtsyStageOpen]", diagnostics);
+      const gate = evaluateEtsyStageGate();
+      console.debug("[Vendoo][EtsyStageGate]", gate);
+      return diagnostics;
+    }
+
+    const etsyTab = findMarketplaceTab("etsy");
+    if (!(etsyTab instanceof Element)) {
+      diagnostics.reason = "etsy tab not found";
+      console.debug("[Vendoo][EtsyStageOpen]", diagnostics);
+      const gate = evaluateEtsyStageGate();
+      console.debug("[Vendoo][EtsyStageGate]", gate);
+      return diagnostics;
+    }
+
+    diagnostics.activeDetected = isEtsyTabSpecificallyActive(etsyTab);
+    if (!diagnostics.activeDetected) {
+      clickElement(etsyTab);
+      diagnostics.clickAttempted = true;
+    }
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (attempt > 0) {
+        await wait(140);
+      }
+      const currentEtsyTab = findMarketplaceTab("etsy");
+      diagnostics.activeDetected = isEtsyTabSpecificallyActive(currentEtsyTab);
+      diagnostics.formReadyDetected = isEtsyFormReadyInDom();
+      if (diagnostics.activeDetected && diagnostics.formReadyDetected) {
+        diagnostics.reason = "etsy stage active and form ready";
+        console.debug("[Vendoo][EtsyStageOpen]", diagnostics);
+        const gate = evaluateEtsyStageGate();
+        console.debug("[Vendoo][EtsyStageGate]", gate);
+        return diagnostics;
+      }
+    }
+
+    diagnostics.reason = diagnostics.activeDetected
+      ? "etsy active but form not ready"
+      : "etsy stage not active";
+    console.debug("[Vendoo][EtsyStageOpen]", diagnostics);
+    const gate = evaluateEtsyStageGate();
+    console.debug("[Vendoo][EtsyStageGate]", gate);
+    return diagnostics;
+  }
+
+  function evaluatePoshmarkStageGate() {
+    const selectors = [
+      'textarea[name="listings.poshmark.description"]',
+      'textarea#listings\\.poshmark\\.description',
+      'input[name="listings.poshmark.title"]',
+      'input#listings\\.poshmark\\.title',
+    ];
+    const matchedSelector = selectors.find((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element;
+    });
+    const poshmarkTab = findMarketplaceTab("poshmark");
+    const activeEvidence = detectPoshmarkActiveEvidence(poshmarkTab);
+    const tabActive = activeEvidence.active;
+    const formReadyDomEvidence = isPoshmarkFormReadyInDom();
+    const recentOpenPathFormReady =
+      Boolean(lastPoshmarkStageOpenState?.formReadyDetected) &&
+      Date.now() - Number(lastPoshmarkStageOpenState?.savedAt || 0) < 20000;
+    const stageDetected =
+      Boolean(matchedSelector) ||
+      formReadyDomEvidence ||
+      recentOpenPathFormReady ||
+      tabActive;
+    return {
+      stageDetected,
+      evidenceUsed:
+        matchedSelector ||
+        (formReadyDomEvidence ? "poshmark_form_ready_dom" : "") ||
+        (recentOpenPathFormReady ? "poshmark_open_path_form_ready" : "") ||
+        (tabActive ? activeEvidence.evidence : "none"),
+      reason: stageDetected ? "poshmark stage evidence confirmed" : "poshmark stage evidence missing",
+    };
+  }
+
+  function evaluateEtsyStageGate() {
+    const selectors = [
+      'input[name="listings.etsy.title"]',
+      'input#listings\\.etsy\\.title',
+      'textarea[name="listings.etsy.description"]',
+      'textarea#listings\\.etsy\\.description',
+      '[name^="listings.etsy."]',
+      '[id^="listings.etsy."]',
+    ];
+    const matchedSelector = selectors.find((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element && isVisible(node);
+    });
+    const etsyTab = findMarketplaceTab("etsy");
+    const tabActive = isEtsyTabSpecificallyActive(etsyTab);
+    const stageDetected = Boolean(matchedSelector) || tabActive;
+    return {
+      stageDetected,
+      evidenceUsed: matchedSelector || (tabActive ? "etsy_tab_active" : "none"),
+      reason: stageDetected ? "etsy stage evidence confirmed" : "etsy stage evidence missing",
+    };
+  }
+
+  function isPoshmarkFormReadyInDom() {
+    const selectors = [
+      'textarea[name="listings.poshmark.overrides.description"]',
+      'textarea#listings\\.poshmark\\.overrides\\.description',
+      'textarea[name="listings.poshmark.description"]',
+      'textarea#listings\\.poshmark\\.description',
+      'input[name="listings.poshmark.title"]',
+      'input#listings\\.poshmark\\.title',
+    ];
+    return selectors.some((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element && isVisible(node);
+    });
+  }
+
+  function isPoshmarkTabSpecificallyActive(tabElement) {
+    return detectPoshmarkActiveEvidence(tabElement).active;
+  }
+
+  function isEtsyTabSpecificallyActive(tabElement) {
+    if (!(tabElement instanceof Element)) return false;
+    const tabText = normalizeText(
+      [
+        tabElement.textContent || "",
+        tabElement.getAttribute("aria-label") || "",
+        tabElement.getAttribute("title") || "",
+        tabElement.getAttribute("data-testid") || "",
+        tabElement.getAttribute("name") || "",
+      ].join(" ")
+    );
+    if (!tabText.includes("etsy")) return false;
+
+    const selectedAttr = normalizeText(tabElement.getAttribute("aria-selected") || "");
+    const dataState = normalizeText(tabElement.getAttribute("data-state") || "");
+    const ariaCurrent = normalizeText(tabElement.getAttribute("aria-current") || "");
+    const className = normalizeText(
+      typeof tabElement.className === "string" ? tabElement.className : ""
+    );
+
+    return (
+      selectedAttr === "true" ||
+      dataState === "active" ||
+      ariaCurrent === "true" ||
+      ariaCurrent === "page" ||
+      className.includes("active") ||
+      className.includes("selected")
+    );
+  }
+
+  function detectPoshmarkActiveEvidence(tabElement) {
+    function isElementPoshmarkActive(element) {
+      if (!(element instanceof Element)) return false;
+      if (!isVisible(element)) return false;
+      const text = normalizeText(
+        [
+          element.textContent || "",
+          element.getAttribute("aria-label") || "",
+          element.getAttribute("title") || "",
+          element.getAttribute("data-testid") || "",
+          element.getAttribute("name") || "",
+          element.getAttribute("href") || "",
+        ].join(" ")
+      );
+      if (!text.includes("poshmark")) return false;
+      const selectedAttr = normalizeText(element.getAttribute("aria-selected") || "");
+      const dataState = normalizeText(element.getAttribute("data-state") || "");
+      const ariaCurrent = normalizeText(element.getAttribute("aria-current") || "");
+      const className = normalizeText(
+        typeof element.className === "string" ? element.className : ""
+      );
+      return (
+        selectedAttr === "true" ||
+        dataState === "active" ||
+        ariaCurrent === "true" ||
+        ariaCurrent === "page" ||
+        className.includes("active") ||
+        className.includes("selected")
+      );
+    }
+
+    if (isElementPoshmarkActive(tabElement)) {
+      return { active: true, evidence: "poshmark_tab_element_active" };
+    }
+
+    const candidates = Array.from(
+      document.querySelectorAll("button, [role='tab'], [role='button'], a, [data-testid], li, div, span")
+    );
+    const activeRow = candidates.find((candidate) => isElementPoshmarkActive(candidate));
+    if (activeRow) {
+      return { active: true, evidence: "poshmark_active_row_detected" };
+    }
+
+    return { active: false, evidence: "none" };
+  }
+
   function isDepopFormReadyInDom() {
     const selectors = [
       'textarea[name="listings.depop.overrides.description"]',
@@ -1457,6 +1817,414 @@
       const node = document.querySelector(selector);
       return node instanceof Element && isVisible(node);
     });
+  }
+
+  function isEtsyFormReadyInDom() {
+    const selectors = [
+      'input[name="listings.etsy.title"]',
+      'input#listings\\.etsy\\.title',
+      'textarea[name="listings.etsy.description"]',
+      'textarea#listings\\.etsy\\.description',
+      '[name^="listings.etsy."]',
+      '[id^="listings.etsy."]',
+    ];
+    return selectors.some((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element && isVisible(node);
+    });
+  }
+
+  async function fillEtsyTagsIfPresent(input) {
+    const { payload, usedElements } = input;
+    const etsyBlock = payload?.etsy ?? payload?.marketplaces?.etsy;
+    const payloadTagsRaw = Array.isArray(etsyBlock?.tags)
+      ? etsyBlock.tags.filter((value) => typeof value === "string")
+      : [];
+    const payloadTags = dedupeTagValues(payloadTagsRaw);
+    const diagnostic = {
+      existingTagsBeforeClear: [],
+      clearedTags: [],
+      payloadTags,
+      attemptedTags: [],
+      insertedTags: [],
+      skippedTags: [],
+      finalTagsVisible: [],
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const etsyGate = evaluateEtsyStageGate();
+    if (!etsyGate.stageDetected) {
+      diagnostic.reason = "not etsy stage";
+      diagnostic.finalTagsVisible = [];
+      console.debug("[Vendoo][EtsyTags]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!payloadTags.length) {
+      diagnostic.reason = "etsy.tags missing";
+      diagnostic.finalTagsVisible = [];
+      console.debug("[Vendoo][EtsyTags]", diagnostic);
+      return diagnostic;
+    }
+
+    const control = findEtsyTagsControl();
+    if (!(control instanceof Element)) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "Etsy Tags field not found";
+      diagnostic.skippedTags = [...payloadTags];
+      diagnostic.finalTagsVisible = [];
+      console.debug("[Vendoo][EtsyTags]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(control)) {
+      diagnostic.reason = "collision prevention";
+      diagnostic.skippedTags = [...payloadTags];
+      diagnostic.finalTagsVisible = getChipTextsFromControl(control);
+      console.debug("[Vendoo][EtsyTags]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.existingTagsBeforeClear = getChipTextsFromControl(control);
+    diagnostic.clearedTags = await clearAllChipsFromControl(control);
+
+    const tagLimit = 13;
+    const tagsToAttempt = payloadTags.slice(0, tagLimit);
+    for (const tag of tagsToAttempt) {
+      diagnostic.attemptedTags.push(tag);
+      if (isBaseTagPresent(control, tag)) {
+        diagnostic.skippedTags.push(`${tag} (already present)`);
+        continue;
+      }
+
+      const committed = tryCommitChipToken(control, tag);
+      if (!committed) {
+        diagnostic.skippedTags.push(`${tag} (token commit failed)`);
+        continue;
+      }
+      await wait(100);
+      if (isBaseTagPresent(control, tag)) {
+        diagnostic.insertedTags.push(tag);
+      } else {
+        diagnostic.skippedTags.push(`${tag} (verification failed)`);
+      }
+    }
+
+    const finalTags = getChipTextsFromControl(control);
+    diagnostic.finalTagsVisible = finalTags;
+    const normalizedFinal = new Set(finalTags.map((tag) => normalizeText(tag)));
+    const normalizedPayload = new Set(tagsToAttempt.map((tag) => normalizeText(tag)));
+    const oldTagsRemaining = diagnostic.existingTagsBeforeClear.filter((tag) => {
+      const normalized = normalizeText(tag);
+      return normalized && !normalizedPayload.has(normalized) && normalizedFinal.has(normalized);
+    });
+
+    if (oldTagsRemaining.length > 0) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "inherited tags remain after override";
+      usedElements.add(control);
+      console.debug("[Vendoo][EtsyTags]", diagnostic);
+      return diagnostic;
+    }
+
+    if (diagnostic.insertedTags.length === tagsToAttempt.length) {
+      diagnostic.status = "filled";
+      diagnostic.reason = "all etsy tags inserted";
+      usedElements.add(control);
+      console.debug("[Vendoo][EtsyTags]", diagnostic);
+      return diagnostic;
+    }
+
+    if (diagnostic.insertedTags.length > 0) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "partial etsy tags insert";
+      usedElements.add(control);
+      console.debug("[Vendoo][EtsyTags]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.status = "needs_review";
+    diagnostic.reason = "no etsy tags inserted";
+    console.debug("[Vendoo][EtsyTags]", diagnostic);
+    return diagnostic;
+  }
+
+  function findEtsyTagsControl() {
+    const exactSelectors = [
+      'input#listings\\.etsy\\.marketplaceSpecifics\\.tags',
+      'input[id="listings.etsy.marketplaceSpecifics.tags"]',
+      'input[name="listings.etsy.marketplaceSpecifics.tags"]',
+      'input[data-testid="listings.etsy.marketplaceSpecifics.tags"]',
+    ];
+    for (const selector of exactSelectors) {
+      const input = document.querySelector(selector);
+      if (!(input instanceof HTMLInputElement) || !isVisible(input)) continue;
+      const control =
+        input.closest(".react-select__control, [role='combobox']") ?? input.closest("div");
+      if (control instanceof Element && isVisible(control)) return control;
+      return input;
+    }
+    return null;
+  }
+
+  function getChipTextsFromControl(control) {
+    if (!(control instanceof Element)) return [];
+    const scope = resolveEtsyTagsScope(control);
+    const chipNodes = Array.from(
+      scope.querySelectorAll(
+        ".react-select__multi-value__label, .react-select__multi-value, [class*='chip'], [class*='token']"
+      )
+    ).filter((node) => node instanceof Element && isVisible(node));
+    const tags = [];
+    const seen = new Set();
+    for (const node of chipNodes) {
+      const text = cleanCategoryStage(node.textContent || "");
+      const normalized = normalizeText(text);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      tags.push(text);
+    }
+    return tags;
+  }
+
+  async function clearAllChipsFromControl(control) {
+    if (!(control instanceof Element)) return [];
+    const removed = [];
+    const scope = resolveEtsyTagsScope(control);
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const removeButtons = Array.from(
+        scope.querySelectorAll(
+          ".react-select__multi-value__remove, .react-select__multi-value [aria-label*='remove'], .react-select__multi-value [aria-label*='Remove'], .react-select__multi-value [class*='remove']"
+        )
+      ).filter((node) => node instanceof Element && isVisible(node));
+      if (!removeButtons.length) {
+        const input = scope.querySelector(
+          'input#listings\\.etsy\\.marketplaceSpecifics\\.tags, input[id="listings.etsy.marketplaceSpecifics.tags"], input[name="listings.etsy.marketplaceSpecifics.tags"], input[data-testid="listings.etsy.marketplaceSpecifics.tags"], input[type="text"], input:not([type])'
+        );
+        if (input instanceof HTMLInputElement && isVisible(input)) {
+          input.focus();
+          input.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+          input.dispatchEvent(new KeyboardEvent("keyup", { key: "Backspace", bubbles: true }));
+          await wait(60);
+          const remaining = getChipTextsFromControl(control);
+          if (!remaining.length) break;
+          continue;
+        }
+        break;
+      }
+      const button = removeButtons[0];
+      const container = button.closest(".react-select__multi-value, [class*='chip'], [class*='token']");
+      const text = cleanCategoryStage(container?.textContent || "");
+      clickElement(button);
+      if (text) removed.push(text);
+      await wait(60);
+    }
+    return dedupeTagValues(removed);
+  }
+
+  async function fillEtsyTitleAndDescriptionIfPresent(input) {
+    const { payload, usedElements } = input;
+    const etsyBlock = payload?.etsy ?? payload?.marketplaces?.etsy;
+    const payloadTitle =
+      typeof etsyBlock?.title === "string" ? etsyBlock.title.trim() : "";
+    const payloadDescription =
+      typeof etsyBlock?.description === "string" ? etsyBlock.description.trim() : "";
+    const etsyGate = evaluateEtsyStageGate();
+
+    await fillEtsyTitleIfPresent({
+      payloadTitle,
+      usedElements,
+      isEtsyStage: etsyGate.stageDetected,
+    });
+    await fillEtsyDescriptionIfPresent({
+      payloadDescription,
+      usedElements,
+      isEtsyStage: etsyGate.stageDetected,
+    });
+  }
+
+  async function fillEtsyTitleIfPresent(input) {
+    const { payloadTitle, usedElements, isEtsyStage } = input;
+    const field = findEtsyTitleField();
+    const existingValue =
+      field instanceof HTMLInputElement ? String(field.value || "") : "";
+    const diagnostic = {
+      existingValue,
+      payloadValuePresent: Boolean(payloadTitle),
+      finalValue: existingValue,
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    if (!isEtsyStage) {
+      diagnostic.reason = "not etsy stage";
+      console.debug("[Vendoo][EtsyTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!payloadTitle) {
+      diagnostic.reason = "etsy.title missing";
+      console.debug("[Vendoo][EtsyTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!(field instanceof HTMLInputElement) || !isVisible(field)) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "Etsy Title field not found";
+      console.debug("[Vendoo][EtsyTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][EtsyTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    setElementValue(field, "");
+    await wait(50);
+    setElementValue(field, payloadTitle);
+    field.dispatchEvent(new Event("blur", { bubbles: true }));
+    await wait(120);
+
+    const finalValue = String(field.value || "");
+    diagnostic.finalValue = finalValue;
+    if (finalValue.trim() !== payloadTitle) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "verification failed";
+      console.debug("[Vendoo][EtsyTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value replaced";
+    console.debug("[Vendoo][EtsyTitle]", diagnostic);
+    return diagnostic;
+  }
+
+  async function fillEtsyDescriptionIfPresent(input) {
+    const { payloadDescription, usedElements, isEtsyStage } = input;
+    const field = findEtsyDescriptionField();
+    const existingValue =
+      field instanceof HTMLTextAreaElement ? String(field.value || "") : "";
+    const diagnostic = {
+      existingValuePresent: Boolean(existingValue.trim()),
+      payloadValuePresent: Boolean(payloadDescription),
+      finalValuePresent: Boolean(existingValue.trim()),
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    if (!isEtsyStage) {
+      diagnostic.reason = "not etsy stage";
+      console.debug("[Vendoo][EtsyDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!payloadDescription) {
+      diagnostic.reason = "etsy.description missing";
+      console.debug("[Vendoo][EtsyDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!(field instanceof HTMLTextAreaElement) || !isVisible(field)) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "Etsy Description field not found";
+      console.debug("[Vendoo][EtsyDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][EtsyDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    setElementValue(field, "");
+    await wait(50);
+    setElementValue(field, payloadDescription);
+    field.dispatchEvent(new Event("blur", { bubbles: true }));
+    await wait(120);
+
+    const finalValue = String(field.value || "");
+    diagnostic.finalValuePresent = Boolean(finalValue.trim());
+    if (finalValue.trim() !== payloadDescription) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "verification failed";
+      console.debug("[Vendoo][EtsyDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value replaced";
+    console.debug("[Vendoo][EtsyDescription]", diagnostic);
+    return diagnostic;
+  }
+
+  function findEtsyTitleField() {
+    const selectors = [
+      'input#listings\\.etsy\\.overrides\\.title',
+      'input[id="listings.etsy.overrides.title"]',
+      'input[name="listings.etsy.overrides.title"]',
+    ];
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function findEtsyDescriptionField() {
+    const selectors = [
+      'textarea#listings\\.etsy\\.overrides\\.description',
+      'textarea[id="listings.etsy.overrides.description"]',
+      'textarea[name="listings.etsy.overrides.description"]',
+    ];
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLTextAreaElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function resolveEtsyTagsScope(control) {
+    if (!(control instanceof Element)) return document.body;
+    const etsyInput =
+      control.matches(
+        'input#listings\\.etsy\\.marketplaceSpecifics\\.tags, input[id="listings.etsy.marketplaceSpecifics.tags"], input[name="listings.etsy.marketplaceSpecifics.tags"], input[data-testid="listings.etsy.marketplaceSpecifics.tags"]'
+      )
+        ? control
+        : control.querySelector(
+            'input#listings\\.etsy\\.marketplaceSpecifics\\.tags, input[id="listings.etsy.marketplaceSpecifics.tags"], input[name="listings.etsy.marketplaceSpecifics.tags"], input[data-testid="listings.etsy.marketplaceSpecifics.tags"]'
+          );
+    const fieldRoot =
+      (etsyInput instanceof Element
+        ? etsyInput.closest(".react-select__control")?.closest("div, section, form")
+        : null) ??
+      control.closest(".react-select__control")?.closest("div, section, form") ??
+      control.closest("section, form, div") ??
+      control;
+    return fieldRoot instanceof Element ? fieldRoot : control;
+  }
+
+  function dedupeTagValues(values) {
+    const seen = new Set();
+    const deduped = [];
+    for (const value of values) {
+      const cleaned = cleanCategoryStage(String(value ?? ""));
+      const normalized = normalizeText(cleaned);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      deduped.push(cleaned);
+    }
+    return deduped;
   }
 
   async function fillAndVerifyPriceInput(inputField, value) {
@@ -2639,6 +3407,171 @@
     openCustomSelectControl(control);
     await wait(150);
 
+    const entryPickerInfo = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
+    const entryOptionContext = entryPickerInfo?.element
+      ? discoverCategoryOptionEntries({
+          optionSelectors: fieldConfig.optionSelectors ?? [],
+          pickerScope: resolveCategoryOptionScope(
+            entryPickerInfo.element,
+            fieldConfig.optionSelectors ?? []
+          ),
+          pickerElement: entryPickerInfo.element,
+          control,
+        })
+      : null;
+    const entryVisibleRowsSample =
+      buildVisibleOptionsPreview(entryOptionContext?.optionDiscovery?.entries ?? [], 8) || "none";
+    const entryPoshmarkStageDetected = evaluatePoshmarkStageGate().stageDetected;
+    const entryPickerLooksPoshmark = isLikelyPoshmarkCategoryPicker(
+      entryOptionContext?.optionDiscovery?.entries ?? []
+    );
+    const entryCategoryGuidancePresent = Boolean(
+      String(lastPoshmarkCategoryInput.rawValue || "").trim()
+    );
+    const entryMarketplaceHint =
+      Boolean(entryPickerInfo?.element) &&
+      (entryPickerLooksPoshmark || entryPoshmarkStageDetected || entryCategoryGuidancePresent)
+        ? "poshmark"
+        : "generic";
+    console.debug("[Vendoo][CategoryPathEntry]", {
+      marketplaceHint: entryMarketplaceHint,
+      pickerOpen: Boolean(entryPickerInfo?.element),
+      visibleRowsSample: entryVisibleRowsSample,
+    });
+
+    const payloadCategoryGuidance = String(lastPoshmarkCategoryInput.rawValue || "").trim();
+    const poshmarkCategoryDiagnostics = {
+      payloadCategory: payloadCategoryGuidance,
+      visibleRowsSample: "none",
+      clicksAttempted: [],
+      finalSelectedValue: "",
+      committed: false,
+      reason: "",
+    };
+    let poshmarkTraversalEnabled = false;
+    let traversalStages = stages;
+    const initialPickerInfo = entryPickerInfo;
+    if (initialPickerInfo?.element) {
+      const initialOptionContext =
+        entryOptionContext ??
+        discoverCategoryOptionEntries({
+          optionSelectors: fieldConfig.optionSelectors ?? [],
+          pickerScope: resolveCategoryOptionScope(
+            initialPickerInfo.element,
+            fieldConfig.optionSelectors ?? []
+          ),
+          pickerElement: initialPickerInfo.element,
+          control,
+        });
+      poshmarkCategoryDiagnostics.visibleRowsSample =
+        buildVisibleOptionsPreview(initialOptionContext.optionDiscovery.entries, 8) || "none";
+
+      const pickerOpen = Boolean(initialPickerInfo?.element);
+      const poshmarkTab = findMarketplaceTab("poshmark");
+      const poshmarkTabActive = isPoshmarkTabSpecificallyActive(poshmarkTab);
+      const poshmarkStageDetected = evaluatePoshmarkStageGate().stageDetected;
+      const pickerLooksPoshmark = isLikelyPoshmarkCategoryPicker(
+        initialOptionContext.optionDiscovery.entries
+      );
+      const categoryGuidancePresent = Boolean(payloadCategoryGuidance);
+      const marketplaceHint =
+        pickerOpen && (pickerLooksPoshmark || poshmarkStageDetected || categoryGuidancePresent)
+          ? "poshmark"
+          : "generic";
+      const willEnterPoshmarkBranch =
+        marketplaceHint === "poshmark" && pickerOpen && categoryGuidancePresent;
+      console.debug("[Vendoo][PoshmarkCategoryBranchCheck]", {
+        marketplaceHint,
+        pickerOpen,
+        poshmarkTabActive,
+        poshmarkStageDetected,
+        pickerLooksPoshmark,
+        categoryGuidancePresent,
+        willEnterPoshmarkBranch,
+      });
+      if (willEnterPoshmarkBranch) {
+        console.debug("[Vendoo][PoshmarkCategoryBranch]", {
+          entered: true,
+          payloadCategoryGuidancePresent: categoryGuidancePresent,
+          visibleRowsSample: poshmarkCategoryDiagnostics.visibleRowsSample,
+        });
+        if (!payloadCategoryGuidance) {
+          poshmarkCategoryDiagnostics.reason = "payload category guidance missing";
+          logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+          return {
+            status: "needs_review",
+            reason: "payload category guidance missing",
+            diagnostics: {
+              stageIndexReached: 0,
+              stagesExpected: 0,
+              wantedAtFailure: "",
+              visibleCandidatesAtFailure: poshmarkCategoryDiagnostics.visibleRowsSample,
+              pickerResolved: true,
+              dropdownOpened: true,
+              optionSurfaceResolved: true,
+              optionSurfaceType: "picker_scope",
+              optionSurfaceChecks: "poshmark_picker_scope",
+              rawCandidatesCount: initialOptionContext.optionDiscovery.rawCount,
+              visibleCandidatesCount: initialOptionContext.optionDiscovery.visibleCount,
+              clickableRowsCount: initialOptionContext.optionDiscovery.visibleCount,
+              breadcrumbMode: false,
+              selectionVerified: false,
+              selectionReason: "payload category guidance missing",
+            },
+          };
+        }
+
+        const derivedStages = derivePoshmarkCategoryStages(
+          payloadCategoryGuidance,
+          initialOptionContext.optionDiscovery.entries
+        );
+        if (!derivedStages.length) {
+          poshmarkCategoryDiagnostics.reason =
+            "payload category guidance could not be mapped to visible taxonomy";
+          logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+          return {
+            status: "needs_review",
+            reason: "payload category guidance could not be mapped to visible taxonomy",
+            diagnostics: {
+              stageIndexReached: 0,
+              stagesExpected: 0,
+              wantedAtFailure: payloadCategoryGuidance,
+              visibleCandidatesAtFailure: poshmarkCategoryDiagnostics.visibleRowsSample,
+              pickerResolved: true,
+              dropdownOpened: true,
+              optionSurfaceResolved: true,
+              optionSurfaceType: "picker_scope",
+              optionSurfaceChecks: "poshmark_picker_scope",
+              rawCandidatesCount: initialOptionContext.optionDiscovery.rawCount,
+              visibleCandidatesCount: initialOptionContext.optionDiscovery.visibleCount,
+              clickableRowsCount: initialOptionContext.optionDiscovery.visibleCount,
+              breadcrumbMode: false,
+              selectionVerified: false,
+              selectionReason:
+                "payload category guidance could not be mapped to visible taxonomy",
+            },
+          };
+        }
+
+        traversalStages = derivedStages;
+        poshmarkTraversalEnabled = true;
+        logPoshmarkCategoryDiagnostics({
+          ...poshmarkCategoryDiagnostics,
+          reason: "live poshmark category path detected",
+        });
+      } else {
+        console.debug("[Vendoo][CategoryFallbackBranch]", {
+          marketplaceHint,
+          reason: "poshmark category branch not entered",
+        });
+      }
+    } else {
+      console.debug("[Vendoo][CategoryFallbackBranch]", {
+        marketplaceHint: "generic",
+        reason: "picker not found at entry",
+      });
+    }
+
     let stageOneChosenDebug = "";
     const confirmedStages = [];
     let lastVisibleSample = "";
@@ -2646,11 +3579,15 @@
     let optionSurfaceType = "none";
     let optionSurfaceChecks = "";
     let dropdownOpened = true;
-    for (let index = 0; index < stages.length; index += 1) {
-      const stageLabel = stages[index];
+    for (let index = 0; index < traversalStages.length; index += 1) {
+      const stageLabel = traversalStages[index];
       const stageLabelsToTry = getStageLabelsForMatch(stageLabel, index, fieldConfig);
       const pickerInfo = findVisibleCategoryPicker(fieldConfig.pickerContainerSelectors ?? []);
       if (!pickerInfo?.element) {
+        if (poshmarkTraversalEnabled) {
+          poshmarkCategoryDiagnostics.reason = `stopped at stage ${index + 1}: picker not found`;
+          logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+        }
         return {
           status: "needs_review",
           reason: `stopped at stage ${index + 1}: picker not found`,
@@ -2673,9 +3610,50 @@
       optionSurfaceType = optionContext.optionSurfaceType;
       optionSurfaceChecks = optionContext.optionSurfaceChecks;
       let optionEntries = optionDiscovery.entries;
+      let effectiveStageLabelsToTry = stageLabelsToTry;
+      if (poshmarkTraversalEnabled) {
+        effectiveStageLabelsToTry = resolvePoshmarkStageLabelsForLiveStep({
+          stageLabel,
+          stageLabelsToTry,
+          optionEntries,
+          stageIndex: index,
+          stagesExpected: traversalStages.length,
+        });
+      }
+      let poshmarkStage1Diagnostic = null;
+      let poshmarkStage1Resolution = null;
+      if (poshmarkTraversalEnabled && index === 0) {
+        const wantedStage = effectiveStageLabelsToTry[0] ?? stageLabel;
+        await wait(180);
+        optionContext = discoverCategoryOptionEntries({
+          optionSelectors: fieldConfig.optionSelectors ?? [],
+          pickerScope,
+          pickerElement: pickerInfo.element,
+          control,
+        });
+        optionDiscovery = optionContext.optionDiscovery;
+        optionSurfaceResolved = optionContext.optionSurfaceResolved;
+        optionSurfaceType = optionContext.optionSurfaceType;
+        optionSurfaceChecks = optionContext.optionSurfaceChecks;
+        optionEntries = optionDiscovery.entries;
+        poshmarkStage1Resolution = resolvePoshmarkStage1Candidate({
+          pickerElement: pickerInfo.element,
+          control,
+          wantedStage,
+        });
+        poshmarkStage1Diagnostic = {
+          wanted: wantedStage,
+          rawCandidateCount: poshmarkStage1Resolution.rawCandidateCount,
+          filteredCandidateCount: poshmarkStage1Resolution.filteredCandidateCount,
+          visibleRowsSample: poshmarkStage1Resolution.visibleRowsSample,
+          matchedRowText: "",
+          clickDispatched: false,
+          reason: "",
+        };
+      }
       let stageMatchResult = findCategoryStageMatches({
         optionEntries,
-        stageLabelsToTry,
+        stageLabelsToTry: effectiveStageLabelsToTry,
         stageIndex: index,
         confirmedStages,
         pickerElement: pickerInfo.element,
@@ -2683,6 +3661,24 @@
       });
       optionEntries = stageMatchResult.candidateEntries;
       let matches = stageMatchResult.matches;
+      if (
+        poshmarkTraversalEnabled &&
+        index === 0 &&
+        poshmarkStage1Resolution?.matchedEntry &&
+        matches.length !== 1
+      ) {
+        matches = [poshmarkStage1Resolution.matchedEntry];
+      }
+      if (poshmarkTraversalEnabled && index === 0 && matches.length !== 1) {
+        const wantedStage = effectiveStageLabelsToTry[0] ?? stageLabel;
+        const poshmarkStageOneMatches = findPoshmarkVisibleStageMatches(
+          optionEntries,
+          wantedStage
+        );
+        if (poshmarkStageOneMatches.length === 1) {
+          matches = poshmarkStageOneMatches;
+        }
+      }
 
       if (matches.length !== 1) {
         const searchInput = findPickerSearchInput(
@@ -2691,7 +3687,7 @@
         );
 
         if (searchInput) {
-          setElementValue(searchInput, stageLabel);
+          setElementValue(searchInput, effectiveStageLabelsToTry[0] ?? stageLabel);
           await wait(140);
           optionContext = discoverCategoryOptionEntries({
             optionSelectors: fieldConfig.optionSelectors ?? [],
@@ -2706,7 +3702,7 @@
           optionEntries = optionDiscovery.entries;
           stageMatchResult = findCategoryStageMatches({
             optionEntries,
-            stageLabelsToTry,
+            stageLabelsToTry: effectiveStageLabelsToTry,
             stageIndex: index,
             confirmedStages,
             pickerElement: pickerInfo.element,
@@ -2714,11 +3710,34 @@
           });
           optionEntries = stageMatchResult.candidateEntries;
           matches = stageMatchResult.matches;
+          if (
+            poshmarkTraversalEnabled &&
+            index === 0 &&
+            poshmarkStage1Resolution?.matchedEntry &&
+            matches.length !== 1
+          ) {
+            matches = [poshmarkStage1Resolution.matchedEntry];
+          }
+          if (poshmarkTraversalEnabled && index === 0 && matches.length !== 1) {
+            const wantedStage = effectiveStageLabelsToTry[0] ?? stageLabel;
+            const poshmarkStageOneMatches = findPoshmarkVisibleStageMatches(
+              optionEntries,
+              wantedStage
+            );
+            if (poshmarkStageOneMatches.length === 1) {
+              matches = poshmarkStageOneMatches;
+            }
+          }
         }
       }
 
       if (matches.length !== 1) {
-        const wanted = stageLabelsToTry[0] ?? stageLabel;
+        const wanted = effectiveStageLabelsToTry[0] ?? stageLabel;
+        if (poshmarkStage1Diagnostic) {
+          poshmarkStage1Diagnostic.reason =
+            poshmarkStage1Resolution?.reason || "no_unique_stage1_match";
+          console.debug("[Vendoo][PoshmarkCategoryStage1]", poshmarkStage1Diagnostic);
+        }
         const visiblePreview = buildVisibleOptionsPreview(optionEntries, 8);
         const aliasTried = index === 0 && stageLabelsToTry.length > 1 ? "yes" : "no";
         const exactMatchFound = matches.length > 0 ? "yes" : "no";
@@ -2765,10 +3784,18 @@
             ? `${withDiagnostics}; stage1 click: ${stageOneChosenDebug}`
             : withDiagnostics;
 
+        if (poshmarkTraversalEnabled) {
+          poshmarkCategoryDiagnostics.reason = withChosen;
+          poshmarkCategoryDiagnostics.visibleRowsSample =
+            filteredVisibleSample || visiblePreview || "none";
+          poshmarkCategoryDiagnostics.finalSelectedValue = getControlSummaryText(control);
+          logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+        }
+
         console.debug("[LPU Vendoo] Category stage diagnostics", {
           stageIndex: index + 1,
           wanted,
-          aliasesTried: stageLabelsToTry,
+          aliasesTried: effectiveStageLabelsToTry,
           pickerStatus,
           pickerSelector,
           scopeMode: optionDiscovery.scopeMode,
@@ -2802,7 +3829,7 @@
           reason: withChosen,
           diagnostics: {
             stageIndexReached: index,
-            stagesExpected: stages.length,
+            stagesExpected: traversalStages.length,
             wantedAtFailure: wanted,
             visibleCandidatesAtFailure: visiblePreview || "none",
             pickerResolved: !!pickerInfo?.element,
@@ -2825,12 +3852,25 @@
       }
 
       clickElement(matches[0].clickTarget);
+      if (poshmarkStage1Diagnostic) {
+        poshmarkStage1Diagnostic.matchedRowText = cleanCategoryStage(
+          getOptionTextFromEntry(matches[0])
+        );
+        poshmarkStage1Diagnostic.clickDispatched = true;
+        poshmarkStage1Diagnostic.reason = "click_dispatched";
+        console.debug("[Vendoo][PoshmarkCategoryStage1]", poshmarkStage1Diagnostic);
+      }
+      if (poshmarkTraversalEnabled) {
+        poshmarkCategoryDiagnostics.clicksAttempted.push(
+          cleanCategoryStage(getOptionTextFromEntry(matches[0])) || stageLabel
+        );
+      }
       confirmedStages.push(stageLabel);
       const waitResult = await waitForCategoryStageTransition({
         pickerElement: pickerInfo.element,
         optionSelectors: fieldConfig.optionSelectors ?? [],
         previousVisibleSample: lastVisibleSample || optionDiscovery.visibleSample || "",
-        expectedNextStage: stages[index + 1] ?? "",
+        expectedNextStage: traversalStages[index + 1] ?? "",
       });
       lastVisibleSample = waitResult.visibleSample || lastVisibleSample;
       if (!waitResult.changed) {
@@ -2840,18 +3880,42 @@
 
     const completionConfirmed = isCategoryCompletionConfirmed({
       control,
-      fullPath: value,
+      fullPath: poshmarkTraversalEnabled ? traversalStages.join(" > ") : value,
       fieldConfig,
     });
+    let poshmarkCommitted = completionConfirmed;
 
-    if (!completionConfirmed) {
+    if (poshmarkTraversalEnabled && !poshmarkCommitted) {
+      const commitResult = await finalizePoshmarkCategoryCommit({
+        control,
+        fieldConfig,
+        finalStageLabel: traversalStages[traversalStages.length - 1] ?? "",
+        fullPath: traversalStages.join(" > "),
+      });
+      poshmarkCommitted = commitResult.committed;
+      poshmarkCategoryDiagnostics.finalSelectedValue = commitResult.finalSelectedValue;
+      if (!commitResult.committed) {
+        poshmarkCategoryDiagnostics.reason = commitResult.reason;
+        poshmarkCategoryDiagnostics.committed = false;
+        logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+      }
+    }
+
+    if (!poshmarkCommitted) {
+      if (poshmarkTraversalEnabled) {
+        poshmarkCategoryDiagnostics.reason =
+          poshmarkCategoryDiagnostics.reason || "completion not confirmed";
+        poshmarkCategoryDiagnostics.finalSelectedValue = getControlSummaryText(control);
+        poshmarkCategoryDiagnostics.committed = false;
+        logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+      }
       return {
         status: "needs_review",
         reason: "completion not confirmed",
         diagnostics: {
-          stageIndexReached: stages.length,
-          stagesExpected: stages.length,
-          wantedAtFailure: stages[stages.length - 1] ?? "",
+          stageIndexReached: traversalStages.length,
+          stagesExpected: traversalStages.length,
+          wantedAtFailure: traversalStages[traversalStages.length - 1] ?? "",
           visibleCandidatesAtFailure: lastVisibleSample || "none",
           pickerResolved: true,
           dropdownOpened,
@@ -2868,11 +3932,18 @@
       };
     }
 
+    if (poshmarkTraversalEnabled) {
+      poshmarkCategoryDiagnostics.finalSelectedValue = getControlSummaryText(control);
+      poshmarkCategoryDiagnostics.reason = "selection completed";
+      poshmarkCategoryDiagnostics.committed = true;
+      logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+    }
+
     return {
       status: "filled",
       diagnostics: {
-        stageIndexReached: stages.length,
-        stagesExpected: stages.length,
+        stageIndexReached: traversalStages.length,
+        stagesExpected: traversalStages.length,
         wantedAtFailure: "",
         visibleCandidatesAtFailure: "none",
         pickerResolved: true,
@@ -2888,6 +3959,442 @@
         selectionReason: "category completion confirmed",
       },
     };
+  }
+
+  function logPoshmarkCategoryDiagnostics(diagnostics) {
+    console.debug("[Vendoo][PoshmarkCategory]", {
+      payloadCategory: String(diagnostics?.payloadCategory || ""),
+      clicksAttempted: Array.isArray(diagnostics?.clicksAttempted)
+        ? diagnostics.clicksAttempted
+        : [],
+      visibleRowsSample: String(diagnostics?.visibleRowsSample || "none"),
+      finalSelectedValue: String(diagnostics?.finalSelectedValue || ""),
+      committed: Boolean(diagnostics?.committed),
+      reason: String(diagnostics?.reason || ""),
+    });
+  }
+
+  function isLikelyPoshmarkCategoryPicker(optionEntries) {
+    const poshTopLevel = new Set([
+      "electronics",
+      "home",
+      "kids",
+      "men",
+      "pets",
+      "women",
+    ]);
+    const labels = optionEntries
+      .map((entry) => normalizeText(getOptionTextFromEntry(entry)))
+      .filter(Boolean);
+    if (!labels.length) return false;
+    return labels.some((label) => poshTopLevel.has(label));
+  }
+
+  function derivePoshmarkCategoryStages(pathValue, optionEntries) {
+    const poshTopLevelMap = {
+      women: "Women",
+      men: "Men",
+      kids: "Kids",
+      home: "Home",
+      electronics: "Electronics",
+      pets: "Pets",
+    };
+    const availableTopLevel = new Set(
+      optionEntries
+        .map((entry) => normalizeText(getOptionTextFromEntry(entry)))
+        .filter(Boolean)
+    );
+    const rawStages = splitCategoryStages(String(pathValue ?? ""));
+    const normalizedPath = normalizeText(String(pathValue ?? ""));
+    const derived = [];
+    let topLevelAdded = false;
+
+    function resolveTopLevelFromText(text) {
+      const normalized = normalizeText(text);
+      for (const [key, display] of Object.entries(poshTopLevelMap)) {
+        if (!normalized.includes(key)) continue;
+        return { key, display };
+      }
+      return null;
+    }
+
+    function maybeAddTopLevelFromText(text) {
+      const resolved = resolveTopLevelFromText(text);
+      if (!resolved) return false;
+      const visibleTopLevelMatch = Array.from(availableTopLevel).find(
+        (candidate) =>
+          candidate === resolved.key ||
+          candidate.includes(resolved.key) ||
+          resolved.key.includes(candidate)
+      );
+      if (!visibleTopLevelMatch && availableTopLevel.size > 0) {
+        return false;
+      }
+      if (!topLevelAdded) {
+        derived.push(resolved.display);
+        topLevelAdded = true;
+      }
+      return true;
+    }
+
+    for (const stage of rawStages) {
+      const normalizedStage = normalizeText(stage);
+      if (!normalizedStage) continue;
+      if (
+        normalizedStage.includes("clothing shoes accessories") ||
+        normalizedStage.includes("clothing, shoes & accessories")
+      ) {
+        continue;
+      }
+      if (maybeAddTopLevelFromText(normalizedStage)) {
+        continue;
+      }
+      if (!topLevelAdded && maybeAddTopLevelFromText(normalizedPath)) {
+        continue;
+      }
+      if (derived.length === 0) {
+        const fallbackTop = resolveTopLevelFromText(normalizedPath);
+        if (fallbackTop) {
+          derived.push(fallbackTop.display);
+          topLevelAdded = true;
+        } else {
+          continue;
+        }
+      }
+      if (normalizeText(derived[derived.length - 1]) === normalizedStage) continue;
+      derived.push(stage);
+    }
+
+    if (!topLevelAdded) {
+      const fallbackTop = resolveTopLevelFromText(normalizedPath);
+      if (fallbackTop) {
+        derived.push(fallbackTop.display);
+        topLevelAdded = true;
+      }
+    }
+
+    return derived.filter(Boolean);
+  }
+
+  function resolvePoshmarkStageLabelsForLiveStep(input) {
+    const { stageLabel, stageLabelsToTry, optionEntries, stageIndex, stagesExpected } = input;
+    const baseLabels = Array.isArray(stageLabelsToTry) ? stageLabelsToTry.filter(Boolean) : [];
+    if (!baseLabels.length) return [stageLabel].filter(Boolean);
+
+    const isFinalStage = stageIndex >= stagesExpected - 1;
+    if (!isFinalStage) return baseLabels;
+
+    const raw = String(stageLabel ?? "").trim();
+    if (!raw) return baseLabels;
+
+    const tokenParts = raw
+      .split(/[>,]/)
+      .map((part) => cleanCategoryStage(part))
+      .filter(Boolean);
+    if (tokenParts.length <= 1) return baseLabels;
+
+    const normalizedTokens = tokenParts
+      .map((part) => normalizeText(part))
+      .filter(Boolean)
+      .filter((token) => token.length >= 3);
+    if (!normalizedTokens.length) return baseLabels;
+
+    let bestLabel = "";
+    let bestScore = 0;
+    for (const entry of optionEntries) {
+      const rowLabel = cleanCategoryStage(getOptionTextFromEntry(entry));
+      const normalizedRowLabel = normalizeText(rowLabel);
+      if (!normalizedRowLabel) continue;
+
+      let score = 0;
+      for (const token of normalizedTokens) {
+        if (normalizedRowLabel === token) score += 3;
+        else if (normalizedRowLabel.includes(token) || token.includes(normalizedRowLabel)) score += 2;
+      }
+      if (!score) continue;
+      if (score > bestScore) {
+        bestScore = score;
+        bestLabel = rowLabel;
+      }
+    }
+
+    if (!bestLabel) return baseLabels;
+    return Array.from(new Set([bestLabel, ...baseLabels]));
+  }
+
+  function normalizePoshmarkStageText(value) {
+    const cleaned = cleanCategoryStage(String(value ?? ""))
+      .replace(/[>›»]/g, " ")
+      .replace(/["'`“”‘’]/g, "")
+      .replace(/[^\w\s/&-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (!cleaned) return "";
+
+    const iconNoise = new Set([
+      "chevron",
+      "arrow",
+      "right",
+      "left",
+      "up",
+      "down",
+      "expand",
+      "collapse",
+    ]);
+    const tokens = cleaned
+      .split(" ")
+      .filter((token) => token && !iconNoise.has(token));
+    const deduped = [];
+    for (const token of tokens) {
+      if (deduped.length && deduped[deduped.length - 1] === token) continue;
+      deduped.push(token);
+    }
+    return deduped.join(" ").trim();
+  }
+
+  function findPoshmarkVisibleStageMatches(optionEntries, wantedStage) {
+    const normalizedWanted = normalizePoshmarkStageText(wantedStage);
+    if (!normalizedWanted) return [];
+    return optionEntries.filter((entry) =>
+      getOptionTextCandidates(entry).some(
+        (candidate) => normalizePoshmarkStageText(candidate) === normalizedWanted
+      )
+    );
+  }
+
+  function resolvePoshmarkStage1Candidate(input) {
+    const { pickerElement, control, wantedStage } = input;
+    const rowSelector = 'div[data-testid="category-option-dropdown"][role="option"]';
+    if (!(pickerElement instanceof Element)) {
+      return {
+        matchedEntry: null,
+        rawCandidateCount: 0,
+        filteredCandidateCount: 0,
+        visibleRowsSample: "none",
+        reason: "picker_missing",
+      };
+    }
+
+    const activePanel = resolveActivePoshmarkPickerPanel({
+      pickerElement,
+      control,
+      rowSelector,
+    });
+    const rawRows = Array.from(activePanel.querySelectorAll(rowSelector)).filter(
+      (row) => row instanceof Element
+    );
+    const visibleRows = rawRows.filter((row) => isVisible(row));
+    const wantedNormalized = normalizePoshmarkStageText(wantedStage);
+    const filteredRows = visibleRows.filter((row) => {
+      const label = normalizePoshmarkStageText(getCategoryOptionRowLabel(row));
+      if (!label) return false;
+      if (label.includes("search")) return false;
+      return true;
+    });
+
+    const exactRows = filteredRows.filter(
+      (row) => normalizePoshmarkStageText(getCategoryOptionRowLabel(row)) === wantedNormalized
+    );
+    const dedupedExactRows = [];
+    const seenKey = new Set();
+    for (const row of exactRows) {
+      const text = normalizePoshmarkStageText(getCategoryOptionRowLabel(row));
+      const key = `${text}|${row}`;
+      if (seenKey.has(key)) continue;
+      seenKey.add(key);
+      dedupedExactRows.push(row);
+    }
+
+    let matchedRow = null;
+    if (dedupedExactRows.length === 1) {
+      matchedRow = dedupedExactRows[0];
+    } else if (dedupedExactRows.length > 1) {
+      matchedRow =
+        dedupedExactRows.find(
+          (row) =>
+            cleanCategoryStage(getCategoryOptionRowLabel(row)) === cleanCategoryStage(wantedStage)
+        ) ?? null;
+    }
+
+    const matchedEntry = matchedRow
+      ? {
+          element: matchedRow,
+          selector: rowSelector,
+          clickTarget: matchedRow,
+        }
+      : null;
+
+    return {
+      matchedEntry,
+      rawCandidateCount: visibleRows.length,
+      filteredCandidateCount: filteredRows.length,
+      visibleRowsSample:
+        filteredRows
+          .slice(0, 8)
+          .map((row) => `"${cleanCategoryStage(getCategoryOptionRowLabel(row))}"`)
+          .join(", ") || "none",
+      reason: matchedEntry ? "stage1_match_found" : "no_unique_stage1_match",
+    };
+  }
+
+  function resolveActivePoshmarkPickerPanel(input) {
+    const { pickerElement, control, rowSelector } = input;
+    const topLevelHints = new Set(["electronics", "home", "kids", "men", "pets", "women"]);
+
+    function panelFromControls(node) {
+      if (!(node instanceof Element)) return null;
+      const controlsId = String(node.getAttribute("aria-controls") || "").trim();
+      if (!controlsId) return null;
+      const panel = document.getElementById(controlsId);
+      if (!(panel instanceof Element)) return null;
+      if (!isVisible(panel)) return null;
+      if (!panel.querySelector(rowSelector)) return null;
+      return panel;
+    }
+
+    const directPanel = panelFromControls(control) || panelFromControls(document.activeElement);
+    if (directPanel) return directPanel;
+
+    const candidatePanels = [];
+    const panelSelectors = [
+      '[role="listbox"]',
+      '[data-radix-select-viewport]',
+      '[data-radix-select-content]',
+      '[data-radix-popper-content-wrapper]',
+      '[aria-label*="Category Selector"]',
+    ];
+
+    const searchRoots = [pickerElement, document];
+    const seenPanels = new Set();
+    for (const root of searchRoots) {
+      if (!(root instanceof Element) && root !== document) continue;
+      for (const selector of panelSelectors) {
+        const nodes = Array.from(root.querySelectorAll(selector)).filter(
+          (node) => node instanceof Element && isVisible(node)
+        );
+        for (const node of nodes) {
+          if (!(node instanceof Element)) continue;
+          if (seenPanels.has(node)) continue;
+          seenPanels.add(node);
+          const rows = Array.from(node.querySelectorAll(rowSelector)).filter(
+            (row) => row instanceof Element && isVisible(row)
+          );
+          if (!rows.length) continue;
+          const labels = rows
+            .map((row) => normalizePoshmarkStageText(getCategoryOptionRowLabel(row)))
+            .filter(Boolean);
+          const hintMatches = labels.filter((label) => topLevelHints.has(label)).length;
+          candidatePanels.push({
+            panel: node,
+            rows,
+            hintMatches,
+          });
+        }
+      }
+    }
+
+    if (!candidatePanels.length) return pickerElement;
+
+    candidatePanels.sort((a, b) => {
+      if (b.hintMatches !== a.hintMatches) return b.hintMatches - a.hintMatches;
+      return a.rows.length - b.rows.length;
+    });
+
+    return candidatePanels[0].panel;
+  }
+
+  async function finalizePoshmarkCategoryCommit(input) {
+    const { control, fieldConfig, finalStageLabel, fullPath } = input;
+    const normalizedFinalStage = normalizeText(finalStageLabel || "");
+
+    function buildSummary() {
+      return cleanCategoryStage(getControlSummaryText(control));
+    }
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const confirmed = isCategoryCompletionConfirmed({
+        control,
+        fullPath: fullPath || finalStageLabel,
+        fieldConfig,
+      });
+      if (confirmed) {
+        return {
+          committed: true,
+          finalSelectedValue: buildSummary(),
+          reason: "category completion confirmed",
+        };
+      }
+
+      const pickerInfo = findVisibleCategoryPicker(fieldConfig?.pickerContainerSelectors ?? []);
+      if (!pickerInfo?.element) {
+        await wait(120);
+        continue;
+      }
+
+      const pickerScope = resolveCategoryOptionScope(
+        pickerInfo.element,
+        fieldConfig?.optionSelectors ?? []
+      );
+      const optionContext = discoverCategoryOptionEntries({
+        optionSelectors: fieldConfig?.optionSelectors ?? [],
+        pickerScope,
+        pickerElement: pickerInfo.element,
+        control,
+      });
+      const finalEntry = optionContext.optionDiscovery.entries.find((entry) =>
+        getOptionTextCandidates(entry).some(
+          (candidate) => normalizeText(candidate) === normalizedFinalStage
+        )
+      );
+      if (finalEntry) {
+        clickElement(finalEntry.clickTarget);
+        await wait(140);
+        continue;
+      }
+
+      if (attempt === 1) {
+        control.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        control.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+        await wait(140);
+      }
+    }
+
+    return {
+      committed: false,
+      finalSelectedValue: buildSummary(),
+      reason: "completion not confirmed",
+    };
+  }
+
+  function resolvePoshmarkCategoryGuidance(payload) {
+    const candidates = [
+      {
+        path: "payload.poshmark.categoryPath",
+        value: payload?.poshmark?.categoryPath,
+      },
+      {
+        path: "payload.marketplaces.poshmark.categoryPath",
+        value: payload?.marketplaces?.poshmark?.categoryPath,
+      },
+      {
+        path: "payload.poshmark.category",
+        value: payload?.poshmark?.category,
+      },
+      {
+        path: "payload.marketplaces.poshmark.category",
+        value: payload?.marketplaces?.poshmark?.category,
+      },
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate.value !== "string") continue;
+      const trimmed = candidate.value.trim();
+      if (!trimmed) continue;
+      return { path: candidate.path, value: trimmed };
+    }
+
+    return { path: "", value: "" };
   }
 
   function discoverCategoryOptionEntries(input) {
