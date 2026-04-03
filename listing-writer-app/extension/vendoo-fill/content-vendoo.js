@@ -14,6 +14,11 @@
     rawValue: "",
     normalizedValue: "",
   };
+  let lastEtsyCategoryInput = {
+    sourcePath: "",
+    rawValue: "",
+    normalizedValue: "",
+  };
 
   init();
 
@@ -273,6 +278,17 @@
     const etsyTitle = typeof etsyBlock?.title === "string" ? etsyBlock.title.trim() : "";
     const etsyDescription =
       typeof etsyBlock?.description === "string" ? etsyBlock.description.trim() : "";
+    const etsyCategoryPath =
+      typeof etsyBlock?.categoryPath === "string" ? etsyBlock.categoryPath.trim() : "";
+    lastEtsyCategoryInput = {
+      sourcePath: etsyCategoryPath
+        ? (typeof payload?.etsy?.categoryPath === "string"
+            ? "payload.etsy.categoryPath"
+            : "payload.marketplaces.etsy.categoryPath")
+        : "",
+      rawValue: etsyCategoryPath,
+      normalizedValue: etsyCategoryPath ? normalizeText(etsyCategoryPath) : "",
+    };
     const etsyTags = Array.isArray(etsyBlock?.tags)
       ? etsyBlock.tags.filter((value) => typeof value === "string" && value.trim())
       : [];
@@ -292,6 +308,12 @@
       tagsLike: {
         path: etsyTags.length ? "payload.etsy.tags|payload.marketplaces.etsy.tags" : "",
         present: etsyTags.length > 0,
+      },
+      categoryLike: {
+        path: etsyCategoryPath
+          ? "payload.etsy.categoryPath|payload.marketplaces.etsy.categoryPath"
+          : "",
+        present: Boolean(etsyCategoryPath),
       },
     });
     console.debug("[Vendoo][ConditionPayload]", {
@@ -523,6 +545,7 @@
       });
       await ensurePoshmarkStageOpenForPoshmarkFill();
       await ensureEtsyStageOpenForEtsyFill(payload);
+      await ensureEtsyOptionalFieldsOpenForEtsyFill();
       await fillEtsyTitleAndDescriptionIfPresent({
         payload,
         usedElements,
@@ -1062,6 +1085,72 @@
     return diagnostics;
   }
 
+  async function ensureEtsyOptionalFieldsOpenForEtsyFill() {
+    const diagnostics = {
+      buttonVisible: false,
+      clickAttempted: false,
+      expandDetected: false,
+      reason: "",
+    };
+
+    const button = findEtsyShowOptionalFieldsButton();
+    diagnostics.buttonVisible = button instanceof Element;
+
+    if (!(button instanceof Element)) {
+      diagnostics.reason = "button not visible";
+      console.debug("[Vendoo][EtsyOptionalFields]", diagnostics);
+      return diagnostics;
+    }
+
+    const disabled =
+      (button instanceof HTMLButtonElement && button.disabled) ||
+      button.getAttribute("aria-disabled") === "true";
+    if (disabled) {
+      diagnostics.reason = "button disabled";
+      console.debug("[Vendoo][EtsyOptionalFields]", diagnostics);
+      return diagnostics;
+    }
+
+    const baselineOptionalCount = countVisibleEtsyOptionalControls();
+    if (
+      isEtsyOptionalFieldsExpanded(button, {
+        baselineCount: baselineOptionalCount,
+        currentCount: baselineOptionalCount,
+        requireCountIncrease: false,
+      })
+    ) {
+      diagnostics.expandDetected = true;
+      diagnostics.reason = "already expanded";
+      console.debug("[Vendoo][EtsyOptionalFields]", diagnostics);
+      return diagnostics;
+    }
+
+    clickElement(button);
+    diagnostics.clickAttempted = true;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await wait(140);
+      const latestButton = findEtsyShowOptionalFieldsButton();
+      const currentOptionalCount = countVisibleEtsyOptionalControls();
+      if (
+        isEtsyOptionalFieldsExpanded(latestButton, {
+          baselineCount: baselineOptionalCount,
+          currentCount: currentOptionalCount,
+          requireCountIncrease: true,
+        })
+      ) {
+        diagnostics.expandDetected = true;
+        diagnostics.reason = "expanded after click";
+        console.debug("[Vendoo][EtsyOptionalFields]", diagnostics);
+        return diagnostics;
+      }
+    }
+
+    diagnostics.reason = "clicked but expansion not detected";
+    console.debug("[Vendoo][EtsyOptionalFields]", diagnostics);
+    return diagnostics;
+  }
+
   function findDepopShowOptionalFieldsButton() {
     const candidates = Array.from(document.querySelectorAll("button, [role='button']"));
     return (
@@ -1081,7 +1170,40 @@
     );
   }
 
+  function findEtsyShowOptionalFieldsButton() {
+    const candidates = Array.from(document.querySelectorAll("button, [role='button']"));
+    return (
+      candidates.find((candidate) => {
+        if (!(candidate instanceof Element)) return false;
+        if (!isVisible(candidate)) return false;
+        const text = normalizeText(candidate.textContent || "");
+        if (!text.includes("show optional fields")) return false;
+        const scopeText = normalizeText(
+          [
+            candidate.closest("section, form, div")?.textContent || "",
+            window.location.href,
+          ].join(" ")
+        );
+        return scopeText.includes("etsy");
+      }) ?? null
+    );
+  }
+
   function isDepopOptionalFieldsExpanded(button, options = {}) {
+    const baselineCount = Number(options.baselineCount ?? 0) || 0;
+    const currentCount = Number(options.currentCount ?? 0) || 0;
+    const requireCountIncrease = Boolean(options.requireCountIncrease);
+    if (!(button instanceof Element)) return true;
+    if (!button.isConnected || !isVisible(button)) return true;
+    const text = normalizeText(button.textContent || "");
+    if (text.includes("hide optional fields")) return true;
+    const expanded = normalizeText(button.getAttribute("aria-expanded") || "");
+    if (expanded === "true") return true;
+    if (requireCountIncrease && currentCount > baselineCount) return true;
+    return false;
+  }
+
+  function isEtsyOptionalFieldsExpanded(button, options = {}) {
     const baselineCount = Number(options.baselineCount ?? 0) || 0;
     const currentCount = Number(options.currentCount ?? 0) || 0;
     const requireCountIncrease = Boolean(options.requireCountIncrease);
@@ -1105,6 +1227,23 @@
       'input[id*="listings.depop.overrides.material"]',
       'input[name*="listings.depop.overrides.color"]',
       'input[id*="listings.depop.overrides.color"]',
+    ];
+    let count = 0;
+    for (const selector of selectors) {
+      const matches = Array.from(document.querySelectorAll(selector)).filter(
+        (node) => node instanceof Element && isVisible(node)
+      );
+      count += matches.length;
+    }
+    return count;
+  }
+
+  function countVisibleEtsyOptionalControls() {
+    const selectors = [
+      '[name^="listings.etsy.marketplaceSpecifics."]',
+      '[id^="listings.etsy.marketplaceSpecifics."]',
+      '[name^="listings.etsy.overrides."]',
+      '[id^="listings.etsy.overrides."]',
     ];
     let count = 0;
     for (const selector of selectors) {
@@ -3440,6 +3579,7 @@
     });
 
     const payloadCategoryGuidance = String(lastPoshmarkCategoryInput.rawValue || "").trim();
+    const payloadEtsyCategoryGuidance = String(lastEtsyCategoryInput.rawValue || "").trim();
     const poshmarkCategoryDiagnostics = {
       payloadCategory: payloadCategoryGuidance,
       visibleRowsSample: "none",
@@ -3448,7 +3588,16 @@
       committed: false,
       reason: "",
     };
+    const etsyCategoryDiagnostics = {
+      payloadCategory: payloadEtsyCategoryGuidance,
+      visibleRowsSample: "none",
+      clicksAttempted: [],
+      finalSelectedValue: "",
+      committed: false,
+      reason: "",
+    };
     let poshmarkTraversalEnabled = false;
+    let etsyTraversalEnabled = false;
     let traversalStages = stages;
     const initialPickerInfo = entryPickerInfo;
     if (initialPickerInfo?.element) {
@@ -3559,6 +3708,41 @@
           ...poshmarkCategoryDiagnostics,
           reason: "live poshmark category path detected",
         });
+      } else if (
+        isEtsyCategoryControl(control) &&
+        Boolean(initialPickerInfo?.element) &&
+        Boolean(payloadEtsyCategoryGuidance) &&
+        evaluateEtsyStageGate().stageDetected
+      ) {
+        etsyTraversalEnabled = true;
+        traversalStages = splitCategoryStages(payloadEtsyCategoryGuidance);
+        etsyCategoryDiagnostics.visibleRowsSample =
+          buildVisibleOptionsPreview(initialOptionContext.optionDiscovery.entries, 8) || "none";
+        if (!traversalStages.length) {
+          etsyCategoryDiagnostics.reason = "payload category guidance missing";
+          logEtsyCategoryDiagnostics(etsyCategoryDiagnostics);
+          return {
+            status: "needs_review",
+            reason: "payload category guidance missing",
+            diagnostics: {
+              stageIndexReached: 0,
+              stagesExpected: 0,
+              wantedAtFailure: payloadEtsyCategoryGuidance,
+              visibleCandidatesAtFailure: etsyCategoryDiagnostics.visibleRowsSample,
+              pickerResolved: true,
+              dropdownOpened: true,
+              optionSurfaceResolved: true,
+              optionSurfaceType: "picker_scope",
+              optionSurfaceChecks: "etsy_picker_scope",
+              rawCandidatesCount: initialOptionContext.optionDiscovery.rawCount,
+              visibleCandidatesCount: initialOptionContext.optionDiscovery.visibleCount,
+              clickableRowsCount: initialOptionContext.optionDiscovery.visibleCount,
+              breadcrumbMode: false,
+              selectionVerified: false,
+              selectionReason: "payload category guidance missing",
+            },
+          };
+        }
       } else {
         console.debug("[Vendoo][CategoryFallbackBranch]", {
           marketplaceHint,
@@ -3610,6 +3794,18 @@
       optionSurfaceType = optionContext.optionSurfaceType;
       optionSurfaceChecks = optionContext.optionSurfaceChecks;
       let optionEntries = optionDiscovery.entries;
+      if (etsyTraversalEnabled) {
+        const etsyScoped = discoverEtsyCategoryOptionEntries({
+          pickerElement: pickerInfo.element,
+          control,
+          optionSelectors: fieldConfig.optionSelectors ?? [],
+        });
+        optionDiscovery = etsyScoped.optionDiscovery;
+        optionSurfaceResolved = etsyScoped.optionSurfaceResolved;
+        optionSurfaceType = etsyScoped.optionSurfaceType;
+        optionSurfaceChecks = etsyScoped.optionSurfaceChecks;
+        optionEntries = optionDiscovery.entries;
+      }
       let effectiveStageLabelsToTry = stageLabelsToTry;
       if (poshmarkTraversalEnabled) {
         effectiveStageLabelsToTry = resolvePoshmarkStageLabelsForLiveStep({
@@ -3661,6 +3857,9 @@
       });
       optionEntries = stageMatchResult.candidateEntries;
       let matches = stageMatchResult.matches;
+      if (etsyTraversalEnabled) {
+        matches = findEtsyStageMatches(optionEntries, effectiveStageLabelsToTry[0] ?? stageLabel);
+      }
       if (
         poshmarkTraversalEnabled &&
         index === 0 &&
@@ -3680,7 +3879,7 @@
         }
       }
 
-      if (matches.length !== 1) {
+      if (matches.length !== 1 && !etsyTraversalEnabled) {
         const searchInput = findPickerSearchInput(
           pickerScope ?? pickerInfo.element,
           fieldConfig.searchInputSelectors ?? []
@@ -3710,6 +3909,12 @@
           });
           optionEntries = stageMatchResult.candidateEntries;
           matches = stageMatchResult.matches;
+          if (etsyTraversalEnabled) {
+            matches = findEtsyStageMatches(
+              optionEntries,
+              effectiveStageLabelsToTry[0] ?? stageLabel
+            );
+          }
           if (
             poshmarkTraversalEnabled &&
             index === 0 &&
@@ -3728,6 +3933,16 @@
               matches = poshmarkStageOneMatches;
             }
           }
+        }
+      }
+
+      if (etsyTraversalEnabled && matches.length !== 1 && index === traversalStages.length - 1) {
+        const closest = findClosestEtsyFinalStageMatch(
+          optionEntries,
+          effectiveStageLabelsToTry[0] ?? stageLabel
+        );
+        if (closest) {
+          matches = [closest];
         }
       }
 
@@ -3790,6 +4005,14 @@
             filteredVisibleSample || visiblePreview || "none";
           poshmarkCategoryDiagnostics.finalSelectedValue = getControlSummaryText(control);
           logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+        }
+        if (etsyTraversalEnabled) {
+          etsyCategoryDiagnostics.reason = withChosen;
+          etsyCategoryDiagnostics.visibleRowsSample =
+            buildVisibleOptionsPreview(optionEntries, 8) || "none";
+          etsyCategoryDiagnostics.finalSelectedValue = getControlSummaryText(control);
+          etsyCategoryDiagnostics.committed = false;
+          logEtsyCategoryDiagnostics(etsyCategoryDiagnostics);
         }
 
         console.debug("[LPU Vendoo] Category stage diagnostics", {
@@ -3865,6 +4088,13 @@
           cleanCategoryStage(getOptionTextFromEntry(matches[0])) || stageLabel
         );
       }
+      if (etsyTraversalEnabled) {
+        etsyCategoryDiagnostics.clicksAttempted.push(
+          cleanCategoryStage(getOptionTextFromEntry(matches[0])) || stageLabel
+        );
+        etsyCategoryDiagnostics.visibleRowsSample =
+          buildVisibleOptionsPreview(optionEntries, 8) || "none";
+      }
       confirmedStages.push(stageLabel);
       const waitResult = await waitForCategoryStageTransition({
         pickerElement: pickerInfo.element,
@@ -3880,10 +4110,14 @@
 
     const completionConfirmed = isCategoryCompletionConfirmed({
       control,
-      fullPath: poshmarkTraversalEnabled ? traversalStages.join(" > ") : value,
+      fullPath:
+        poshmarkTraversalEnabled || etsyTraversalEnabled
+          ? traversalStages.join(" > ")
+          : value,
       fieldConfig,
     });
     let poshmarkCommitted = completionConfirmed;
+    let etsyCommitted = completionConfirmed;
 
     if (poshmarkTraversalEnabled && !poshmarkCommitted) {
       const commitResult = await finalizePoshmarkCategoryCommit({
@@ -3900,14 +4134,36 @@
         logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
       }
     }
+    if (etsyTraversalEnabled && !etsyCommitted) {
+      const commitResult = await finalizeEtsyCategoryCommit({
+        control,
+        fieldConfig,
+        finalStageLabel: traversalStages[traversalStages.length - 1] ?? "",
+        fullPath: traversalStages.join(" > "),
+      });
+      etsyCommitted = commitResult.committed;
+      etsyCategoryDiagnostics.finalSelectedValue = commitResult.finalSelectedValue;
+      if (!commitResult.committed) {
+        etsyCategoryDiagnostics.reason = commitResult.reason;
+        etsyCategoryDiagnostics.committed = false;
+        logEtsyCategoryDiagnostics(etsyCategoryDiagnostics);
+      }
+    }
 
-    if (!poshmarkCommitted) {
+    if (!poshmarkCommitted || !etsyCommitted) {
       if (poshmarkTraversalEnabled) {
         poshmarkCategoryDiagnostics.reason =
           poshmarkCategoryDiagnostics.reason || "completion not confirmed";
         poshmarkCategoryDiagnostics.finalSelectedValue = getControlSummaryText(control);
         poshmarkCategoryDiagnostics.committed = false;
         logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+      }
+      if (etsyTraversalEnabled) {
+        etsyCategoryDiagnostics.reason =
+          etsyCategoryDiagnostics.reason || "completion not confirmed";
+        etsyCategoryDiagnostics.finalSelectedValue = getControlSummaryText(control);
+        etsyCategoryDiagnostics.committed = false;
+        logEtsyCategoryDiagnostics(etsyCategoryDiagnostics);
       }
       return {
         status: "needs_review",
@@ -3937,6 +4193,12 @@
       poshmarkCategoryDiagnostics.reason = "selection completed";
       poshmarkCategoryDiagnostics.committed = true;
       logPoshmarkCategoryDiagnostics(poshmarkCategoryDiagnostics);
+    }
+    if (etsyTraversalEnabled) {
+      etsyCategoryDiagnostics.finalSelectedValue = getControlSummaryText(control);
+      etsyCategoryDiagnostics.reason = "selection completed";
+      etsyCategoryDiagnostics.committed = true;
+      logEtsyCategoryDiagnostics(etsyCategoryDiagnostics);
     }
 
     return {
@@ -3972,6 +4234,142 @@
       committed: Boolean(diagnostics?.committed),
       reason: String(diagnostics?.reason || ""),
     });
+  }
+
+  function logEtsyCategoryDiagnostics(diagnostics) {
+    console.debug("[Vendoo][EtsyCategory]", {
+      payloadCategory: String(diagnostics?.payloadCategory || ""),
+      clicksAttempted: Array.isArray(diagnostics?.clicksAttempted)
+        ? diagnostics.clicksAttempted
+        : [],
+      visibleRowsSample: String(diagnostics?.visibleRowsSample || "none"),
+      finalSelectedValue: String(diagnostics?.finalSelectedValue || ""),
+      committed: Boolean(diagnostics?.committed),
+      reason: String(diagnostics?.reason || ""),
+    });
+  }
+
+  function isEtsyCategoryControl(control) {
+    if (!(control instanceof Element)) return false;
+    if (
+      control.matches(
+        '#categoryV2, [id="categoryV2"], [role="category-input"], [name="categoryV2"]'
+      )
+    ) {
+      return true;
+    }
+    const exactInput = control.querySelector?.(
+      '#categoryV2, [id="categoryV2"], [role="category-input"], [name="categoryV2"]'
+    );
+    return exactInput instanceof Element;
+  }
+
+  function discoverEtsyCategoryOptionEntries(input) {
+    const { pickerElement, control, optionSelectors } = input;
+    const panel =
+      resolveEtsyCategoryPickerPanel(pickerElement, control) ?? pickerElement ?? document;
+    const optionDiscovery = findVisibleOptionEntries(
+      optionSelectors,
+      panel,
+      "etsy_picker_scope"
+    );
+    return {
+      optionDiscovery,
+      optionSurfaceResolved: true,
+      optionSurfaceType: "etsy_picker_scope",
+      optionSurfaceChecks: "etsy_picker_scope",
+    };
+  }
+
+  function resolveEtsyCategoryPickerPanel(pickerElement, control) {
+    function panelFromControls(node) {
+      if (!(node instanceof Element)) return null;
+      const controlsId = String(node.getAttribute("aria-controls") || "").trim();
+      if (!controlsId) return null;
+      const panel = document.getElementById(controlsId);
+      if (!(panel instanceof Element) || !isVisible(panel)) return null;
+      return panel;
+    }
+
+    const fromControl = panelFromControls(control);
+    if (fromControl) return fromControl;
+    const fromActive = panelFromControls(document.activeElement);
+    if (fromActive) return fromActive;
+    if (pickerElement instanceof Element && isVisible(pickerElement)) return pickerElement;
+    return null;
+  }
+
+  function findEtsyStageMatches(optionEntries, wantedStage) {
+    const normalizedWanted = normalizeText(cleanCategoryStage(wantedStage));
+    if (!normalizedWanted) return [];
+    return optionEntries.filter((entry) =>
+      getOptionTextCandidates(entry).some(
+        (candidate) => normalizeText(cleanCategoryStage(candidate)) === normalizedWanted
+      )
+    );
+  }
+
+  function findClosestEtsyFinalStageMatch(optionEntries, wantedStage) {
+    const normalizedWanted = normalizeText(cleanCategoryStage(wantedStage));
+    const wantedTokens = new Set((normalizedWanted.match(/[a-z0-9]+/g) || []).filter(Boolean));
+    if (!wantedTokens.size) return null;
+
+    let bestEntry = null;
+    let bestScore = 0;
+    for (const entry of optionEntries) {
+      const rowText = cleanCategoryStage(getOptionTextFromEntry(entry));
+      const normalizedRow = normalizeText(rowText);
+      if (!normalizedRow) continue;
+      const rowTokens = new Set((normalizedRow.match(/[a-z0-9]+/g) || []).filter(Boolean));
+      if (!rowTokens.size) continue;
+
+      let overlap = 0;
+      for (const token of wantedTokens) {
+        if (rowTokens.has(token)) overlap += 1;
+      }
+      if (!overlap) continue;
+
+      const score = overlap / Math.max(wantedTokens.size, 1);
+      if (score > bestScore) {
+        bestScore = score;
+        bestEntry = entry;
+      }
+    }
+
+    return bestEntry;
+  }
+
+  async function finalizeEtsyCategoryCommit(input) {
+    const { control, fieldConfig, finalStageLabel, fullPath } = input;
+
+    function buildSummary() {
+      return cleanCategoryStage(getControlSummaryText(control));
+    }
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const confirmed = isCategoryCompletionConfirmed({
+        control,
+        fullPath: fullPath || finalStageLabel,
+        fieldConfig,
+      });
+      if (confirmed) {
+        return {
+          committed: true,
+          finalSelectedValue: buildSummary(),
+          reason: "category completion confirmed",
+        };
+      }
+
+      control.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      control.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+      await wait(140);
+    }
+
+    return {
+      committed: false,
+      finalSelectedValue: buildSummary(),
+      reason: "completion not confirmed",
+    };
   }
 
   function isLikelyPoshmarkCategoryPicker(optionEntries) {

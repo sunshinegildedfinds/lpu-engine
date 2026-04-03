@@ -281,12 +281,18 @@
         ? {
             title: pickString(etsy, ["title"]),
             description: pickString(etsy, ["description"]),
+            categoryPath: pickString(etsy, ["categoryPath"], ["category"]),
             tags: pickStringArray(etsy, ["tags"]),
           }
         : null;
     const includeEtsy = Boolean(
       normalizedEtsy &&
-        (normalizedEtsy.title || normalizedEtsy.description || normalizedEtsy.tags.length)
+        (
+          normalizedEtsy.title ||
+          normalizedEtsy.description ||
+          normalizedEtsy.categoryPath ||
+          normalizedEtsy.tags.length
+        )
     );
 
     return {

@@ -1282,6 +1282,7 @@ export default function LpuPage() {
             title: payloadMap.platforms.etsy.title,
             description: payloadMap.platforms.etsy.description,
             tags: payloadMap.platforms.etsy.tags,
+            categoryPath: payloadMap.platforms.etsy.categoryPath,
           },
         }}
       />

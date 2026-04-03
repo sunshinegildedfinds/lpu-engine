@@ -41,6 +41,7 @@ type Layer3Seed = {
     title?: string;
     description?: string;
     tags?: string;
+    categoryPath?: string;
   };
 };
 
@@ -419,12 +420,18 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
     const title = String(seed.etsy?.title ?? "").trim();
     const description = String(seed.etsy?.description ?? "").trim();
     const tags = parseVendooBaseTags(seed.etsy?.tags);
+    const directCategoryPath = normalizeValue(String(seed.etsy?.categoryPath ?? ""));
+    const fallbackCategoryPath = normalizeValue(
+      String(mappedSeed.canonicalCategoryPath || mappedSeed.category || "")
+    );
+    const categoryPath = directCategoryPath || fallbackCategoryPath;
     return {
       title,
       description,
       tags,
+      ...(categoryPath ? { categoryPath } : {}),
     };
-  }, [seed.etsy]);
+  }, [mappedSeed.canonicalCategoryPath, mappedSeed.category, seed.etsy]);
   const vintageValue = String(mappedSeed.itemSpecifics.vintage ?? "").trim();
   const etsyIncludedForVintage = useMemo(() => {
     const normalized = normalizeToken(vintageValue);
@@ -657,6 +664,21 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       },
     });
     const etsyBlock = payload?.etsy;
+    const etsyCategoryPath =
+      typeof etsyBlock?.categoryPath === "string" ? etsyBlock.categoryPath : "";
+    const etsyCategorySourcePath = normalizeValue(String(seed.etsy?.categoryPath ?? ""))
+      ? "seed.etsy.categoryPath"
+      : normalizeValue(String(mappedSeed.canonicalCategoryPath ?? ""))
+        ? "mappedSeed.canonicalCategoryPath"
+        : normalizeValue(String(mappedSeed.category ?? ""))
+          ? "mappedSeed.category"
+          : "";
+    console.debug("[LPU][EtsyCategoryPayload]", {
+      sourceFound: Boolean(etsyCategoryPath),
+      sourcePath: etsyCategorySourcePath,
+      rawValue: etsyCategoryPath,
+      normalizedValue: etsyCategoryPath ? normalizeToken(etsyCategoryPath) : "",
+    });
     console.debug("[LPU][EtsyPayload]", {
       vintageSourcePath: "mappedSeed.itemSpecifics.vintage",
       vintageValue,

@@ -66,6 +66,7 @@ export type VendooExtensionPayload = {
     title: string;
     description: string;
     tags: string[];
+    categoryPath?: string;
   };
   researchMeta?: VendooResearchMeta;
   pricing?: VendooPricingMeta;
@@ -130,6 +131,7 @@ export function buildVendooExtensionPayload(input: {
     title?: string;
     description?: string;
     tags?: string[];
+    categoryPath?: string;
   };
 }): VendooExtensionPayload {
   const canonicalVendooCategoryPath = input.canonicalVendooCategoryPath?.trim();
@@ -357,6 +359,10 @@ export function buildVendooExtensionPayload(input: {
         title: typeof input.etsy.title === "string" ? input.etsy.title.trim() : "",
         description:
           typeof input.etsy.description === "string" ? input.etsy.description.trim() : "",
+        categoryPath:
+          typeof input.etsy.categoryPath === "string"
+            ? input.etsy.categoryPath.trim()
+            : "",
         tags: Array.isArray(input.etsy.tags)
           ? (() => {
               const seen = new Set<string>();
@@ -374,7 +380,7 @@ export function buildVendooExtensionPayload(input: {
       }
     : null;
   const includeEtsy = Boolean(
-    etsy && (etsy.title || etsy.description || etsy.tags.length)
+    etsy && (etsy.title || etsy.description || etsy.tags.length || etsy.categoryPath)
   );
 
   return {
@@ -386,6 +392,7 @@ export function buildVendooExtensionPayload(input: {
             title: etsy.title,
             description: etsy.description,
             tags: etsy.tags,
+            ...(etsy.categoryPath ? { categoryPath: etsy.categoryPath } : {}),
           },
         }
       : {}),
