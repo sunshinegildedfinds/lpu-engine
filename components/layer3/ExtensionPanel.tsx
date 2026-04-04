@@ -36,12 +36,14 @@ type Layer3Seed = {
     description?: string;
     styleTags?: string;
     categoryPath?: string;
+    adjustedPrice?: string;
   };
   etsy?: {
     title?: string;
     description?: string;
     tags?: string;
     categoryPath?: string;
+    adjustedPrice?: string;
     materials?: string;
     style?: string;
     theme?: string;
@@ -90,6 +92,18 @@ function normalizeValue(value: string): string {
     .trim()
     .replace(/^[\s\-–—:;,.]+/, "")
     .replace(/[\s\-–—:;,.]+$/, "");
+}
+
+function parsePriceNumber(value: string): number | null {
+  const cleaned = String(value ?? "").replace(/[$,\s]/g, "").trim();
+  if (!cleaned) return null;
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function formatPriceForPayload(value: number): string {
+  return value.toFixed(2);
 }
 
 function normalizeLabel(value: string): string {
@@ -393,13 +407,20 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
     const description = String(seed.poshmark?.description ?? "").trim();
     const styleTags = parseVendooBaseTags(seed.poshmark?.styleTags);
     const categoryPath = normalizeValue(poshmarkCategoryPayloadInfo.rawValue);
+    const selectedPriceRaw = String(seed.pricing?.selectedPrice ?? "").trim();
+    const selectedPriceValue = parsePriceNumber(selectedPriceRaw);
+    const adjustedPrice =
+      selectedPriceValue !== null
+        ? formatPriceForPayload(selectedPriceValue * 1.15)
+        : "";
     return {
       title,
       description,
       styleTags,
       ...(categoryPath ? { categoryPath } : {}),
+      ...(adjustedPrice ? { adjustedPrice } : {}),
     };
-  }, [poshmarkCategoryPayloadInfo.rawValue, seed.poshmark]);
+  }, [poshmarkCategoryPayloadInfo.rawValue, seed.poshmark, seed.pricing?.selectedPrice]);
   const depopPayload = useMemo(() => {
     const section = String(seed.depop?.listing ?? "");
     const listing = section.trim();
@@ -509,11 +530,18 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       String(mappedSeed.canonicalCategoryPath || mappedSeed.category || "")
     );
     const categoryPath = directCategoryPath || fallbackCategoryPath;
+    const selectedPriceRaw = String(seed.pricing?.selectedPrice ?? "").trim();
+    const selectedPriceValue = parsePriceNumber(selectedPriceRaw);
+    const adjustedPrice =
+      selectedPriceValue !== null
+        ? formatPriceForPayload(selectedPriceValue * 1.15)
+        : "";
     return {
       title,
       description,
       tags,
       ...(categoryPath ? { categoryPath } : {}),
+      ...(adjustedPrice ? { adjustedPrice } : {}),
       ...etsySpecificsPayloadInfo.generated,
     };
   }, [
@@ -521,6 +549,7 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
     mappedSeed.canonicalCategoryPath,
     mappedSeed.category,
     seed.etsy,
+    seed.pricing?.selectedPrice,
   ]);
   const vintageValue = String(mappedSeed.itemSpecifics.vintage ?? "").trim();
   const etsyIncludedForVintage = useMemo(() => {
@@ -754,6 +783,18 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       },
     });
     const etsyBlock = payload?.etsy;
+    const selectedPrice = String(seed.pricing?.selectedPrice ?? "").trim();
+    const poshmarkAdjustedPrice =
+      typeof payload?.marketplaces?.poshmark?.adjustedPrice === "string"
+        ? payload.marketplaces.poshmark.adjustedPrice
+        : "";
+    const etsyAdjustedPrice =
+      typeof payload?.etsy?.adjustedPrice === "string" ? payload.etsy.adjustedPrice : "";
+    console.debug("[LPU][MarketplacePriceAdjustments]", {
+      selectedPrice,
+      poshmarkAdjustedPrice,
+      etsyAdjustedPrice,
+    });
     console.debug("[LPU][EtsySpecificsPayload]", {
       generatedKeys: etsySpecificsPayloadInfo.generatedKeys,
       skippedKeys: etsySpecificsPayloadInfo.skippedKeys,

@@ -67,6 +67,7 @@ export type VendooExtensionPayload = {
     description: string;
     tags: string[];
     categoryPath?: string;
+    adjustedPrice?: string;
     materials?: string;
     style?: string;
     theme?: string;
@@ -108,6 +109,7 @@ export type VendooExtensionPayload = {
       description: string;
       styleTags: string[];
       categoryPath?: string;
+      adjustedPrice?: string;
     };
   };
 };
@@ -139,12 +141,14 @@ export function buildVendooExtensionPayload(input: {
     description?: string;
     styleTags?: string[];
     categoryPath?: string;
+    adjustedPrice?: string;
   };
   etsy?: {
     title?: string;
     description?: string;
     tags?: string[];
     categoryPath?: string;
+    adjustedPrice?: string;
     materials?: string;
     style?: string;
     theme?: string;
@@ -357,6 +361,10 @@ export function buildVendooExtensionPayload(input: {
           typeof input.poshmark.categoryPath === "string"
             ? input.poshmark.categoryPath.trim()
             : "",
+        adjustedPrice:
+          typeof input.poshmark.adjustedPrice === "string"
+            ? input.poshmark.adjustedPrice.trim()
+            : "",
         styleTags: Array.isArray(input.poshmark.styleTags)
           ? (() => {
               const seen = new Set<string>();
@@ -378,7 +386,8 @@ export function buildVendooExtensionPayload(input: {
       (poshmark.title ||
         poshmark.description ||
         poshmark.styleTags.length ||
-        poshmark.categoryPath)
+        poshmark.categoryPath ||
+        poshmark.adjustedPrice)
   );
   const etsy = input.etsy && typeof input.etsy === "object"
     ? {
@@ -388,6 +397,10 @@ export function buildVendooExtensionPayload(input: {
         categoryPath:
           typeof input.etsy.categoryPath === "string"
             ? input.etsy.categoryPath.trim()
+            : "",
+        adjustedPrice:
+          typeof input.etsy.adjustedPrice === "string"
+            ? input.etsy.adjustedPrice.trim()
             : "",
         materials:
           typeof input.etsy.materials === "string" ? input.etsy.materials.trim() : "",
@@ -434,6 +447,7 @@ export function buildVendooExtensionPayload(input: {
         etsy.description ||
         etsy.tags.length ||
         etsy.categoryPath ||
+        etsy.adjustedPrice ||
         etsy.materials ||
         etsy.style ||
         etsy.theme ||
@@ -460,6 +474,7 @@ export function buildVendooExtensionPayload(input: {
             description: etsy.description,
             tags: etsy.tags,
             ...(etsy.categoryPath ? { categoryPath: etsy.categoryPath } : {}),
+            ...(etsy.adjustedPrice ? { adjustedPrice: etsy.adjustedPrice } : {}),
             ...(etsy.materials ? { materials: etsy.materials } : {}),
             ...(etsy.style ? { style: etsy.style } : {}),
             ...(etsy.theme ? { theme: etsy.theme } : {}),
@@ -511,6 +526,7 @@ export function buildVendooExtensionPayload(input: {
               description: poshmark.description,
               styleTags: poshmark.styleTags,
               ...(poshmark.categoryPath ? { categoryPath: poshmark.categoryPath } : {}),
+              ...(poshmark.adjustedPrice ? { adjustedPrice: poshmark.adjustedPrice } : {}),
             },
           }
         : {}),

@@ -266,6 +266,7 @@
             title: pickString(poshmark, ["title"]),
             description: pickString(poshmark, ["description"]),
             categoryPath: pickString(poshmark, ["categoryPath"], ["category"]),
+            adjustedPrice: pickString(poshmark, ["adjustedPrice"]),
             styleTags: pickStringArray(poshmark, ["styleTags"]),
           }
         : null;
@@ -274,6 +275,7 @@
         (normalizedPoshmark.title ||
           normalizedPoshmark.description ||
           normalizedPoshmark.categoryPath ||
+          normalizedPoshmark.adjustedPrice ||
           normalizedPoshmark.styleTags.length)
     );
     const normalizedEtsy =
@@ -282,6 +284,7 @@
             title: pickString(etsy, ["title"]),
             description: pickString(etsy, ["description"]),
             categoryPath: pickString(etsy, ["categoryPath"], ["category"]),
+            adjustedPrice: pickString(etsy, ["adjustedPrice"]),
             materials: pickString(etsy, ["materials"]),
             style: pickString(etsy, ["style"]),
             theme: pickString(etsy, ["theme"]),
@@ -304,6 +307,7 @@
           normalizedEtsy.title ||
           normalizedEtsy.description ||
           normalizedEtsy.categoryPath ||
+          normalizedEtsy.adjustedPrice ||
           normalizedEtsy.materials ||
           normalizedEtsy.style ||
           normalizedEtsy.theme ||

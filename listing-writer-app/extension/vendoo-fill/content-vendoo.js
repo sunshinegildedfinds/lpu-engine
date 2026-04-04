@@ -572,6 +572,10 @@
         usedElements,
       });
       await ensurePoshmarkStageOpenForPoshmarkFill();
+      await fillPoshmarkAdjustedPriceIfPresent({
+        payload,
+        usedElements,
+      });
       await ensureEtsyStageOpenForEtsyFill(payload);
       await ensureEtsyOptionalFieldsOpenForEtsyFill();
       await runMarketplaceSpecificsPass({
@@ -582,6 +586,10 @@
         selectors,
       });
       await fillEtsyTitleAndDescriptionIfPresent({
+        payload,
+        usedElements,
+      });
+      await fillEtsyAdjustedPriceIfPresent({
         payload,
         usedElements,
       });
@@ -2395,6 +2403,179 @@
     diagnostic.reason = "no etsy tags inserted";
     console.debug("[Vendoo][EtsyTags]", diagnostic);
     return diagnostic;
+  }
+
+  async function fillEtsyAdjustedPriceIfPresent(input) {
+    const { payload, usedElements } = input;
+    let sourcePathTried = "";
+    const payloadValue = (() => {
+      const topLevel = payload?.etsy?.adjustedPrice;
+      if (typeof topLevel === "string" && topLevel.trim()) {
+        sourcePathTried = "payload.etsy.adjustedPrice";
+        return topLevel.trim();
+      }
+      const nested = payload?.marketplaces?.etsy?.adjustedPrice;
+      if (typeof nested === "string" && nested.trim()) {
+        sourcePathTried = "payload.marketplaces.etsy.adjustedPrice";
+        return nested.trim();
+      }
+      sourcePathTried = "payload.etsy.adjustedPrice|payload.marketplaces.etsy.adjustedPrice";
+      return "";
+    })();
+    console.debug("[Vendoo][EtsyAdjustedPriceRead]", {
+      hasAdjustedPrice: Boolean(payloadValue),
+      adjustedPriceValue: payloadValue,
+      sourcePathTried,
+    });
+    const field = findEtsyAdjustedPriceField();
+    const diagnostic = {
+      payloadValue,
+      attemptedValue: "",
+      finalValue: field instanceof HTMLInputElement ? String(field.value || "") : "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    if (!payloadValue) {
+      diagnostic.reason = "adjustedPrice missing";
+      console.debug("[Vendoo][EtsyAdjustedPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!(field instanceof HTMLInputElement) || !isVisible(field)) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "price field not found";
+      console.debug("[Vendoo][EtsyAdjustedPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][EtsyAdjustedPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.attemptedValue = payloadValue;
+    setElementValue(field, payloadValue);
+    field.dispatchEvent(new Event("blur", { bubbles: true }));
+    await wait(140);
+    diagnostic.finalValue = String(field.value || "").trim();
+
+    if (diagnostic.finalValue !== payloadValue) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "verification failed";
+      console.debug("[Vendoo][EtsyAdjustedPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value persisted after blur";
+    console.debug("[Vendoo][EtsyAdjustedPrice]", diagnostic);
+    return diagnostic;
+  }
+
+  function findEtsyAdjustedPriceField() {
+    const selectors = [
+      'input#listings\\.etsy\\.overrides\\.price',
+      'input[id="listings.etsy.overrides.price"]',
+      'input[name="listings.etsy.overrides.price"]',
+      'input[data-testid="listings.etsy.overrides.price"]',
+    ];
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  async function fillPoshmarkAdjustedPriceIfPresent(input) {
+    const { payload, usedElements } = input;
+    let sourcePathTried = "";
+    const payloadValue = (() => {
+      const topLevel = payload?.poshmark?.adjustedPrice;
+      if (typeof topLevel === "string" && topLevel.trim()) {
+        sourcePathTried = "payload.poshmark.adjustedPrice";
+        return topLevel.trim();
+      }
+      const nested = payload?.marketplaces?.poshmark?.adjustedPrice;
+      if (typeof nested === "string" && nested.trim()) {
+        sourcePathTried = "payload.marketplaces.poshmark.adjustedPrice";
+        return nested.trim();
+      }
+      sourcePathTried =
+        "payload.poshmark.adjustedPrice|payload.marketplaces.poshmark.adjustedPrice";
+      return "";
+    })();
+    console.debug("[Vendoo][PoshmarkAdjustedPriceRead]", {
+      hasAdjustedPrice: Boolean(payloadValue),
+      adjustedPriceValue: payloadValue,
+      sourcePathTried,
+    });
+    const field = findPoshmarkAdjustedPriceField();
+    const diagnostic = {
+      payloadValue,
+      attemptedValue: "",
+      finalValue: field instanceof HTMLInputElement ? String(field.value || "") : "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    if (!payloadValue) {
+      diagnostic.reason = "adjustedPrice missing";
+      console.debug("[Vendoo][PoshmarkAdjustedPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!(field instanceof HTMLInputElement) || !isVisible(field)) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "price field not found";
+      console.debug("[Vendoo][PoshmarkAdjustedPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][PoshmarkAdjustedPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.attemptedValue = payloadValue;
+    setElementValue(field, payloadValue);
+    field.dispatchEvent(new Event("blur", { bubbles: true }));
+    await wait(140);
+    diagnostic.finalValue = String(field.value || "").trim();
+
+    if (diagnostic.finalValue !== payloadValue) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "verification failed";
+      console.debug("[Vendoo][PoshmarkAdjustedPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value persisted after blur";
+    console.debug("[Vendoo][PoshmarkAdjustedPrice]", diagnostic);
+    return diagnostic;
+  }
+
+  function findPoshmarkAdjustedPriceField() {
+    const selectors = [
+      'input#listings\\.poshmark\\.overrides\\.price',
+      'input[id="listings.poshmark.overrides.price"]',
+      'input[name="listings.poshmark.overrides.price"]',
+      'input[data-testid="listings.poshmark.overrides.price"]',
+    ];
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   function findEtsyTagsControl() {
