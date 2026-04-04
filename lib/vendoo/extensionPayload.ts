@@ -67,6 +67,19 @@ export type VendooExtensionPayload = {
     description: string;
     tags: string[];
     categoryPath?: string;
+    materials?: string;
+    style?: string;
+    theme?: string;
+    occasion?: string;
+    recipient?: string;
+    jewelryType?: string;
+    gemstone?: string;
+    gemColor?: string;
+    sustainability?: string;
+    goldSolidity?: string;
+    recycled?: string;
+    canBePersonalized?: string;
+    age?: string;
   };
   researchMeta?: VendooResearchMeta;
   pricing?: VendooPricingMeta;
@@ -132,6 +145,19 @@ export function buildVendooExtensionPayload(input: {
     description?: string;
     tags?: string[];
     categoryPath?: string;
+    materials?: string;
+    style?: string;
+    theme?: string;
+    occasion?: string;
+    recipient?: string;
+    jewelryType?: string;
+    gemstone?: string;
+    gemColor?: string;
+    sustainability?: string;
+    goldSolidity?: string;
+    recycled?: string;
+    canBePersonalized?: string;
+    age?: string;
   };
 }): VendooExtensionPayload {
   const canonicalVendooCategoryPath = input.canonicalVendooCategoryPath?.trim();
@@ -363,6 +389,28 @@ export function buildVendooExtensionPayload(input: {
           typeof input.etsy.categoryPath === "string"
             ? input.etsy.categoryPath.trim()
             : "",
+        materials:
+          typeof input.etsy.materials === "string" ? input.etsy.materials.trim() : "",
+        style: typeof input.etsy.style === "string" ? input.etsy.style.trim() : "",
+        theme: typeof input.etsy.theme === "string" ? input.etsy.theme.trim() : "",
+        occasion: typeof input.etsy.occasion === "string" ? input.etsy.occasion.trim() : "",
+        recipient: typeof input.etsy.recipient === "string" ? input.etsy.recipient.trim() : "",
+        jewelryType:
+          typeof input.etsy.jewelryType === "string" ? input.etsy.jewelryType.trim() : "",
+        gemstone: typeof input.etsy.gemstone === "string" ? input.etsy.gemstone.trim() : "",
+        gemColor: typeof input.etsy.gemColor === "string" ? input.etsy.gemColor.trim() : "",
+        sustainability:
+          typeof input.etsy.sustainability === "string"
+            ? input.etsy.sustainability.trim()
+            : "",
+        goldSolidity:
+          typeof input.etsy.goldSolidity === "string" ? input.etsy.goldSolidity.trim() : "",
+        recycled: typeof input.etsy.recycled === "string" ? input.etsy.recycled.trim() : "",
+        canBePersonalized:
+          typeof input.etsy.canBePersonalized === "string"
+            ? input.etsy.canBePersonalized.trim()
+            : "",
+        age: typeof input.etsy.age === "string" ? input.etsy.age.trim() : "",
         tags: Array.isArray(input.etsy.tags)
           ? (() => {
               const seen = new Set<string>();
@@ -380,7 +428,26 @@ export function buildVendooExtensionPayload(input: {
       }
     : null;
   const includeEtsy = Boolean(
-    etsy && (etsy.title || etsy.description || etsy.tags.length || etsy.categoryPath)
+    etsy &&
+      (
+        etsy.title ||
+        etsy.description ||
+        etsy.tags.length ||
+        etsy.categoryPath ||
+        etsy.materials ||
+        etsy.style ||
+        etsy.theme ||
+        etsy.occasion ||
+        etsy.recipient ||
+        etsy.jewelryType ||
+        etsy.gemstone ||
+        etsy.gemColor ||
+        etsy.sustainability ||
+        etsy.goldSolidity ||
+        etsy.recycled ||
+        etsy.canBePersonalized ||
+        etsy.age
+      )
   );
 
   return {
@@ -393,6 +460,19 @@ export function buildVendooExtensionPayload(input: {
             description: etsy.description,
             tags: etsy.tags,
             ...(etsy.categoryPath ? { categoryPath: etsy.categoryPath } : {}),
+            ...(etsy.materials ? { materials: etsy.materials } : {}),
+            ...(etsy.style ? { style: etsy.style } : {}),
+            ...(etsy.theme ? { theme: etsy.theme } : {}),
+            ...(etsy.occasion ? { occasion: etsy.occasion } : {}),
+            ...(etsy.recipient ? { recipient: etsy.recipient } : {}),
+            ...(etsy.jewelryType ? { jewelryType: etsy.jewelryType } : {}),
+            ...(etsy.gemstone ? { gemstone: etsy.gemstone } : {}),
+            ...(etsy.gemColor ? { gemColor: etsy.gemColor } : {}),
+            ...(etsy.sustainability ? { sustainability: etsy.sustainability } : {}),
+            ...(etsy.goldSolidity ? { goldSolidity: etsy.goldSolidity } : {}),
+            ...(etsy.recycled ? { recycled: etsy.recycled } : {}),
+            ...(etsy.canBePersonalized ? { canBePersonalized: etsy.canBePersonalized } : {}),
+            ...(etsy.age ? { age: etsy.age } : {}),
           },
         }
       : {}),

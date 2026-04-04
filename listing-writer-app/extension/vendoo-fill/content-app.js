@@ -282,6 +282,19 @@
             title: pickString(etsy, ["title"]),
             description: pickString(etsy, ["description"]),
             categoryPath: pickString(etsy, ["categoryPath"], ["category"]),
+            materials: pickString(etsy, ["materials"]),
+            style: pickString(etsy, ["style"]),
+            theme: pickString(etsy, ["theme"]),
+            occasion: pickString(etsy, ["occasion"]),
+            recipient: pickString(etsy, ["recipient"]),
+            jewelryType: pickString(etsy, ["jewelryType"]),
+            gemstone: pickString(etsy, ["gemstone"]),
+            gemColor: pickString(etsy, ["gemColor"]),
+            sustainability: pickString(etsy, ["sustainability"]),
+            goldSolidity: pickString(etsy, ["goldSolidity"]),
+            recycled: pickString(etsy, ["recycled"]),
+            canBePersonalized: pickString(etsy, ["canBePersonalized"]),
+            age: pickString(etsy, ["age"]),
             tags: pickStringArray(etsy, ["tags"]),
           }
         : null;
@@ -291,6 +304,19 @@
           normalizedEtsy.title ||
           normalizedEtsy.description ||
           normalizedEtsy.categoryPath ||
+          normalizedEtsy.materials ||
+          normalizedEtsy.style ||
+          normalizedEtsy.theme ||
+          normalizedEtsy.occasion ||
+          normalizedEtsy.recipient ||
+          normalizedEtsy.jewelryType ||
+          normalizedEtsy.gemstone ||
+          normalizedEtsy.gemColor ||
+          normalizedEtsy.sustainability ||
+          normalizedEtsy.goldSolidity ||
+          normalizedEtsy.recycled ||
+          normalizedEtsy.canBePersonalized ||
+          normalizedEtsy.age ||
           normalizedEtsy.tags.length
         )
     );

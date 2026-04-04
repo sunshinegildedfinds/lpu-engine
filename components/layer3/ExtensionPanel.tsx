@@ -42,6 +42,13 @@ type Layer3Seed = {
     description?: string;
     tags?: string;
     categoryPath?: string;
+    materials?: string;
+    style?: string;
+    theme?: string;
+    occasion?: string;
+    gemstone?: string;
+    gemColor?: string;
+    age?: string;
   };
 };
 
@@ -416,6 +423,83 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       ...(depopStyle ? { style: depopStyle } : {}),
     };
   }, [mappedSeed.itemSpecifics, seed.depop]);
+  const etsySpecificsPayloadInfo = useMemo(() => {
+    const specifics = mappedSeed.itemSpecifics;
+    const generated: Record<string, string> = {};
+    const sourcePaths: Record<string, string> = {};
+    const skippedKeys: string[] = [];
+
+    const rules: Array<{
+      key:
+        | "materials"
+        | "style"
+        | "theme"
+        | "occasion"
+        | "gemstone"
+        | "gemColor"
+        | "age";
+      sources: Array<{ path: string; value: string }>;
+    }> = [
+      {
+        key: "materials",
+        sources: [{ path: "mappedSeed.itemSpecifics.material", value: String(specifics.material || "") }],
+      },
+      {
+        key: "style",
+        sources: [
+          { path: "mappedSeed.itemSpecifics.styleType", value: String(specifics.styleType || "") },
+          { path: "mappedSeed.itemSpecifics.style", value: String(specifics.style || "") },
+        ],
+      },
+      {
+        key: "theme",
+        sources: [{ path: "mappedSeed.itemSpecifics.theme", value: String(specifics.theme || "") }],
+      },
+      {
+        key: "occasion",
+        sources: [
+          { path: "mappedSeed.itemSpecifics.occasion", value: String(specifics.occasion || "") },
+        ],
+      },
+      {
+        key: "gemstone",
+        sources: [
+          { path: "mappedSeed.itemSpecifics.mainStone", value: String(specifics.mainStone || "") },
+        ],
+      },
+      {
+        key: "gemColor",
+        sources: [
+          {
+            path: "mappedSeed.itemSpecifics.mainStoneColor",
+            value: String(specifics.mainStoneColor || ""),
+          },
+        ],
+      },
+      {
+        key: "age",
+        sources: [{ path: "mappedSeed.itemSpecifics.vintage", value: String(specifics.vintage || "") }],
+      },
+    ];
+
+    for (const rule of rules) {
+      const source = rule.sources.find((candidate) => normalizeValue(candidate.value));
+      if (!source) {
+        skippedKeys.push(rule.key);
+        continue;
+      }
+      generated[rule.key] = normalizeValue(source.value);
+      sourcePaths[rule.key] = source.path;
+    }
+
+    return {
+      generated,
+      generatedKeys: Object.keys(generated),
+      skippedKeys,
+      sourcePaths,
+    };
+  }, [mappedSeed.itemSpecifics]);
+
   const etsyPayload = useMemo(() => {
     const title = String(seed.etsy?.title ?? "").trim();
     const description = String(seed.etsy?.description ?? "").trim();
@@ -430,8 +514,14 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       description,
       tags,
       ...(categoryPath ? { categoryPath } : {}),
+      ...etsySpecificsPayloadInfo.generated,
     };
-  }, [mappedSeed.canonicalCategoryPath, mappedSeed.category, seed.etsy]);
+  }, [
+    etsySpecificsPayloadInfo.generated,
+    mappedSeed.canonicalCategoryPath,
+    mappedSeed.category,
+    seed.etsy,
+  ]);
   const vintageValue = String(mappedSeed.itemSpecifics.vintage ?? "").trim();
   const etsyIncludedForVintage = useMemo(() => {
     const normalized = normalizeToken(vintageValue);
@@ -664,6 +754,11 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
       },
     });
     const etsyBlock = payload?.etsy;
+    console.debug("[LPU][EtsySpecificsPayload]", {
+      generatedKeys: etsySpecificsPayloadInfo.generatedKeys,
+      skippedKeys: etsySpecificsPayloadInfo.skippedKeys,
+      sourcePaths: etsySpecificsPayloadInfo.sourcePaths,
+    });
     const etsyCategoryPath =
       typeof etsyBlock?.categoryPath === "string" ? etsyBlock.categoryPath : "";
     const etsyCategorySourcePath = normalizeValue(String(seed.etsy?.categoryPath ?? ""))

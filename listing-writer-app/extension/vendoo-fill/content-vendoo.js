@@ -280,6 +280,14 @@
       typeof etsyBlock?.description === "string" ? etsyBlock.description.trim() : "";
     const etsyCategoryPath =
       typeof etsyBlock?.categoryPath === "string" ? etsyBlock.categoryPath.trim() : "";
+    const etsyMaterials =
+      typeof etsyBlock?.materials === "string" ? etsyBlock.materials.trim() : "";
+    const etsyTheme = typeof etsyBlock?.theme === "string" ? etsyBlock.theme.trim() : "";
+    const etsyOccasion =
+      typeof etsyBlock?.occasion === "string" ? etsyBlock.occasion.trim() : "";
+    const etsyGemstone =
+      typeof etsyBlock?.gemstone === "string" ? etsyBlock.gemstone.trim() : "";
+    const etsyAge = typeof etsyBlock?.age === "string" ? etsyBlock.age.trim() : "";
     lastEtsyCategoryInput = {
       sourcePath: etsyCategoryPath
         ? (typeof payload?.etsy?.categoryPath === "string"
@@ -314,6 +322,26 @@
           ? "payload.etsy.categoryPath|payload.marketplaces.etsy.categoryPath"
           : "",
         present: Boolean(etsyCategoryPath),
+      },
+      materialsLike: {
+        path: etsyMaterials ? "payload.etsy.materials|payload.marketplaces.etsy.materials" : "",
+        present: Boolean(etsyMaterials),
+      },
+      themeLike: {
+        path: etsyTheme ? "payload.etsy.theme|payload.marketplaces.etsy.theme" : "",
+        present: Boolean(etsyTheme),
+      },
+      occasionLike: {
+        path: etsyOccasion ? "payload.etsy.occasion|payload.marketplaces.etsy.occasion" : "",
+        present: Boolean(etsyOccasion),
+      },
+      gemstoneLike: {
+        path: etsyGemstone ? "payload.etsy.gemstone|payload.marketplaces.etsy.gemstone" : "",
+        present: Boolean(etsyGemstone),
+      },
+      ageLike: {
+        path: etsyAge ? "payload.etsy.age|payload.marketplaces.etsy.age" : "",
+        present: Boolean(etsyAge),
       },
     });
     console.debug("[Vendoo][ConditionPayload]", {
@@ -546,6 +574,13 @@
       await ensurePoshmarkStageOpenForPoshmarkFill();
       await ensureEtsyStageOpenForEtsyFill(payload);
       await ensureEtsyOptionalFieldsOpenForEtsyFill();
+      await runMarketplaceSpecificsPass({
+        marketplace: "etsy",
+        payload,
+        root: resolveMarketplaceSpecificsRoot("etsy"),
+        usedElements,
+        selectors,
+      });
       await fillEtsyTitleAndDescriptionIfPresent({
         payload,
         usedElements,
@@ -1253,6 +1288,279 @@
       count += matches.length;
     }
     return count;
+  }
+
+  function resolveMarketplaceSpecificsRoot(marketplace) {
+    const normalized = normalizeText(String(marketplace || ""));
+    if (normalized !== "etsy") return null;
+
+    const anchors = [
+      ...Array.from(document.querySelectorAll('[name^="listings.etsy.marketplaceSpecifics."]')),
+      ...Array.from(document.querySelectorAll('[id^="listings.etsy.marketplaceSpecifics."]')),
+      ...Array.from(
+        document.querySelectorAll('[data-testid^="listings.etsy.marketplaceSpecifics."]')
+      ),
+    ].filter((node) => node instanceof Element && isVisible(node));
+
+    if (!anchors.length) {
+      return null;
+    }
+
+    const primaryAnchor = anchors[0];
+    let current =
+      primaryAnchor.closest("section, form, [data-testid], [role='region'], fieldset, div") ??
+      primaryAnchor;
+    let bestRoot = current;
+    while (current instanceof Element && current.parentElement instanceof Element) {
+      const containsVisibleAnchors = anchors.filter((anchor) => current.contains(anchor)).length;
+      if (containsVisibleAnchors >= 2) {
+        bestRoot = current;
+      }
+      current = current.parentElement;
+      if (current.matches("body, html")) break;
+    }
+
+    return bestRoot instanceof Element ? bestRoot : null;
+  }
+
+  function resolveMarketplacePayloadBlock(marketplace, payload) {
+    const normalized = normalizeText(String(marketplace || ""));
+    if (!normalized) return null;
+    const topLevel = payload?.[normalized];
+    if (topLevel && typeof topLevel === "object") return topLevel;
+    const nested = payload?.marketplaces?.[normalized];
+    if (nested && typeof nested === "object") return nested;
+    return null;
+  }
+
+  function buildMarketplaceSpecificCandidates(marketplace, payloadBlock) {
+    const normalizedMarketplace = normalizeText(String(marketplace || ""));
+    if (!(payloadBlock && typeof payloadBlock === "object")) {
+      return { candidates: [], candidateKeys: [] };
+    }
+
+    const excludedTopLevel = new Set([
+      "title",
+      "description",
+      "tags",
+      "hashtags",
+      "optionalBrandHashtags",
+      "category",
+      "categoryPath",
+      "listing",
+    ]);
+    const seen = new Set();
+    const candidates = [];
+
+    function addCandidate(rawKey, rawPath, rawValue) {
+      const stringValue = typeof rawValue === "string" ? rawValue.trim() : "";
+      if (!stringValue) return;
+      const normalizedValue = normalizeOptionValue(stringValue);
+      if (!normalizedValue) return;
+      if (normalizedValue === "not applicable") return;
+      const canonicalKey = toCanonicalPayloadKey(rawKey);
+      const dedupeKey = normalizeText(`${canonicalKey}:${normalizedValue}`);
+      if (!dedupeKey || seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+
+      const synonyms = DYNAMIC_FIELD_SYNONYMS[canonicalKey] ?? [];
+      const keyTerms = Array.from(
+        new Set([
+          ...buildKeyTermsFromKey(rawKey),
+          ...buildKeyTermsFromKey(canonicalKey),
+          ...buildKeyTermsFromKey(rawPath),
+        ])
+      );
+      const matchTerms = Array.from(new Set([...synonyms, ...keyTerms].map(normalizeText)));
+      candidates.push({
+        key: canonicalKey,
+        canonicalKey,
+        value: stringValue,
+        matchTerms,
+      });
+    }
+
+    function visit(node, pathParts = []) {
+      if (typeof node === "string") {
+        const rawPath = pathParts.join(".");
+        const rawKey = pathParts[pathParts.length - 1] || rawPath;
+        if (!rawKey) return;
+        if (pathParts.length === 1 && excludedTopLevel.has(rawKey)) return;
+        addCandidate(rawKey, rawPath, node);
+        return;
+      }
+      if (Array.isArray(node)) {
+        const stringValues = node
+          .filter((value) => typeof value === "string")
+          .map((value) => String(value).trim())
+          .filter(Boolean);
+        if (!stringValues.length) return;
+        const rawPath = pathParts.join(".");
+        const rawKey = pathParts[pathParts.length - 1] || rawPath;
+        if (!rawKey) return;
+        if (pathParts.length === 1 && excludedTopLevel.has(rawKey)) return;
+        addCandidate(rawKey, rawPath, stringValues.join("; "));
+        return;
+      }
+      if (!(node && typeof node === "object")) return;
+      for (const [key, value] of Object.entries(node)) {
+        visit(value, [...pathParts, key]);
+      }
+    }
+
+    visit(payloadBlock, []);
+    const candidateKeys = Array.from(new Set(candidates.map((candidate) => candidate.key)));
+    if (normalizedMarketplace === "etsy") {
+      return { candidates, candidateKeys };
+    }
+    return { candidates: [], candidateKeys: [] };
+  }
+
+  async function runMarketplaceSpecificsPass(input) {
+    const { marketplace, payload, root, usedElements, selectors } = input;
+    const diagnostics = {
+      marketplace: String(marketplace || ""),
+      candidateKeys: [],
+      discoveredFieldLabels: [],
+      attemptedFields: [],
+      filledFields: [],
+      skippedFields: [],
+    };
+    const etsyBatchDiagnostics = {
+      attemptedFields: [],
+      selectedValues: {},
+      verifiedFields: [],
+      failedFields: [],
+      reason: "",
+    };
+
+    const payloadBlock = resolveMarketplacePayloadBlock(marketplace, payload);
+    const { candidates, candidateKeys } = buildMarketplaceSpecificCandidates(
+      marketplace,
+      payloadBlock
+    );
+    diagnostics.candidateKeys = candidateKeys;
+
+    let specificsRoot = root instanceof Element && isVisible(root) ? root : null;
+    if (!(specificsRoot instanceof Element)) {
+      specificsRoot = resolveMarketplaceSpecificsRoot(marketplace);
+    }
+    if (!(specificsRoot instanceof Element) || !isVisible(specificsRoot)) {
+      console.debug("[Vendoo][MarketplaceSpecificsRoot]", {
+        marketplace: diagnostics.marketplace,
+        rootFound: false,
+        visibleFieldCount: 0,
+        reason: "specifics root not found",
+      });
+      diagnostics.skippedFields.push("specifics root not found");
+      console.debug("[Vendoo][MarketplaceSpecificsPass]", diagnostics);
+      return diagnostics;
+    }
+
+    let visibleRegistry = discoverVisibleFieldRegistry(specificsRoot);
+    if (!visibleRegistry.length) {
+      const refreshedRoot = resolveMarketplaceSpecificsRoot(marketplace);
+      if (refreshedRoot instanceof Element && refreshedRoot !== specificsRoot) {
+        specificsRoot = refreshedRoot;
+        visibleRegistry = discoverVisibleFieldRegistry(specificsRoot);
+      }
+    }
+    console.debug("[Vendoo][MarketplaceSpecificsRoot]", {
+      marketplace: diagnostics.marketplace,
+      rootFound: true,
+      visibleFieldCount: visibleRegistry.length,
+      reason: visibleRegistry.length ? "live etsy specifics root resolved" : "no visible fields in root",
+    });
+    diagnostics.discoveredFieldLabels = visibleRegistry.map((field) => field.label);
+    if (!visibleRegistry.length) {
+      diagnostics.skippedFields.push("no visible fields discovered");
+      console.debug("[Vendoo][MarketplaceSpecificsPass]", diagnostics);
+      return diagnostics;
+    }
+
+    if (!candidates.length) {
+      diagnostics.skippedFields.push("no candidate payload values");
+      console.debug("[Vendoo][MarketplaceSpecificsPass]", diagnostics);
+      return diagnostics;
+    }
+
+    for (const field of visibleRegistry) {
+      const initialMatches = candidates.filter((candidate) =>
+        isDynamicLabelMatch(field.normalizedLabel, candidate.matchTerms)
+      );
+      const resolved = resolveFinalMatchesByPrecedence(
+        field.normalizedLabel,
+        initialMatches,
+        candidates
+      );
+      const matches = resolved.matches;
+      if (matches.length !== 1) {
+        diagnostics.skippedFields.push(
+          `${field.label}: ${matches.length > 1 ? "ambiguous_payload_match" : "no_payload_match"}`
+        );
+        continue;
+      }
+
+      const candidate = matches[0];
+      diagnostics.attemptedFields.push(field.label);
+      if (normalizeText(diagnostics.marketplace) === "etsy" && isTrackedEtsySpecificField(field)) {
+        etsyBatchDiagnostics.attemptedFields.push(field.label);
+        etsyBatchDiagnostics.selectedValues[field.label] = candidate.value;
+      }
+      if (usedElements.has(field.control)) {
+        diagnostics.skippedFields.push(`${field.label}: collision_prevention`);
+        if (normalizeText(diagnostics.marketplace) === "etsy" && isTrackedEtsySpecificField(field)) {
+          etsyBatchDiagnostics.failedFields.push(`${field.label}: collision_prevention`);
+        }
+        continue;
+      }
+
+      let result = await fillDynamicFieldValue(field, candidate.value, selectors);
+      const verification = await verifyDynamicFillResult(field, candidate.value, result);
+      if (result.status === "filled" && !verification.passed) {
+        result = {
+          ...result,
+          status: "needs_review",
+          reason: verification.reason || "post-fill verification failed",
+        };
+      }
+
+      if (result.status === "filled") {
+        usedElements.add(field.control);
+        diagnostics.filledFields.push(field.label);
+        if (normalizeText(diagnostics.marketplace) === "etsy" && isTrackedEtsySpecificField(field)) {
+          etsyBatchDiagnostics.verifiedFields.push(field.label);
+        }
+      } else {
+        diagnostics.skippedFields.push(`${field.label}: ${result.reason || result.status}`);
+        if (normalizeText(diagnostics.marketplace) === "etsy" && isTrackedEtsySpecificField(field)) {
+          etsyBatchDiagnostics.failedFields.push(
+            `${field.label}: ${result.reason || result.status}`
+          );
+        }
+      }
+    }
+
+    if (normalizeText(diagnostics.marketplace) === "etsy") {
+      etsyBatchDiagnostics.reason = etsyBatchDiagnostics.failedFields.length
+        ? "partial_or_failed_verification"
+        : etsyBatchDiagnostics.verifiedFields.length
+          ? "verified"
+          : "no_tracked_fields_attempted";
+      console.debug("[Vendoo][EtsySpecificsBatch]", etsyBatchDiagnostics);
+    }
+    console.debug("[Vendoo][MarketplaceSpecificsPass]", diagnostics);
+    return diagnostics;
+  }
+
+  function isTrackedEtsySpecificField(field) {
+    const normalizedLabel = normalizeText(field?.normalizedLabel ?? field?.label ?? "");
+    return (
+      normalizedLabel === "materials" ||
+      normalizedLabel === "gemstone" ||
+      normalizedLabel === "theme" ||
+      normalizedLabel === "age"
+    );
   }
 
   function isDepopTabSpecificallyActive(tabElement) {
@@ -6851,6 +7159,35 @@
         };
       }
       const valueMode = payloadValues.multiValue ? "multi-value" : "single-value";
+      let resolvedEtsyTarget = "";
+      if (
+        valueMode === "single-value" &&
+        isEtsySpecificsField(field) &&
+        isTrackedEtsyResolutionField(field) &&
+        evaluateEtsyStageGate().stageDetected
+      ) {
+        const etsyResolution = await resolveEtsySpecificOptionValue({
+          field,
+          payloadValue: String(value ?? "").trim(),
+          optionSelectors,
+        });
+        if (etsyResolution.logged) {
+          console.debug("[Vendoo][EtsyValueResolution]", etsyResolution.diagnostic);
+        }
+        if (!etsyResolution.selectedResolution) {
+          entryDiagnostics.finalStatusByField = "skipped_for_safety";
+          entryDiagnostics.executionRouteSelected = "etsy_value_resolution_no_safe_match";
+          entryDiagnostics.executionRouteReasons.push("etsy_specifics_no_safe_option_match");
+          return {
+            status: "skipped_for_safety",
+            reason: `no safe etsy option match (${etsyResolution.reason || "unresolved"})`,
+            controlFamily: route.controlFamily,
+            adapterSelected: route.adapterSelected,
+            entryDiagnostics,
+          };
+        }
+        resolvedEtsyTarget = etsyResolution.selectedResolution;
+      }
       if (payloadValues.multiValue) {
         const hasContradictoryLockEvidence =
           Array.isArray(entryAnalysis.contradictoryLockEvidence) &&
@@ -6887,7 +7224,10 @@
         };
       }
 
-      for (const target of payloadValues.values) {
+      const targetsToAttempt = resolvedEtsyTarget
+        ? [resolvedEtsyTarget]
+        : payloadValues.values;
+      for (const target of targetsToAttempt) {
         entryDiagnostics.optionMatchAttempted = true;
         entryDiagnostics.executionRouteSelected = "combobox_option_match_then_custom";
         entryDiagnostics.executionRouteReasons.push("single_token_combobox_attempt");
@@ -7338,6 +7678,20 @@
       }
 
       const readback = lastReadback ?? readSingleSelectComboboxVerification(field);
+      if (isEtsySpecificsField(field)) {
+        const etsyReadback = readEtsySpecificsVerification(field, expectedNormalizedValue);
+        if (etsyReadback.passed) {
+          return {
+            status: "verified",
+            passed: true,
+            reason: "",
+            expectedRawValue,
+            expectedNormalizedValue,
+            matchedVerificationSource: etsyReadback.matchedSource,
+            actualRenderedText: etsyReadback.matchedValue,
+          };
+        }
+      }
       return {
         status: "failed",
         passed: false,
@@ -7598,6 +7952,83 @@
         (detail) => detail.method === "visible_input_value" && detail.nodeFound
       ),
       readbackSourceDetails: sourceDetails,
+    };
+  }
+
+  function isEtsySpecificsField(field) {
+    const control = field?.control;
+    const normalizedLabel = normalizeText(field?.normalizedLabel ?? field?.label ?? "");
+    const labelTracked = isTrackedEtsySpecificField(field);
+    if (labelTracked) return true;
+    if (!(control instanceof Element)) return false;
+    const metadata = normalizeText(
+      [
+        control.getAttribute("id") || "",
+        control.getAttribute("name") || "",
+        control.getAttribute("data-testid") || "",
+        control.getAttribute("aria-label") || "",
+      ].join(" ")
+    );
+    return (
+      metadata.includes("listings etsy marketplacespecifics") ||
+      metadata.includes("listings.etsy.marketplacespecifics") ||
+      normalizedLabel.includes("materials") ||
+      normalizedLabel.includes("gemstone") ||
+      normalizedLabel.includes("theme") ||
+      normalizedLabel.includes("age")
+    );
+  }
+
+  function readEtsySpecificsVerification(field, expectedNormalizedValue) {
+    const candidates = [];
+    const seen = new Set();
+    function add(raw) {
+      const normalized = normalizeOptionValue(raw);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push({ normalized, raw: cleanCategoryStage(String(raw || "")) });
+    }
+
+    const control = field?.control;
+    if (!(control instanceof Element)) {
+      return { passed: false, matchedSource: "", matchedValue: "" };
+    }
+
+    add(control.textContent || "");
+    add(control.getAttribute("value") || "");
+    add(control.getAttribute("aria-label") || "");
+    add(control.getAttribute("title") || "");
+
+    const controlScope =
+      control.closest("div, section, fieldset, form") ?? control.parentElement ?? control;
+    if (controlScope instanceof Element) {
+      const renderedNodes = Array.from(
+        controlScope.querySelectorAll(
+          ".react-select__single-value, [class*='single-value'], [class*='singleValue'], .react-select__multi-value__label"
+        )
+      ).filter((node) => node instanceof Element && isVisible(node));
+      for (const node of renderedNodes) {
+        add(node.textContent || "");
+      }
+
+      const inputs = Array.from(
+        controlScope.querySelectorAll(
+          'input[value], input[type="hidden"][value], input[name*="listings.etsy.marketplaceSpecifics"], input[id*="listings.etsy.marketplaceSpecifics"]'
+        )
+      ).slice(0, 16);
+      for (const input of inputs) {
+        if (!(input instanceof HTMLInputElement)) continue;
+        add(input.value);
+        add(input.getAttribute("value") || "");
+      }
+    }
+
+    const expected = normalizeOptionValue(expectedNormalizedValue);
+    const matched = candidates.find((candidate) => candidate.normalized === expected);
+    return {
+      passed: Boolean(expected && matched),
+      matchedSource: matched ? "etsy_specifics_scope_readback" : "",
+      matchedValue: matched?.raw || "",
     };
   }
 
@@ -7952,6 +8383,120 @@
       }
     }
     return values;
+  }
+
+  function isTrackedEtsyResolutionField(field) {
+    const normalizedLabel = normalizeText(field?.normalizedLabel ?? field?.label ?? "");
+    return (
+      normalizedLabel === "materials" ||
+      normalizedLabel === "gemstone" ||
+      normalizedLabel === "theme" ||
+      normalizedLabel === "age" ||
+      normalizedLabel === "occasion"
+    );
+  }
+
+  function tokenizeEtsyResolutionInput(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return [];
+    const parts = raw
+      .split(/\r?\n|;|,|\/|\||\band\b/gi)
+      .map((part) => cleanCategoryStage(part))
+      .filter(Boolean);
+    const tokens = [];
+    const seen = new Set();
+    for (const part of parts) {
+      const normalized = normalizeOptionValue(part);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      tokens.push(part);
+    }
+    return tokens.length ? tokens : [raw];
+  }
+
+  async function resolveEtsySpecificOptionValue(input) {
+    const { field, payloadValue, optionSelectors } = input;
+    const diagnostic = {
+      fieldLabel: String(field?.label || ""),
+      payloadValue: String(payloadValue || ""),
+      visibleOptionsSample: [],
+      resolvedOptionCandidates: [],
+      selectedResolution: "",
+      reason: "",
+    };
+
+    const control = field?.control;
+    if (!(control instanceof Element)) {
+      diagnostic.reason = "control_missing";
+      return { selectedResolution: "", reason: diagnostic.reason, diagnostic, logged: true };
+    }
+
+    openCustomSelectControl(control);
+    await wait(120);
+    const optionDiscovery = findVisibleComboboxOptionEntries(control, optionSelectors);
+    const visibleOptions = getUniqueComboboxOptionTexts(optionDiscovery.entries, 16);
+    diagnostic.visibleOptionsSample = visibleOptions.slice(0, 8);
+    if (!visibleOptions.length) {
+      diagnostic.reason = "no_visible_options";
+      return { selectedResolution: "", reason: diagnostic.reason, diagnostic, logged: true };
+    }
+
+    const normalizedOptions = visibleOptions.map((option) => ({
+      raw: option,
+      normalized: normalizeOptionValue(option),
+    }));
+    const payloadTokens = tokenizeEtsyResolutionInput(payloadValue);
+    const normalizedPayload = normalizeOptionValue(payloadValue);
+
+    const exact = normalizedOptions.find((option) => option.normalized === normalizedPayload);
+    if (exact) {
+      diagnostic.resolvedOptionCandidates = [exact.raw];
+      diagnostic.selectedResolution = exact.raw;
+      diagnostic.reason = "exact_visible_match";
+      return {
+        selectedResolution: exact.raw,
+        reason: diagnostic.reason,
+        diagnostic,
+        logged: true,
+      };
+    }
+
+    const scored = [];
+    const seen = new Set();
+    for (const option of normalizedOptions) {
+      let score = 0;
+      for (const tokenRaw of payloadTokens) {
+        const token = normalizeOptionValue(tokenRaw);
+        if (!token) continue;
+        if (option.normalized === token) score += 100;
+        else if (option.normalized.includes(token) || token.includes(option.normalized)) score += 20;
+        const tokenWords = token.match(/[a-z0-9]+/g) || [];
+        const optionWords = option.normalized.match(/[a-z0-9]+/g) || [];
+        const overlap = tokenWords.filter((word) => optionWords.includes(word)).length;
+        score += overlap * 3;
+      }
+      if (score <= 0) continue;
+      const key = `${option.normalized}:${option.raw}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      scored.push({ raw: option.raw, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    diagnostic.resolvedOptionCandidates = scored.slice(0, 5).map((entry) => entry.raw);
+    if (!scored.length) {
+      diagnostic.reason = "no_safe_option_match";
+      return { selectedResolution: "", reason: diagnostic.reason, diagnostic, logged: true };
+    }
+
+    diagnostic.selectedResolution = scored[0].raw;
+    diagnostic.reason = "closest_normalized_match";
+    return {
+      selectedResolution: scored[0].raw,
+      reason: diagnostic.reason,
+      diagnostic,
+      logged: true,
+    };
   }
 
   function resolveConditionOptionMatch(input) {
