@@ -627,6 +627,63 @@ export default function LpuPage() {
         ) : null}
       </form>
 
+      <section className="mt-8 rounded-2xl border p-4">
+        <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
+          <input
+            type="checkbox"
+            checked={enableResearchPanel}
+            onChange={(event) => setEnableResearchPanel(event.target.checked)}
+            className="h-4 w-4"
+          />
+          Enable Research Panel
+        </label>
+      </section>
+
+      {enableResearchPanel && validation && researchRecord ? (
+        <ResearchPanel
+          researchRecord={researchRecord}
+          priceDecision={priceDecision}
+          onPriceDecisionChange={setPriceDecision}
+        />
+      ) : null}
+
+      <ExtensionPanel
+        key={[
+          payloadMap.platforms.ebay.titleA,
+          payloadMap.platforms.ebay.titleB,
+          payloadMap.platforms.ebay.description,
+          payloadMap.platforms.ebay.section,
+        ].join("|")}
+        seed={{
+          titleA: payloadMap.platforms.ebay.titleA,
+          titleB: payloadMap.platforms.ebay.titleB,
+          description: payloadMap.platforms.ebay.description,
+          ebaySection: payloadMap.platforms.ebay.section,
+          poshmarkStyleTags: vendooBaseTagsSource.normalizedValue.join(", "),
+          photos: layer3Photos,
+          researchMeta: researchMetaForPayload,
+          pricing: pricingForPayload,
+          resolvedPrice: resolvedPriceForPayload,
+          depop: {
+            listing: payloadMap.platforms.depop.listing,
+            hashtags: payloadMap.platforms.depop.hashtags,
+            optionalBrandHashtags: payloadMap.platforms.depop.optionalBrandHashtags,
+          },
+          poshmark: {
+            title: payloadMap.platforms.poshmark.title,
+            description: payloadMap.platforms.poshmark.description,
+            styleTags: payloadMap.platforms.poshmark.styleTags,
+            categoryPath: payloadMap.platforms.poshmark.categoryPath,
+          },
+          etsy: {
+            title: payloadMap.platforms.etsy.title,
+            description: payloadMap.platforms.etsy.description,
+            tags: payloadMap.platforms.etsy.tags,
+            categoryPath: payloadMap.platforms.etsy.categoryPath,
+          },
+        }}
+      />
+
       <section className="mt-8 rounded-2xl border p-6">
         <div className="mb-4 flex items-center justify-between gap-4">
           <h2 className="text-2xl font-semibold">Output</h2>
@@ -1230,62 +1287,6 @@ export default function LpuPage() {
         )}
       </section>
 
-      <section className="mt-8 rounded-2xl border p-4">
-        <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
-          <input
-            type="checkbox"
-            checked={enableResearchPanel}
-            onChange={(event) => setEnableResearchPanel(event.target.checked)}
-            className="h-4 w-4"
-          />
-          Enable Research Panel
-        </label>
-      </section>
-
-      {enableResearchPanel && validation && researchRecord ? (
-        <ResearchPanel
-          researchRecord={researchRecord}
-          priceDecision={priceDecision}
-          onPriceDecisionChange={setPriceDecision}
-        />
-      ) : null}
-
-      <ExtensionPanel
-        key={[
-          payloadMap.platforms.ebay.titleA,
-          payloadMap.platforms.ebay.titleB,
-          payloadMap.platforms.ebay.description,
-          payloadMap.platforms.ebay.section,
-        ].join("|")}
-        seed={{
-          titleA: payloadMap.platforms.ebay.titleA,
-          titleB: payloadMap.platforms.ebay.titleB,
-          description: payloadMap.platforms.ebay.description,
-          ebaySection: payloadMap.platforms.ebay.section,
-          poshmarkStyleTags: vendooBaseTagsSource.normalizedValue.join(", "),
-          photos: layer3Photos,
-          researchMeta: researchMetaForPayload,
-          pricing: pricingForPayload,
-          resolvedPrice: resolvedPriceForPayload,
-          depop: {
-            listing: payloadMap.platforms.depop.listing,
-            hashtags: payloadMap.platforms.depop.hashtags,
-            optionalBrandHashtags: payloadMap.platforms.depop.optionalBrandHashtags,
-          },
-          poshmark: {
-            title: payloadMap.platforms.poshmark.title,
-            description: payloadMap.platforms.poshmark.description,
-            styleTags: payloadMap.platforms.poshmark.styleTags,
-            categoryPath: payloadMap.platforms.poshmark.categoryPath,
-          },
-          etsy: {
-            title: payloadMap.platforms.etsy.title,
-            description: payloadMap.platforms.etsy.description,
-            tags: payloadMap.platforms.etsy.tags,
-            categoryPath: payloadMap.platforms.etsy.categoryPath,
-          },
-        }}
-      />
     </main>
   );
 }
