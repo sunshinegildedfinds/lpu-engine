@@ -1,8 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import { ExtensionPanel } from "@/components/layer3/ExtensionPanel";
-import { ResearchPanel } from "@/components/lpu/ResearchPanel";
+import { ChangeEvent, FormEvent, useMemo, useState } from "react";
 import {
   buildCopyMap,
   buildPayloadMap,
@@ -14,21 +12,10 @@ import {
   getVendooPlatformRequiredFieldStatus,
 } from "@/lib/vendoo/fieldMap";
 import { buildVendooActionPreview } from "@/lib/vendoo/actionPreview";
-import { buildResearchRecordFromValidatedPayload } from "@/lib/research/buildResearchRecord";
-import type { OptionalPriceInput } from "@/lib/research/types";
-import type { VendooPricingMeta, VendooResearchMeta } from "@/lib/vendoo/extensionPayload";
-
-const INITIAL_PRICE_DECISION: OptionalPriceInput = {
-  selectedPrice: "",
-  floorPrice: "",
-  pricingNote: "",
-  source: null,
-};
 
 type ImagePayload = {
   name: string;
   type: string;
-  size: number;
   dataUrl: string;
 };
 
@@ -101,53 +88,6 @@ function previewValue(value: string, max = 120): string {
   if (normalized.length <= max) return normalized;
 
   return `${normalized.slice(0, max)}…`;
-}
-
-function normalizeVendooBaseTags(raw: string | string[] | undefined): string[] {
-  const inputValues = Array.isArray(raw) ? raw : [raw ?? ""];
-  const seen = new Set<string>();
-  const normalized: string[] = [];
-
-  for (const input of inputValues) {
-    if (typeof input !== "string" || !input.trim()) continue;
-    const parts = input
-      .split(/\r?\n|,/)
-      .map((part) => part.trim().replace(/^#+/, ""))
-      .map((part) => part.replace(/\s+/g, " "))
-      .filter(Boolean);
-    for (const part of parts) {
-      if (seen.has(part)) continue;
-      seen.add(part);
-      normalized.push(part);
-    }
-  }
-
-  return normalized;
-}
-
-function extractPoshmarkStyleTagsSource(section: string): string {
-  if (!section.trim()) return "";
-  const lines = section.replace(/\r\n/g, "\n").split("\n");
-  const styleTagLabelPattern = /^style tags\s*:?\s*(.*)$/i;
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index].trim();
-    const match = line.match(styleTagLabelPattern);
-    if (!match) continue;
-
-    const sameLineValue = (match[1] ?? "").trim();
-    if (sameLineValue) return sameLineValue;
-
-    for (let next = index + 1; next < lines.length; next += 1) {
-      const candidate = lines[next].trim();
-      if (!candidate) continue;
-      if (/^[a-z][a-z0-9\s()\/&-]*:\s*$/i.test(candidate)) return "";
-      return candidate;
-    }
-    return "";
-  }
-
-  return "";
 }
 
 function StatusBadge({ pass }: { pass: boolean }) {
@@ -258,11 +198,6 @@ export default function LpuPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
-  const [layer3Photos, setLayer3Photos] = useState<ImagePayload[]>([]);
-  const [enableResearchPanel, setEnableResearchPanel] = useState(false);
-  const [priceDecision, setPriceDecision] = useState<OptionalPriceInput>(
-    INITIAL_PRICE_DECISION
-  );
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files ?? []);
@@ -282,7 +217,6 @@ export default function LpuPage() {
         files.map(async (file) => ({
           name: file.name,
           type: file.type,
-          size: file.size,
           dataUrl: await fileToDataUrl(file),
         }))
       );
@@ -306,16 +240,12 @@ export default function LpuPage() {
 
       setOutput(data.output || "");
       setValidation(data.validation ?? null);
-      setLayer3Photos(images);
-      setPriceDecision(INITIAL_PRICE_DECISION);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to generate output.";
       setError(message);
       setValidation(null);
       setCopiedTarget(null);
-      setLayer3Photos([]);
-      setPriceDecision(INITIAL_PRICE_DECISION);
     } finally {
       setIsLoading(false);
     }
@@ -414,101 +344,6 @@ export default function LpuPage() {
       actionReviewPlatforms: platformOrder.length - actionReadyPlatforms,
     };
   }, [platformOrder, vendooActionPreview]);
-
-  const researchRecord = useMemo(() => {
-    if (!validation) return null;
-    return buildResearchRecordFromValidatedPayload(payloadMap);
-  }, [payloadMap, validation]);
-
-  const researchMetaForPayload = useMemo<VendooResearchMeta | undefined>(() => {
-    if (!enableResearchPanel || !researchRecord) return undefined;
-    return {
-      searchSeed: researchRecord.searchSeed,
-      primaryQuery: researchRecord.primaryQuery,
-      alternateQueries: researchRecord.alternateQueries,
-      soldCompLink: researchRecord.soldCompLink,
-      completedCompLink: researchRecord.completedCompLink,
-      activeCompLink: researchRecord.activeCompLink,
-      matchConfidence: researchRecord.matchConfidence,
-      researchNotes: researchRecord.researchNotes,
-    };
-  }, [enableResearchPanel, researchRecord]);
-
-  const pricingForPayload = useMemo<VendooPricingMeta | undefined>(() => {
-    if (!enableResearchPanel) return undefined;
-    return {
-      selectedPrice: priceDecision.selectedPrice,
-      floorPrice: priceDecision.floorPrice,
-      pricingNote: priceDecision.pricingNote,
-      source: priceDecision.source,
-    };
-  }, [enableResearchPanel, priceDecision]);
-
-  const resolvedPriceForPayload = useMemo<string | undefined>(() => {
-    if (!enableResearchPanel) return undefined;
-    const selected = priceDecision.selectedPrice.trim();
-    if (!selected) return undefined;
-    return /^[$]?\d+([.,]\d{1,2})?$/.test(selected) ? selected : undefined;
-  }, [enableResearchPanel, priceDecision.selectedPrice]);
-
-  const vendooBaseTagsSource = useMemo(() => {
-    const styleTagsFromPoshmarkSection = extractPoshmarkStyleTagsSource(
-      payloadMap.platforms.poshmark.section
-    );
-    if (styleTagsFromPoshmarkSection.trim()) {
-      return {
-        sourceFound: true,
-        sourcePath: "payloadMap.platforms.poshmark.section::Style Tags",
-        rawValue: styleTagsFromPoshmarkSection,
-        normalizedValue: normalizeVendooBaseTags(
-          styleTagsFromPoshmarkSection.split(";")
-        ),
-      };
-    }
-
-    const styleTagsFromPayloadMap = payloadMap.platforms.poshmark.styleTags;
-    if (styleTagsFromPayloadMap.trim()) {
-      return {
-        sourceFound: true,
-        sourcePath: "payloadMap.platforms.poshmark.styleTags",
-        rawValue: styleTagsFromPayloadMap,
-        normalizedValue: normalizeVendooBaseTags(styleTagsFromPayloadMap.split(";")),
-      };
-    }
-
-    const metrics = validation?.platformResults?.poshmark?.metrics;
-    const styleTagsFromMetrics = metrics?.styleTags;
-    if (Array.isArray(styleTagsFromMetrics) && styleTagsFromMetrics.length > 0) {
-      return {
-        sourceFound: true,
-        sourcePath: "validation.platformResults.poshmark.metrics.styleTags",
-        rawValue: styleTagsFromMetrics,
-        normalizedValue: normalizeVendooBaseTags(
-          styleTagsFromMetrics.filter((value): value is string => typeof value === "string")
-        ),
-      };
-    }
-
-    return {
-      sourceFound: false,
-      sourcePath: "",
-      rawValue: "",
-      normalizedValue: [] as string[],
-    };
-  }, [
-    payloadMap.platforms.poshmark.section,
-    payloadMap.platforms.poshmark.styleTags,
-    validation,
-  ]);
-
-  useEffect(() => {
-    console.debug("[LPU][VendooBaseTags]", {
-      sourceFound: vendooBaseTagsSource.sourceFound,
-      sourcePath: vendooBaseTagsSource.sourcePath,
-      rawValue: vendooBaseTagsSource.rawValue,
-      normalizedValue: vendooBaseTagsSource.normalizedValue,
-    });
-  }, [vendooBaseTagsSource]);
 
   async function handleCopy(target: string) {
     const text = copyMap[target];
@@ -626,63 +461,6 @@ export default function LpuPage() {
           </div>
         ) : null}
       </form>
-
-      <section className="mt-8 rounded-2xl border p-4">
-        <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
-          <input
-            type="checkbox"
-            checked={enableResearchPanel}
-            onChange={(event) => setEnableResearchPanel(event.target.checked)}
-            className="h-4 w-4"
-          />
-          Enable Research Panel
-        </label>
-      </section>
-
-      {enableResearchPanel && validation && researchRecord ? (
-        <ResearchPanel
-          researchRecord={researchRecord}
-          priceDecision={priceDecision}
-          onPriceDecisionChange={setPriceDecision}
-        />
-      ) : null}
-
-      <ExtensionPanel
-        key={[
-          payloadMap.platforms.ebay.titleA,
-          payloadMap.platforms.ebay.titleB,
-          payloadMap.platforms.ebay.description,
-          payloadMap.platforms.ebay.section,
-        ].join("|")}
-        seed={{
-          titleA: payloadMap.platforms.ebay.titleA,
-          titleB: payloadMap.platforms.ebay.titleB,
-          description: payloadMap.platforms.ebay.description,
-          ebaySection: payloadMap.platforms.ebay.section,
-          poshmarkStyleTags: vendooBaseTagsSource.normalizedValue.join(", "),
-          photos: layer3Photos,
-          researchMeta: researchMetaForPayload,
-          pricing: pricingForPayload,
-          resolvedPrice: resolvedPriceForPayload,
-          depop: {
-            listing: payloadMap.platforms.depop.listing,
-            hashtags: payloadMap.platforms.depop.hashtags,
-            optionalBrandHashtags: payloadMap.platforms.depop.optionalBrandHashtags,
-          },
-          poshmark: {
-            title: payloadMap.platforms.poshmark.title,
-            description: payloadMap.platforms.poshmark.description,
-            styleTags: payloadMap.platforms.poshmark.styleTags,
-            categoryPath: payloadMap.platforms.poshmark.categoryPath,
-          },
-          etsy: {
-            title: payloadMap.platforms.etsy.title,
-            description: payloadMap.platforms.etsy.description,
-            tags: payloadMap.platforms.etsy.tags,
-            categoryPath: payloadMap.platforms.etsy.categoryPath,
-          },
-        }}
-      />
 
       <section className="mt-8 rounded-2xl border p-6">
         <div className="mb-4 flex items-center justify-between gap-4">
@@ -1286,7 +1064,6 @@ export default function LpuPage() {
           </div>
         )}
       </section>
-
     </main>
   );
 }

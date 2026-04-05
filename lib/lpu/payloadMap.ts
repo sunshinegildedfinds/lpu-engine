@@ -20,6 +20,8 @@ export type PoshmarkPayload = {
   section: string;
   title: string;
   description: string;
+  styleTags: string;
+  categoryPath: string;
 };
 
 export type MercariPayload = {
@@ -34,6 +36,7 @@ export type EtsyPayload = {
   title: string;
   tags: string;
   description: string;
+  categoryPath: string;
 };
 
 export type StructuredPayloadMap = {
@@ -61,6 +64,8 @@ const FIELD_LABELS = {
   poshmark: {
     title: ["Title"],
     description: ["Description"],
+    styleTags: ["Style Tags", "Style tags"],
+    categoryPath: ["Category Path", "Category"],
   },
   mercari: {
     title: ["Title"],
@@ -71,6 +76,7 @@ const FIELD_LABELS = {
     title: ["Title"],
     tags: ["Tags"],
     description: ["Description"],
+    categoryPath: ["Category Path", "Category"],
   },
 } as const;
 
@@ -127,6 +133,21 @@ export function extractLabeledBlock(section: string, labels: readonly string[]):
   return collected.join("\n").trim();
 }
 
+function extractEtsyCategoryPath(section: string): string {
+  const raw = extractLabeledBlock(section, FIELD_LABELS.etsy.categoryPath);
+  if (!raw) return "";
+
+  const stopPattern =
+    /\b(?:materials?|attributes?\s*\/\s*key\s*details?|attributes?|key\s*details?)\s*:/i;
+  const match = raw.match(stopPattern);
+  const sliced = match && typeof match.index === "number" ? raw.slice(0, match.index) : raw;
+
+  return sliced
+    .replace(/\s+/g, " ")
+    .replace(/[> ]+$/g, "")
+    .trim();
+}
+
 function countReadyFields(values: string[]): number {
   return values.filter((value) => value.trim().length > 0).length;
 }
@@ -166,6 +187,14 @@ export function buildPayloadMap(
           poshmarkSection,
           FIELD_LABELS.poshmark.description
         ),
+        styleTags: extractLabeledBlock(
+          poshmarkSection,
+          FIELD_LABELS.poshmark.styleTags
+        ),
+        categoryPath: extractLabeledBlock(
+          poshmarkSection,
+          FIELD_LABELS.poshmark.categoryPath
+        ),
       },
       mercari: {
         section: mercariSection,
@@ -181,6 +210,7 @@ export function buildPayloadMap(
         title: extractLabeledBlock(etsySection, FIELD_LABELS.etsy.title),
         tags: extractLabeledBlock(etsySection, FIELD_LABELS.etsy.tags),
         description: extractLabeledBlock(etsySection, FIELD_LABELS.etsy.description),
+        categoryPath: extractEtsyCategoryPath(etsySection),
       },
     },
   };
@@ -203,6 +233,8 @@ export function buildCopyMap(payloadMap: StructuredPayloadMap): Record<string, s
     poshmark: payloadMap.platforms.poshmark.section,
     "poshmark-title": payloadMap.platforms.poshmark.title,
     "poshmark-description": payloadMap.platforms.poshmark.description,
+    "poshmark-style-tags": payloadMap.platforms.poshmark.styleTags,
+    "poshmark-category-path": payloadMap.platforms.poshmark.categoryPath,
 
     mercari: payloadMap.platforms.mercari.section,
     "mercari-title": payloadMap.platforms.mercari.title,
@@ -213,6 +245,7 @@ export function buildCopyMap(payloadMap: StructuredPayloadMap): Record<string, s
     "etsy-title": payloadMap.platforms.etsy.title,
     "etsy-tags": payloadMap.platforms.etsy.tags,
     "etsy-description": payloadMap.platforms.etsy.description,
+    "etsy-category-path": payloadMap.platforms.etsy.categoryPath,
   };
 }
 
@@ -236,6 +269,8 @@ export function buildPayloadSummary(
       payloadMap.platforms.poshmark.section,
       payloadMap.platforms.poshmark.title,
       payloadMap.platforms.poshmark.description,
+      payloadMap.platforms.poshmark.styleTags,
+      payloadMap.platforms.poshmark.categoryPath,
     ]),
     mercari: countReadyFields([
       payloadMap.platforms.mercari.section,
@@ -248,6 +283,7 @@ export function buildPayloadSummary(
       payloadMap.platforms.etsy.title,
       payloadMap.platforms.etsy.tags,
       payloadMap.platforms.etsy.description,
+      payloadMap.platforms.etsy.categoryPath,
     ]),
   };
 }
