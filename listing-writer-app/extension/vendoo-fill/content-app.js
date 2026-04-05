@@ -105,6 +105,9 @@
       ["ebay", "canonicalVendooCategoryPath"],
       ["payloadMap", "ebay", "canonicalVendooCategoryPath"]
     );
+    const canonicalVendooCategoryPathFromCategory = deriveCanonicalCategoryPathFromCategory(category);
+    const resolvedCanonicalVendooCategoryPath =
+      canonicalVendooCategoryPath || canonicalVendooCategoryPathFromCategory;
 
     const brand = pickString(
       input,
@@ -350,7 +353,7 @@
           titleB,
           description,
           category,
-          canonicalVendooCategoryPath,
+          canonicalVendooCategoryPath: resolvedCanonicalVendooCategoryPath,
           itemSpecifics,
         },
         ...(includeDepop && normalizedDepop ? { depop: normalizedDepop } : {}),
@@ -358,6 +361,19 @@
         ...(includeEtsy && normalizedEtsy ? { etsy: normalizedEtsy } : {}),
       },
     };
+  }
+
+  function deriveCanonicalCategoryPathFromCategory(value) {
+    const cleaned = typeof value === "string" ? value.trim() : "";
+    if (!cleaned) return "";
+    const normalized = cleaned
+      .split(">")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(" > ");
+    if (!normalized) return "";
+    const segmentCount = normalized.split(">").filter(Boolean).length;
+    return segmentCount >= 3 ? normalized : "";
   }
 
   function preparePayloadForStorage(payload) {

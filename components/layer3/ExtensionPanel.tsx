@@ -619,10 +619,25 @@ export function ExtensionPanel({ seed }: { seed: Layer3Seed }) {
   );
 
   const canonicalVendooCategoryPath = useMemo(
-    () =>
-      mappedSeed.canonicalCategoryPath ||
-      buildVendooCategoryPath({ simpleCategory: category }) ||
-      undefined,
+    () => {
+      const explicitCanonical = mappedSeed.canonicalCategoryPath?.trim() ?? "";
+      if (explicitCanonical) return explicitCanonical;
+
+      const derivedFromSimple = buildVendooCategoryPath({ simpleCategory: category });
+      if (derivedFromSimple?.trim()) return derivedFromSimple.trim();
+
+      const normalizedCategory = category
+        .split(">")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(" > ");
+      const segmentCount = normalizedCategory ? normalizedCategory.split(">").length : 0;
+      if (segmentCount >= 3) {
+        return normalizedCategory;
+      }
+
+      return undefined;
+    },
     [category, mappedSeed.canonicalCategoryPath]
   );
 

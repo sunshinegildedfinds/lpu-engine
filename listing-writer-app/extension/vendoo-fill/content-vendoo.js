@@ -522,6 +522,7 @@
             value,
             control,
             fieldConfig: action.selectorConfig ?? {},
+            marketplaceHint: typeof action.marketplace === "string" ? action.marketplace : "",
           });
 
           if (result.status === "filled") {
@@ -2456,8 +2457,7 @@
     }
 
     diagnostic.attemptedValue = payloadValue;
-    setElementValue(field, payloadValue);
-    field.dispatchEvent(new Event("blur", { bubbles: true }));
+    await setPoshmarkAdjustedPricePreservingDecimal(field, payloadValue);
     await wait(140);
     diagnostic.finalValue = String(field.value || "").trim();
 
@@ -2543,8 +2543,7 @@
     }
 
     diagnostic.attemptedValue = payloadValue;
-    setElementValue(field, payloadValue);
-    field.dispatchEvent(new Event("blur", { bubbles: true }));
+    await setPoshmarkAdjustedPricePreservingDecimal(field, payloadValue);
     await wait(140);
     diagnostic.finalValue = String(field.value || "").trim();
 
@@ -2560,6 +2559,73 @@
     diagnostic.reason = "value persisted after blur";
     console.debug("[Vendoo][PoshmarkAdjustedPrice]", diagnostic);
     return diagnostic;
+  }
+
+  async function setPoshmarkAdjustedPricePreservingDecimal(field, value) {
+    if (!(field instanceof HTMLInputElement)) return;
+    const target = String(value ?? "").trim();
+    if (!target) return;
+    const trace = {
+      beforeSet: String(field.value || "").trim(),
+      afterNativeSetter: "",
+      afterInputEvent: "",
+      afterChangeEvent: "",
+      afterBlur: "",
+      afterSettle: "",
+    };
+    let firstMutationCheckpoint = "";
+
+    function setNativeValue(nextValue) {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+      descriptor?.set?.call(field, nextValue);
+    }
+
+    // Poshmark listing price must preserve decimal punctuation exactly (e.g. 201.25).
+    // Use a direct native setter flow for this field only.
+    field.focus();
+    setNativeValue(target);
+    trace.afterNativeSetter = String(field.value || "").trim();
+
+    // Dispatch events one-by-one and patch only the first mutating checkpoint for this field.
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    trace.afterInputEvent = String(field.value || "").trim();
+    if (!firstMutationCheckpoint && trace.afterInputEvent !== target) {
+      firstMutationCheckpoint = "afterInputEvent";
+      setNativeValue(target);
+      trace.afterInputEvent = String(field.value || "").trim();
+    }
+
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    trace.afterChangeEvent = String(field.value || "").trim();
+    if (!firstMutationCheckpoint && trace.afterChangeEvent !== target) {
+      firstMutationCheckpoint = "afterChangeEvent";
+      setNativeValue(target);
+      trace.afterChangeEvent = String(field.value || "").trim();
+    }
+
+    field.dispatchEvent(new Event("blur", { bubbles: true }));
+    trace.afterBlur = String(field.value || "").trim();
+    if (!firstMutationCheckpoint && trace.afterBlur !== target) {
+      firstMutationCheckpoint = "afterBlur";
+      setNativeValue(target);
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+      field.dispatchEvent(new Event("blur", { bubbles: true }));
+      trace.afterBlur = String(field.value || "").trim();
+    }
+
+    await wait(80);
+    trace.afterSettle = String(field.value || "").trim();
+    console.debug("[Vendoo][PoshmarkAdjustedPriceTrace]", trace);
+
+    const current = String(field.value || "").trim();
+    if (current === target) return;
+
+    // Preserve exact decimal if the field was rewritten after settle.
+    if (current === target.replace(/\./g, "") || firstMutationCheckpoint) {
+      setNativeValue(target);
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+      field.dispatchEvent(new Event("blur", { bubbles: true }));
+    }
   }
 
   function findPoshmarkAdjustedPriceField() {
@@ -3173,6 +3239,7 @@
               value,
               control,
               fieldConfig: action.selectorConfig ?? {},
+              marketplaceHint: typeof action.marketplace === "string" ? action.marketplace : "",
             });
 
             if (result.status === "filled") {
@@ -3428,7 +3495,7 @@
   function buildBaseStageTargetSteps(input) {
     const { fillSteps, payload, selectors, actionModel } = input;
     const byKey = new Map(fillSteps.map((step) => [String(step.key), step]));
-    const baseCategoryValue = pickEbayCategory(payload) || pickEbayCategoryPath(payload);
+    const baseCategoryValue = pickEbayCategoryPath(payload);
     const definitions = [
       {
         key: "title",
@@ -3950,6 +4017,7 @@
         value,
         control,
         fieldConfig,
+        marketplaceHint: typeof step.marketplace === "string" ? step.marketplace : "",
       });
 
       if (stagedCategoryResult.status === "filled") {
@@ -4013,8 +4081,27 @@
   }
 
   async function tryFillCategoryByStages(input) {
-    const { value, control, fieldConfig } = input;
+    const { value, control, fieldConfig, marketplaceHint } = input;
     const stages = splitCategoryStages(value);
+    const inferredMarketplace = isEtsyCategoryControl(control)
+      ? "etsy"
+      : evaluatePoshmarkStageGate().stageDetected
+        ? "poshmark"
+        : "ebay";
+    const requestedMarketplace =
+      typeof marketplaceHint === "string" ? marketplaceHint.trim().toLowerCase() : "";
+    const categoryMarketplace =
+      requestedMarketplace === "ebay" ||
+      requestedMarketplace === "etsy" ||
+      requestedMarketplace === "poshmark"
+        ? requestedMarketplace
+        : inferredMarketplace;
+    console.debug("[Vendoo][CategorySegments]", {
+      marketplace: categoryMarketplace,
+      sourcePathUsed: "input.value",
+      rawPath: String(value ?? ""),
+      stageSegments: stages,
+    });
     if (!stages.length) {
       return {
         status: "needs_review",
@@ -4061,6 +4148,13 @@
       (entryPickerLooksPoshmark || entryPoshmarkStageDetected || entryCategoryGuidancePresent)
         ? "poshmark"
         : "generic";
+    console.debug("[Vendoo][CategoryEntry]", {
+      marketplace: categoryMarketplace,
+      canonicalPathPresent: Boolean(String(value ?? "").trim()),
+      canonicalPathValue: String(value ?? ""),
+      pickerOpen: Boolean(entryPickerInfo?.element),
+      reason: "entered_tryFillCategoryByStages",
+    });
     console.debug("[Vendoo][CategoryPathEntry]", {
       marketplaceHint: entryMarketplaceHint,
       pickerOpen: Boolean(entryPickerInfo?.element),
@@ -4101,6 +4195,49 @@
           pickerElement: initialPickerInfo.element,
           control,
         });
+      if (
+        !isEtsyCategoryControl(control) &&
+        !evaluatePoshmarkStageGate().stageDetected &&
+        !evaluateEtsyStageGate().stageDetected
+      ) {
+        const canonicalPath = cleanCategoryStage(value);
+        let stageSegments = splitCategoryStages(canonicalPath);
+        let reason = "canonical_path_segments";
+        const visibleNormalized = new Set(
+          initialOptionContext.optionDiscovery.entries
+            .map((entry) => normalizeText(cleanCategoryStage(getOptionTextFromEntry(entry))))
+            .filter(Boolean)
+        );
+        const initialWantedNormalized = normalizeText(stageSegments[0] ?? "");
+        const stageOneAliasMap = fieldConfig?.stageOneAliases ?? {};
+        if (
+          stageSegments.length >= 2 &&
+          initialWantedNormalized &&
+          !visibleNormalized.has(initialWantedNormalized)
+        ) {
+          const visibleRoots = Object.keys(stageOneAliasMap).filter((rootLabel) =>
+            visibleNormalized.has(normalizeText(rootLabel))
+          );
+          if (visibleRoots.length === 1) {
+            const rootLabel = visibleRoots[0];
+            const normalizedRoot = normalizeText(rootLabel);
+            if (normalizedRoot && initialWantedNormalized !== normalizedRoot) {
+              stageSegments = [rootLabel, ...stageSegments];
+              reason = "prepended_visible_root_segment";
+            }
+          }
+        }
+        if (stageSegments.length) {
+          traversalStages = stageSegments;
+        }
+        console.debug("[Vendoo][EbayCategoryInit]", {
+          canonicalPath,
+          confirmedPrefix: "",
+          stageSegments,
+          initialWanted: stageSegments[0] ?? "",
+          reason,
+        });
+      }
       poshmarkCategoryDiagnostics.visibleRowsSample =
         buildVisibleOptionsPreview(initialOptionContext.optionDiscovery.entries, 8) || "none";
 
@@ -4117,7 +4254,10 @@
           ? "poshmark"
           : "generic";
       const willEnterPoshmarkBranch =
-        marketplaceHint === "poshmark" && pickerOpen && categoryGuidancePresent;
+        categoryMarketplace === "poshmark" &&
+        marketplaceHint === "poshmark" &&
+        pickerOpen &&
+        categoryGuidancePresent;
       console.debug("[Vendoo][PoshmarkCategoryBranchCheck]", {
         marketplaceHint,
         pickerOpen,
@@ -4198,6 +4338,7 @@
           reason: "live poshmark category path detected",
         });
       } else if (
+        categoryMarketplace === "etsy" &&
         isEtsyCategoryControl(control) &&
         Boolean(initialPickerInfo?.element) &&
         Boolean(payloadEtsyCategoryGuidance) &&
@@ -4237,13 +4378,32 @@
           marketplaceHint,
           reason: "poshmark category branch not entered",
         });
+        console.debug("[Vendoo][CategoryFallbackPath]", {
+          marketplace: categoryMarketplace,
+          reason: "poshmark category branch not entered",
+        });
       }
     } else {
       console.debug("[Vendoo][CategoryFallbackBranch]", {
         marketplaceHint: "generic",
         reason: "picker not found at entry",
       });
+      console.debug("[Vendoo][CategoryFallbackPath]", {
+        marketplace: categoryMarketplace,
+        reason: "picker not found at entry",
+      });
     }
+    console.debug("[Vendoo][EbayCategoryLiveBranch]", {
+      entered:
+        categoryMarketplace === "ebay" && !poshmarkTraversalEnabled && !etsyTraversalEnabled,
+      canonicalPathValue: String(value ?? ""),
+      stageSegments: traversalStages,
+      initialWanted: traversalStages[0] ?? "",
+      reason:
+        !poshmarkTraversalEnabled && !etsyTraversalEnabled
+          ? "default_category_traversal_branch"
+          : "non_ebay_category_branch",
+    });
 
     let stageOneChosenDebug = "";
     const confirmedStages = [];
@@ -4304,6 +4464,40 @@
           stageIndex: index,
           stagesExpected: traversalStages.length,
         });
+      }
+      if (index === 0) {
+        console.debug("[Vendoo][CategoryInitialWanted]", {
+          marketplace: categoryMarketplace,
+          confirmedPrefix: confirmedStages.join(" > "),
+          stageIndex: index,
+          initialWanted: effectiveStageLabelsToTry[0] ?? stageLabel,
+          reason: "first_stage_effective_target",
+        });
+      }
+      if (
+        !poshmarkTraversalEnabled &&
+        !etsyTraversalEnabled &&
+        index === 0 &&
+        confirmedStages.length === 0 &&
+        optionDiscovery.scopeMode === "category_modal_scope"
+      ) {
+        const currentWantedNormalized = normalizeText(effectiveStageLabelsToTry[0] ?? stageLabel);
+        const visibleNormalized = new Set(
+          optionEntries
+            .map((entry) => normalizeText(cleanCategoryStage(getOptionTextFromEntry(entry))))
+            .filter(Boolean)
+        );
+        if (!visibleNormalized.has(currentWantedNormalized)) {
+          const stageOneAliasMap = fieldConfig?.stageOneAliases ?? {};
+          const visibleStageOneRoots = Object.keys(stageOneAliasMap).filter((rootLabel) =>
+            visibleNormalized.has(normalizeText(rootLabel))
+          );
+          if (visibleStageOneRoots.length === 1) {
+            const rootStageLabel = visibleStageOneRoots[0];
+            const rootAliases = stageOneAliasMap[rootStageLabel] ?? [];
+            effectiveStageLabelsToTry = [rootStageLabel, ...rootAliases].filter(Boolean);
+          }
+        }
       }
       let poshmarkStage1Diagnostic = null;
       let poshmarkStage1Resolution = null;
@@ -10574,7 +10768,22 @@
   }
 
   function pickEbayCategoryPath(payload) {
-    return pickEbayCanonicalCategoryPath(payload) || pickEbayCategory(payload);
+    const canonicalPath = pickEbayCanonicalCategoryPath(payload);
+    if (canonicalPath) return canonicalPath;
+    return deriveCanonicalCategoryPathFromCategory(pickEbayCategory(payload));
+  }
+
+  function deriveCanonicalCategoryPathFromCategory(value) {
+    const cleaned = typeof value === "string" ? value.trim() : "";
+    if (!cleaned) return "";
+    const normalized = cleaned
+      .split(">")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(" > ");
+    if (!normalized) return "";
+    const segmentCount = normalized.split(">").filter(Boolean).length;
+    return segmentCount >= 3 ? normalized : "";
   }
 
   function pickEbayBrand(payload) {
