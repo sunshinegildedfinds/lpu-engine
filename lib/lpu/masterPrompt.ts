@@ -190,7 +190,17 @@ When generating Depop LP-U:
 
 POSHMARK CORE RULES
 - Poshmark output must always include exactly 3 best applicable Style Tags selected from the user's Poshmark Style Tag master list.
-- Use the master list verbatim only. Do not invent variants.
+- BOTH Poshmark tag groups must use the saved Poshmark Style Tag master list verbatim:
+  1. Style Tags
+  2. Compact 3-Tag Strategy (Alt Option)
+- For BOTH groups:
+  - output exactly 3 tags
+  - use only tags from the saved master list
+  - use the exact saved spelling/capitalization
+  - do not invent tags
+  - do not paraphrase tags
+  - do not create singular/plural variations
+  - do not use item-specific or category-specific substitutions outside the master list
 - In addition to the required 3 Poshmark Style Tags, add:
   "Compact 3-Tag Strategy (Alt Option)"
   This must provide an alternative set of exactly 3 layered tags mixing:
@@ -284,6 +294,74 @@ FINAL PATCH RULES
 - Keep the user's measurement block rules unchanged unless the user later requests a different exact format.
 - Improve platform-native SEO without flattening the user's existing LP-U style.
 
+LP-U FRAMEWORK UPDATE OVERRIDE (LATEST)
+
+Apply these latest rules as highest-priority guidance while preserving the same section labels and output order:
+
+EBAY
+- Title A must follow:
+  [Brand/Maker] + [Item Name] + [Key Descriptor/Material] + [Color] + [Size] + [Gender/Dept]
+- Front-load critical buyer search terms.
+- Use close to the full 80-character limit without filler when possible.
+- Must be 70-80 characters.
+- Include Brand/Maker when known.
+- Include Size when known.
+- Include Gender/Department when applicable.
+- Do not use the old order that places Gender/Department immediately after Brand/Maker.
+- Title B must be aesthetic-led, optimized, and include brand/maker when known.
+- Output exact eBay leaf category path.
+- Output a prioritized Top 10-12 item specifics list based on raw data and best inference.
+- Use hyper-specific materials only when supported by photos, notes, tags, or user-provided details.
+- Description must be clean, mobile-friendly, bullet-forward, and include:
+  - professional summary
+  - material composition when supported
+  - mandatory measurements block
+  - correct footer
+
+ETSY
+- Title must be human-readable with the core noun phrase first.
+- Avoid keyword stuffing.
+- Keep title generally under 15 words when possible.
+- Description should be conversational and buyer-friendly, explain who/why the item is for, and stay grounded in evidence.
+- Include clear item details.
+- Include photo recommendations.
+- Include a quick video concept.
+- Output exactly 13 Etsy tags using multi-word long-tail phrases.
+
+DEPOP
+- Description must front-load brand/product type/key attributes in the first line.
+- Keep copy concise and non-spammy.
+- Include Depop Aesthetic Mode.
+- Include official Depop Attributes section.
+- Use vibe-first selling language.
+- Include up to 5 highly relevant hashtags.
+- Include micro-trend descriptors for modern apparel when appropriate.
+
+POSHMARK
+- Title should follow:
+  Brand + Item + Style/Keyword + Category + Color + Size + Gender
+- Keep title between 70 and 80 characters when feasible.
+- Description must reiterate title keywords in the first paragraph, then use structured bullets.
+- Output exactly 3 Poshmark Style Tags from the saved master list only.
+- Keep Compact 3-Tag Strategy as an additional alt option when present.
+
+MERCARI
+- Preserve current Mercari structure unless newer Mercari-specific rules are already present in this framework.
+- Keep title validation at 70-80 characters when feasible.
+- Keep measurements block and correct footer.
+
+ALL PLATFORMS
+- Always include brand and specific style name when available.
+- Always include the mandatory measurements block:
+  Approximate Measurements:
+  Not provided (see photos)
+  unless user-provided measurements or visible measurement graphics support exact entries.
+- Do not estimate measurements.
+- For jewelry items, use:
+  Ships within one business day after purchase. Displays & boxes shown are not included.
+- For non-jewelry items, use:
+  Ships within one day after payment is received. Please see all pictures before purchasing. Stock photo is for reference only and may differ slightly from the actual item.
+
 STRICT OUTPUT FORMAT RULES — MUST FOLLOW EXACTLY
 
 Return the LP-U output in exactly 5 platform sections in this exact order:
@@ -319,6 +397,7 @@ EBAY RULES:
 
 DEPOP section must contain exactly these labeled fields:
 Aesthetic Mode:
+Attributes:
 Listing:
 Hashtags:
 Optional Brand Hashtags:
@@ -326,8 +405,9 @@ Approximate Measurements:
 
 DEPOP RULES:
 - Aesthetic Mode must appear as a labeled block.
+- Attributes block must appear as a labeled block.
 - Listing must appear as a labeled block.
-- Hashtags block must contain exactly 5 required hashtags.
+- Hashtags block must contain up to 5 highly relevant hashtags.
 - Optional Brand Hashtags must be separate from the required Hashtags block.
 - Optional Brand Hashtags may be empty, but the label must still appear.
 - Do not place hashtags anywhere outside the labeled hashtags blocks.
@@ -344,6 +424,7 @@ POSHMARK RULES:
 - Title must be 70 to 80 characters.
 - Style Tags must contain exactly 3 items.
 - Compact 3-Tag Strategy (Alt Option) must appear as a labeled block.
+- BOTH Style Tags and Compact 3-Tag Strategy (Alt Option) must use only the saved Poshmark Style Tag master list verbatim, with exact spelling/capitalization and no invented/paraphrased/variant tags.
 - Include the correct footer for the item type at the end of the description section content.
 
 MERCARI section must contain exactly these labeled fields:
@@ -418,6 +499,9 @@ Secondary: [mode]
 
 Listing:
 [listing text]
+
+Attributes:
+[official Depop attributes]
 
 Hashtags:
 #tag1 #tag2 #tag3 #tag4 #tag5
