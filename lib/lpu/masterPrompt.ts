@@ -87,8 +87,15 @@ For eBay, populate required item specifics every run:
 - Sleeve Type
 - Primary Store Category
 - Features
+- Theme
 - Dress Length (when item is a dress)
 - Style (when item is a dress)
+
+Theme requirement:
+- eBay Item Specifics must always include a "Theme:" line.
+- Theme must be evidence-based when possible.
+- If there is not enough evidence for a specific Theme value, output exactly:
+  Theme: Not specified (see photos)
 
 Use best inference for eBay item specifics from photos, tags, notes, and category-appropriate visual evidence rather than lazily defaulting to "Not specified (see photos)."
 
