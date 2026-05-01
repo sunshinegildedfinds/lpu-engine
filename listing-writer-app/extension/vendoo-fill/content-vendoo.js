@@ -7623,8 +7623,13 @@
             fieldLabel: field.label,
             rawPayloadValue: String(value ?? "").trim(),
             availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+            comparisonCandidates: Array.isArray(selectResult.comparisonCandidates)
+              ? selectResult.comparisonCandidates
+              : [],
             optionMatchAttempted: true,
             selectedOptions: selectResult.resolvedOption ? [selectResult.resolvedOption] : [],
+            matchStrategy: selectResult.matchStrategy || "",
+            matchedCandidate: selectResult.matchedCandidate || "",
             rawCustomFallbackUsed: false,
             fallbackReason: "",
           });
@@ -7642,8 +7647,13 @@
             fieldLabel: field.label,
             rawPayloadValue: String(value ?? "").trim(),
             availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+            comparisonCandidates: Array.isArray(selectResult.comparisonCandidates)
+              ? selectResult.comparisonCandidates
+              : [],
             optionMatchAttempted: true,
             selectedOptions: [],
+            matchStrategy: selectResult.matchStrategy || "",
+            matchedCandidate: selectResult.matchedCandidate || "",
             rawCustomFallbackUsed: true,
             fallbackReason: committed
               ? `custom_fallback_used_after_option_result:${selectResult.reason || "no_safe_option_match"}`
@@ -7745,8 +7755,13 @@
               fieldLabel: field.label,
               rawPayloadValue: String(value ?? "").trim(),
               availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+              comparisonCandidates: Array.isArray(selectResult.comparisonCandidates)
+                ? selectResult.comparisonCandidates
+                : [],
               optionMatchAttempted: true,
               selectedOptions: selectResult.resolvedOption ? [selectResult.resolvedOption] : [],
+              matchStrategy: selectResult.matchStrategy || "",
+              matchedCandidate: selectResult.matchedCandidate || "",
               rawCustomFallbackUsed: false,
               fallbackReason: "",
             });
@@ -7756,8 +7771,13 @@
               fieldLabel: field.label,
               rawPayloadValue: String(value ?? "").trim(),
               availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+              comparisonCandidates: Array.isArray(selectResult.comparisonCandidates)
+                ? selectResult.comparisonCandidates
+                : [],
               optionMatchAttempted: true,
               selectedOptions: [],
+              matchStrategy: selectResult.matchStrategy || "",
+              matchedCandidate: selectResult.matchedCandidate || "",
               rawCustomFallbackUsed: false,
               fallbackReason: `option_match_not_selected:${selectResult.reason || "no_safe_option_match"}`,
             });
@@ -7774,6 +7794,7 @@
             fieldLabel: field.label,
             rawPayloadValue: String(value ?? "").trim(),
             availableOptionsFound: false,
+            comparisonCandidates: [],
             optionMatchAttempted: chipDiagnostics.optionMatchAttempted,
             selectedOptions: [],
             rawCustomFallbackUsed: true,
@@ -8670,6 +8691,7 @@
   async function selectComboboxValueByNormalizedMatch(input) {
     const { control, optionSelectors, target, fieldLabel, payloadRaw, payloadCanonical, valueMode } =
       input;
+    const comparisonCandidates = buildComboboxComparisonCandidates(target);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       openCustomSelectControl(control);
@@ -8698,6 +8720,7 @@
             availableOptionsFound: false,
             selectedOptions: [],
             optionMatchAttempted: true,
+            comparisonCandidates,
           };
         }
         continue;
@@ -8710,9 +8733,22 @@
       }));
       const normalizedOptions = getUniqueComboboxNormalizedValues(normalizedEntries, 18);
       const normalizedPayloadValue = normalizeOptionValue(target);
-      let matches = normalizedEntries.filter((candidate) =>
-        candidate.values.some((value) => normalizeOptionValue(value) === normalizedPayloadValue)
-      );
+      const normalizedComparisonCandidates =
+        comparisonCandidates.length > 0 ? comparisonCandidates : [normalizedPayloadValue];
+      let matchStrategy = "exact_normalized";
+      let matchedCandidate = normalizedPayloadValue;
+      let matches = findExactComboboxMatches(normalizedEntries, normalizedComparisonCandidates);
+      if (!matches.length) {
+        const tokenBoundaryMatch = findTokenBoundaryComboboxMatches(
+          normalizedEntries,
+          normalizedComparisonCandidates
+        );
+        matches = tokenBoundaryMatch.matches;
+        if (matches.length) {
+          matchStrategy = "token_boundary_option_in_candidate";
+          matchedCandidate = tokenBoundaryMatch.matchedCandidate;
+        }
+      }
       let conditionResolution = null;
       const isConditionField = normalizeText(fieldLabel) === "condition";
       if (!matches.length && isConditionField) {
@@ -8762,6 +8798,9 @@
           availableOptionsFound: true,
           selectedOptions: [],
           optionMatchAttempted: true,
+          comparisonCandidates,
+          matchStrategy,
+          matchedCandidate,
         };
       }
 
@@ -8772,24 +8811,27 @@
           availableOptionsFound: true,
           selectedOptions: [],
           optionMatchAttempted: true,
+          comparisonCandidates,
+          matchStrategy,
+          matchedCandidate,
         };
       }
 
       clickElement(matches[0].entry.clickTarget);
       await wait(110);
+      const resolvedOptionLabel =
+        conditionResolution?.resolvedOption ||
+        getResolvedOptionLabelFromMatch(matches[0]) ||
+        target;
       return {
         status: "filled",
-        resolvedOption:
-          conditionResolution?.resolvedOption ||
-          getResolvedOptionFromMatch(matches[0]) ||
-          target,
+        resolvedOption: resolvedOptionLabel,
         availableOptionsFound: true,
-        selectedOptions: [
-          conditionResolution?.resolvedOption ||
-            getResolvedOptionFromMatch(matches[0]) ||
-            target,
-        ],
+        selectedOptions: [resolvedOptionLabel],
         optionMatchAttempted: true,
+        comparisonCandidates,
+        matchStrategy,
+        matchedCandidate,
       };
     }
 
@@ -8799,7 +8841,209 @@
       availableOptionsFound: false,
       selectedOptions: [],
       optionMatchAttempted: true,
+      comparisonCandidates,
+      matchStrategy: "none",
+      matchedCandidate: "",
     };
+  }
+
+  function buildComboboxComparisonCandidates(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return [];
+
+    const candidates = [];
+    const seen = new Set();
+    function add(candidateRaw) {
+      const normalized = normalizeOptionValue(candidateRaw);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push(normalized);
+    }
+
+    add(raw);
+    add(cleanComboboxComparisonText(raw));
+    add(stripStandaloneEvidenceStatusEdgeTokens(raw));
+    add(stripStandaloneEvidenceStatusEdgeTokens(cleanComboboxComparisonText(raw)));
+
+    // Comparison-only cleanup: strip parenthetical/brace notes without mutating payload.
+    add(raw.replace(/\([^)]*\)/g, " "));
+    add(raw.replace(/\[[^\]]*\]/g, " "));
+    add(cleanComboboxComparisonText(raw.replace(/\([^)]*\)/g, " ")));
+    add(cleanComboboxComparisonText(raw.replace(/\[[^\]]*\]/g, " ")));
+    add(stripStandaloneEvidenceStatusEdgeTokens(raw.replace(/\([^)]*\)/g, " ")));
+    add(stripStandaloneEvidenceStatusEdgeTokens(raw.replace(/\[[^\]]*\]/g, " ")));
+    add(
+      stripStandaloneEvidenceStatusEdgeTokens(
+        cleanComboboxComparisonText(raw.replace(/\([^)]*\)/g, " "))
+      )
+    );
+    add(
+      stripStandaloneEvidenceStatusEdgeTokens(
+        cleanComboboxComparisonText(raw.replace(/\[[^\]]*\]/g, " "))
+      )
+    );
+
+    // Comparison-only tokenization for delimiter-separated values.
+    const parts = raw
+      .split(/[;|,/]+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    for (const part of parts) {
+      add(part);
+      add(cleanComboboxComparisonText(part));
+      add(stripStandaloneEvidenceStatusEdgeTokens(part));
+      add(stripStandaloneEvidenceStatusEdgeTokens(cleanComboboxComparisonText(part)));
+      add(part.replace(/\([^)]*\)/g, " "));
+      add(part.replace(/\[[^\]]*\]/g, " "));
+      add(cleanComboboxComparisonText(part.replace(/\([^)]*\)/g, " ")));
+      add(cleanComboboxComparisonText(part.replace(/\[[^\]]*\]/g, " ")));
+      add(stripStandaloneEvidenceStatusEdgeTokens(part.replace(/\([^)]*\)/g, " ")));
+      add(stripStandaloneEvidenceStatusEdgeTokens(part.replace(/\[[^\]]*\]/g, " ")));
+      add(
+        stripStandaloneEvidenceStatusEdgeTokens(
+          cleanComboboxComparisonText(part.replace(/\([^)]*\)/g, " "))
+        )
+      );
+      add(
+        stripStandaloneEvidenceStatusEdgeTokens(
+          cleanComboboxComparisonText(part.replace(/\[[^\]]*\]/g, " "))
+        )
+      );
+    }
+
+    return candidates;
+  }
+
+  function findExactComboboxMatches(normalizedEntries, normalizedComparisonCandidates) {
+    return normalizedEntries.filter((candidate) =>
+      candidate.values.some((value) =>
+        normalizedComparisonCandidates.includes(normalizeOptionValue(value))
+      )
+    );
+  }
+
+  function findTokenBoundaryComboboxMatches(normalizedEntries, normalizedComparisonCandidates) {
+    const bucket = [];
+    for (const candidate of normalizedEntries) {
+      for (const optionValue of candidate.values) {
+        const normalizedOption = normalizeOptionValue(optionValue);
+        if (!isSafeTokenBoundaryOption(normalizedOption)) continue;
+        for (const normalizedCandidate of normalizedComparisonCandidates) {
+          if (!containsTokenBoundaryPhrase(normalizedCandidate, normalizedOption)) continue;
+          bucket.push({ candidate, normalizedOption, normalizedCandidate });
+        }
+      }
+    }
+
+    if (!bucket.length) {
+      return { matches: [], matchedCandidate: "" };
+    }
+
+    bucket.sort((a, b) => {
+      const byOptionLength = b.normalizedOption.length - a.normalizedOption.length;
+      if (byOptionLength !== 0) return byOptionLength;
+      return b.normalizedCandidate.length - a.normalizedCandidate.length;
+    });
+
+    const bestOption = bucket[0].normalizedOption;
+    const bestCandidate = bucket[0].normalizedCandidate;
+    const bestMatches = bucket
+      .filter(
+        (entry) =>
+          entry.normalizedOption === bestOption &&
+          entry.normalizedCandidate === bestCandidate
+      )
+      .map((entry) => entry.candidate);
+
+    const deduped = Array.from(new Set(bestMatches));
+    return { matches: deduped, matchedCandidate: bestCandidate };
+  }
+
+  function isSafeTokenBoundaryOption(normalizedOption) {
+    if (!normalizedOption) return false;
+    if (normalizedOption.length < 3) return false;
+    const tokens = normalizedOption.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return false;
+    if (tokens.some((token) => token.length < 2)) return false;
+    return true;
+  }
+
+  function containsTokenBoundaryPhrase(normalizedCandidate, normalizedOption) {
+    if (!normalizedCandidate || !normalizedOption) return false;
+    const escaped = normalizedOption.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(^|\\s)${escaped}(\\s|$)`);
+    return pattern.test(normalizedCandidate);
+  }
+
+  function cleanComboboxComparisonText(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+
+    let cleaned = raw
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/\[[^\]]*\]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const fragmentSplit = /\s(?:[-–—:;|]|\b(?:with|including|includes)\b)\s/gi;
+    const fragments = cleaned
+      .split(fragmentSplit)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (fragments.length <= 1) return cleaned;
+
+    const explanatoryPattern =
+      /\b(?:confidence|inference|inferred|evidence|source|sourced|supported|observed|observation|notes?|note|confirmed|confirmation|approx(?:imate|\\.)?|approximation)\b/i;
+
+    const kept = [];
+    for (const fragment of fragments) {
+      if (!fragment) continue;
+      if (explanatoryPattern.test(fragment)) continue;
+      kept.push(fragment);
+    }
+
+    if (!kept.length) return cleaned;
+    return kept.join(" ").replace(/\s+/g, " ").trim();
+  }
+
+  function stripStandaloneEvidenceStatusEdgeTokens(value) {
+    const normalized = normalizeOptionValue(value);
+    if (!normalized) return "";
+
+    const removableTokens = new Set([
+      "inferred",
+      "inference",
+      "confirmed",
+      "confirmation",
+      "observed",
+      "observation",
+      "approximate",
+      "approx",
+      "supported",
+      "evidence",
+      "source",
+      "sourced",
+      "note",
+      "notes",
+    ]);
+
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return normalized;
+
+    let start = 0;
+    let end = tokens.length - 1;
+    while (start <= end && removableTokens.has(tokens[start])) {
+      start += 1;
+    }
+    while (end >= start && removableTokens.has(tokens[end])) {
+      end -= 1;
+    }
+
+    if (start === 0 && end === tokens.length - 1) {
+      return normalized;
+    }
+
+    return tokens.slice(start, end + 1).join(" ").trim();
   }
 
   function getUniqueComboboxOptionTexts(entries, maxItems) {
@@ -9034,6 +9278,13 @@
   function getResolvedOptionFromMatch(match) {
     if (!match || !Array.isArray(match.values) || !match.values.length) return "";
     return match.values[0] || "";
+  }
+
+  function getResolvedOptionLabelFromMatch(match) {
+    if (!match) return "";
+    const entryLabel = cleanCategoryStage(getOptionTextFromEntry(match.entry));
+    if (entryLabel) return entryLabel;
+    return getResolvedOptionFromMatch(match);
   }
 
   function buildComboboxDebugSummary(input) {
