@@ -7619,6 +7619,15 @@
         if (selectResult.status === "filled") {
           entryDiagnostics.optionMatchAccepted = true;
           entryDiagnostics.finalStatusByToken[target] = "filled_option_match";
+          console.debug("[Vendoo][OptionResolutionOrder]", {
+            fieldLabel: field.label,
+            rawPayloadValue: String(value ?? "").trim(),
+            availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+            optionMatchAttempted: true,
+            selectedOptions: selectResult.resolvedOption ? [selectResult.resolvedOption] : [],
+            rawCustomFallbackUsed: false,
+            fallbackReason: "",
+          });
           continue;
         }
 
@@ -7629,6 +7638,17 @@
           entryDiagnostics.finalStatusByToken[target] = committed
             ? "filled_custom_commit"
             : "rejected";
+          console.debug("[Vendoo][OptionResolutionOrder]", {
+            fieldLabel: field.label,
+            rawPayloadValue: String(value ?? "").trim(),
+            availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+            optionMatchAttempted: true,
+            selectedOptions: [],
+            rawCustomFallbackUsed: true,
+            fallbackReason: committed
+              ? `custom_fallback_used_after_option_result:${selectResult.reason || "no_safe_option_match"}`
+              : `custom_fallback_failed_after_option_result:${selectResult.reason || "no_safe_option_match"}`,
+          });
           if (committed) {
             continue;
           }
@@ -7721,6 +7741,26 @@
           accepted = selectResult.status === "filled";
           if (accepted) {
             chipDiagnostics.optionMatchAccepted = true;
+            console.debug("[Vendoo][OptionResolutionOrder]", {
+              fieldLabel: field.label,
+              rawPayloadValue: String(value ?? "").trim(),
+              availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+              optionMatchAttempted: true,
+              selectedOptions: selectResult.resolvedOption ? [selectResult.resolvedOption] : [],
+              rawCustomFallbackUsed: false,
+              fallbackReason: "",
+            });
+          }
+          if (!accepted) {
+            console.debug("[Vendoo][OptionResolutionOrder]", {
+              fieldLabel: field.label,
+              rawPayloadValue: String(value ?? "").trim(),
+              availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+              optionMatchAttempted: true,
+              selectedOptions: [],
+              rawCustomFallbackUsed: false,
+              fallbackReason: `option_match_not_selected:${selectResult.reason || "no_safe_option_match"}`,
+            });
           }
         }
 
@@ -7730,6 +7770,17 @@
           if (accepted) {
             chipDiagnostics.customCommitAccepted = true;
           }
+          console.debug("[Vendoo][OptionResolutionOrder]", {
+            fieldLabel: field.label,
+            rawPayloadValue: String(value ?? "").trim(),
+            availableOptionsFound: false,
+            optionMatchAttempted: chipDiagnostics.optionMatchAttempted,
+            selectedOptions: [],
+            rawCustomFallbackUsed: true,
+            fallbackReason: accepted
+              ? "custom_fallback_used_after_option_path"
+              : "custom_fallback_failed_after_option_path",
+          });
         }
 
         if (accepted) {
@@ -8644,6 +8695,9 @@
             reason: `active control opened but no options rendered (${optionDiscovery.scopeMode}; active: ${
               optionDiscovery.activeControlIdentified ? "yes" : "no"
             })`,
+            availableOptionsFound: false,
+            selectedOptions: [],
+            optionMatchAttempted: true,
           };
         }
         continue;
@@ -8705,6 +8759,9 @@
             `options rendered but no normalized match (${optionDiscovery.scopeMode}; active: ${
               optionDiscovery.activeControlIdentified ? "yes" : "no"
             }; mode: ${valueMode}; canonical: "${payloadCanonical}")`,
+          availableOptionsFound: true,
+          selectedOptions: [],
+          optionMatchAttempted: true,
         };
       }
 
@@ -8712,6 +8769,9 @@
         return {
           status: "needs_review",
           reason: "multiple normalized combobox options",
+          availableOptionsFound: true,
+          selectedOptions: [],
+          optionMatchAttempted: true,
         };
       }
 
@@ -8723,12 +8783,22 @@
           conditionResolution?.resolvedOption ||
           getResolvedOptionFromMatch(matches[0]) ||
           target,
+        availableOptionsFound: true,
+        selectedOptions: [
+          conditionResolution?.resolvedOption ||
+            getResolvedOptionFromMatch(matches[0]) ||
+            target,
+        ],
+        optionMatchAttempted: true,
       };
     }
 
     return {
       status: "needs_review",
       reason: "control opened but options could not be harvested",
+      availableOptionsFound: false,
+      selectedOptions: [],
+      optionMatchAttempted: true,
     };
   }
 
