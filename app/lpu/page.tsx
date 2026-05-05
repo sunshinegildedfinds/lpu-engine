@@ -32,6 +32,14 @@ type ImagePayload = {
   dataUrl: string;
 };
 
+type GeneratorImageReference = {
+  name: string;
+  type: string;
+  size: number;
+  storagePath: string;
+  imageUrl: string;
+};
+
 type ValidationIssue = {
   platform: string;
   code: string;
@@ -99,6 +107,88 @@ function fileToDataUrl(file: File): Promise<string> {
 
     reader.readAsDataURL(file);
   });
+}
+
+function sanitizeFileName(name: string): string {
+  return name
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function buildStoragePath(file: File): string {
+  const safeName = sanitizeFileName(file.name) || "upload.jpg";
+  const stamp = Date.now();
+  const random = Math.random().toString(36).slice(2, 10);
+  return `lpu/${stamp}-${random}-${safeName}`;
+}
+
+function encodeStoragePath(path: string): string {
+  return path
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+async function uploadFilesToSupabaseStorage(
+  files: File[]
+): Promise<GeneratorImageReference[]> {
+  if (!files.length) return [];
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+  const bucketName =
+    process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() ||
+    "lpu-generator-images";
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error(
+      "Missing Supabase configuration. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+    );
+  }
+
+  const references: GeneratorImageReference[] = [];
+
+  for (const file of files) {
+    const storagePath = buildStoragePath(file);
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucketName}/${encodeStoragePath(
+      storagePath
+    )}`;
+
+    const uploadResponse = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+        "x-upsert": "false",
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: file,
+    });
+
+    if (!uploadResponse.ok) {
+      const bodyText = await uploadResponse.text();
+      throw new Error(
+        `Supabase image upload failed for ${file.name}: ${uploadResponse.status} ${bodyText}`
+      );
+    }
+
+    // Prefer private-bucket-friendly render URL path; route only needs a fetchable URL.
+    const imageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${encodeStoragePath(
+      storagePath
+    )}`;
+
+    references.push({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      storagePath,
+      imageUrl,
+    });
+  }
+
+  return references;
 }
 
 function formatMetricValue(value: unknown): string {
@@ -273,6 +363,7 @@ export default function LpuPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
   const [layer3Photos, setLayer3Photos] = useState<ImagePayload[]>([]);
+  const [generatorImageUploadStatus, setGeneratorImageUploadStatus] = useState("");
   const [enableResearchPanel, setEnableResearchPanel] = useState(false);
   const [showGeneratorInstructionsReport, setShowGeneratorInstructionsReport] =
     useState(false);
@@ -295,9 +386,10 @@ export default function LpuPage() {
     setCopiedTarget(null);
     setIsLoading(true);
     setGeneratorInstructionsReport(null);
+    setGeneratorImageUploadStatus("");
 
     try {
-      const images: ImagePayload[] = await Promise.all(
+      const layer3ImagePayloads: ImagePayload[] = await Promise.all(
         files.map(async (file) => ({
           name: file.name,
           type: file.type,
@@ -306,6 +398,16 @@ export default function LpuPage() {
         }))
       );
 
+      if (files.length) {
+        setGeneratorImageUploadStatus("Uploading images to Supabase Storage...");
+      }
+      const generatorImageReferences = await uploadFilesToSupabaseStorage(files);
+      if (files.length) {
+        setGeneratorImageUploadStatus(
+          `Uploaded ${generatorImageReferences.length} image(s). Generating LP-U...`
+        );
+      }
+
       const response = await fetch("/api/lpu/generate", {
         method: "POST",
         headers: {
@@ -313,22 +415,40 @@ export default function LpuPage() {
         },
         body: JSON.stringify({
           notes,
-          images,
+          images: generatorImageReferences,
           includeGeneratorInstructionsReport: showGeneratorInstructionsReport,
         }),
       });
-
-      const data = await response.json();
+      const responseContentType = response.headers.get("content-type") || "";
+      const rawBody = await response.text();
+      const data = responseContentType.includes("application/json")
+        ? JSON.parse(rawBody)
+        : null;
 
       if (!response.ok) {
-        throw new Error(data.error || "Something went wrong.");
+        if (data?.error) {
+          throw new Error(data.error);
+        }
+        throw new Error(
+          rawBody?.trim() ||
+            `Request failed with status ${response.status}.`
+        );
+      }
+
+      if (!data) {
+        throw new Error("Server returned a non-JSON success response.");
       }
 
       setOutput(data.output || "");
       setValidation(data.validation ?? null);
       setGeneratorInstructionsReport(data.generatorInstructionsReport ?? null);
-      setLayer3Photos(images);
+      setLayer3Photos(layer3ImagePayloads);
       setPriceDecision(INITIAL_PRICE_DECISION);
+      setGeneratorImageUploadStatus(
+        files.length
+          ? "Generation used Supabase image references successfully."
+          : ""
+      );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to generate output.";
@@ -337,6 +457,7 @@ export default function LpuPage() {
       setCopiedTarget(null);
       setLayer3Photos([]);
       setGeneratorInstructionsReport(null);
+      setGeneratorImageUploadStatus("");
       setPriceDecision(INITIAL_PRICE_DECISION);
     } finally {
       setIsLoading(false);
@@ -645,6 +766,12 @@ export default function LpuPage() {
         {error ? (
           <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-red-700">
             {error}
+          </div>
+        ) : null}
+
+        {generatorImageUploadStatus ? (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+            {generatorImageUploadStatus}
           </div>
         ) : null}
       </form>

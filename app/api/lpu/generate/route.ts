@@ -6,7 +6,8 @@ import { validateLpuOutput } from "@/lib/validator";
 type IncomingImage = {
   name: string;
   type: string;
-  dataUrl: string;
+  imageUrl: string;
+  storagePath?: string;
 };
 
 type GenerateBody = {
@@ -28,6 +29,51 @@ type GeneratorInstructionsReport = {
   };
   generatedAt: string;
 };
+
+async function resolveGeneratorImageUrl(
+  image: IncomingImage
+): Promise<string> {
+  const directUrl =
+    typeof image?.imageUrl === "string" ? image.imageUrl.trim() : "";
+  const storagePath =
+    typeof image?.storagePath === "string" ? image.storagePath.trim() : "";
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const bucketName =
+    process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() ||
+    "lpu-generator-images";
+
+  if (!storagePath || !supabaseUrl || !serviceRoleKey) {
+    return directUrl;
+  }
+
+  const encodedPath = storagePath
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  const signEndpoint = `${supabaseUrl}/storage/v1/object/sign/${bucketName}/${encodedPath}`;
+  const signResponse = await fetch(signEndpoint, {
+    method: "POST",
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ expiresIn: 60 * 60 }),
+    cache: "no-store",
+  });
+
+  if (!signResponse.ok) {
+    return directUrl;
+  }
+
+  const signData = (await signResponse.json()) as { signedURL?: string };
+  const signedPath = typeof signData?.signedURL === "string" ? signData.signedURL : "";
+  if (!signedPath) return directUrl;
+
+  return `${supabaseUrl}/storage/v1${signedPath}`;
+}
 
 function buildGeneratorInstructionsReport(): GeneratorInstructionsReport {
   const instructions = MASTER_LPU_INSTRUCTIONS;
@@ -133,6 +179,10 @@ export async function POST(request: Request) {
       );
     }
 
+    const imageUrls = (
+      await Promise.all(images.map((image) => resolveGeneratorImageUrl(image)))
+    ).filter((url) => typeof url === "string" && url.trim().length > 0);
+
     const userContent: Array<
   | { type: "input_text"; text: string }
   | { type: "input_image"; image_url: string; detail: "auto" | "low" | "high" }
@@ -144,9 +194,9 @@ export async function POST(request: Request) {
 User notes:
 ${notes}`,
   },
-  ...images.map((image) => ({
+  ...imageUrls.map((imageUrl) => ({
     type: "input_image" as const,
-    image_url: image.dataUrl,
+    image_url: imageUrl,
     detail: "auto" as const,
   })),
 ];
