@@ -41,6 +41,7 @@ export const LABELS = {
   },
   depop: {
     aestheticMode: ['Aesthetic Mode'],
+    attributes: ['Attributes'],
     listingBlock: ['Listing Block', 'Listing'],
     hashtags: ['Hashtags'],
     optionalBrandHashtags: ['Optional Brand Hashtags', 'Brand Hashtags'],

@@ -61,6 +61,10 @@ export type VendooPricingMeta = {
 
 export type VendooExtensionPayload = {
   photos?: VendooPhotoPayload[];
+  imagePayload?: {
+    photos: VendooPhotoPayload[];
+    count: number;
+  };
   vendooBaseTags?: string[];
   etsy?: {
     title: string;
@@ -85,6 +89,35 @@ export type VendooExtensionPayload = {
   researchMeta?: VendooResearchMeta;
   pricing?: VendooPricingMeta;
   resolvedPrice?: string;
+  coreFields?: {
+    title: string;
+    titleA: string;
+    titleB: string;
+    description: string;
+    category: string;
+    canonicalVendooCategoryPath?: string;
+    brand: string;
+    size: string;
+    color: string;
+  };
+  marketplaceFields?: {
+    ebay: VendooExtensionPayload["marketplaces"]["ebay"];
+    depop?: NonNullable<VendooExtensionPayload["marketplaces"]["depop"]>;
+    poshmark?: NonNullable<VendooExtensionPayload["marketplaces"]["poshmark"]>;
+    etsy?: NonNullable<VendooExtensionPayload["etsy"]>;
+  };
+  fillReadiness?: {
+    ebay: {
+      titleReady: boolean;
+      descriptionReady: boolean;
+      categoryReady: boolean;
+      canonicalCategoryReady: boolean;
+      brandReady: boolean;
+      sizeReady: boolean;
+      colorReady: boolean;
+      photosReady: boolean;
+    };
+  };
   marketplaces: {
     ebay: {
       title: string;
@@ -464,8 +497,28 @@ export function buildVendooExtensionPayload(input: {
       )
   );
 
+  const normalizedEbay = {
+    title: input.title.trim(),
+    titleA: input.titleA.trim(),
+    titleB: input.titleB.trim(),
+    description: input.description.trim(),
+    category: input.category.trim(),
+    ...(canonicalVendooCategoryPath
+      ? { canonicalVendooCategoryPath }
+      : {}),
+    itemSpecifics,
+  };
+
   return {
     ...(sanitizedPhotos.length ? { photos: sanitizedPhotos } : {}),
+    ...(sanitizedPhotos.length
+      ? {
+          imagePayload: {
+            photos: sanitizedPhotos,
+            count: sanitizedPhotos.length,
+          },
+        }
+      : {}),
     ...(vendooBaseTags.length ? { vendooBaseTags } : {}),
     ...(includeEtsy && etsy
       ? {
@@ -494,18 +547,21 @@ export function buildVendooExtensionPayload(input: {
     ...(includeResearchMeta && researchMeta ? { researchMeta } : {}),
     ...(includePricing && pricing ? { pricing } : {}),
     ...(resolvedPrice ? { resolvedPrice } : {}),
+    coreFields: {
+      title: normalizedEbay.title,
+      titleA: normalizedEbay.titleA,
+      titleB: normalizedEbay.titleB,
+      description: normalizedEbay.description,
+      category: normalizedEbay.category,
+      ...(canonicalVendooCategoryPath
+        ? { canonicalVendooCategoryPath }
+        : {}),
+      brand: itemSpecifics.brand,
+      size: itemSpecifics.size,
+      color: itemSpecifics.color,
+    },
     marketplaces: {
-      ebay: {
-        title: input.title.trim(),
-        titleA: input.titleA.trim(),
-        titleB: input.titleB.trim(),
-        description: input.description.trim(),
-        category: input.category.trim(),
-        ...(canonicalVendooCategoryPath
-          ? { canonicalVendooCategoryPath }
-          : {}),
-        itemSpecifics,
-      },
+      ebay: normalizedEbay,
       ...(includeDepop && depop
         ? {
             depop: {
@@ -530,6 +586,69 @@ export function buildVendooExtensionPayload(input: {
             },
           }
         : {}),
+    },
+    marketplaceFields: {
+      ebay: normalizedEbay,
+      ...(includeDepop && depop
+        ? {
+            depop: {
+              listing: depop.listing,
+              description: depop.description,
+              hashtags: depop.hashtags,
+              optionalBrandHashtags: depop.optionalBrandHashtags,
+              ...(depop.brand ? { brand: depop.brand } : {}),
+              ...(depop.size ? { size: depop.size } : {}),
+              ...(depop.style ? { style: depop.style } : {}),
+            },
+          }
+        : {}),
+      ...(includePoshmark && poshmark
+        ? {
+            poshmark: {
+              title: poshmark.title,
+              description: poshmark.description,
+              styleTags: poshmark.styleTags,
+              ...(poshmark.categoryPath ? { categoryPath: poshmark.categoryPath } : {}),
+              ...(poshmark.adjustedPrice ? { adjustedPrice: poshmark.adjustedPrice } : {}),
+            },
+          }
+        : {}),
+      ...(includeEtsy && etsy
+        ? {
+            etsy: {
+              title: etsy.title,
+              description: etsy.description,
+              tags: etsy.tags,
+              ...(etsy.categoryPath ? { categoryPath: etsy.categoryPath } : {}),
+              ...(etsy.adjustedPrice ? { adjustedPrice: etsy.adjustedPrice } : {}),
+              ...(etsy.materials ? { materials: etsy.materials } : {}),
+              ...(etsy.style ? { style: etsy.style } : {}),
+              ...(etsy.theme ? { theme: etsy.theme } : {}),
+              ...(etsy.occasion ? { occasion: etsy.occasion } : {}),
+              ...(etsy.recipient ? { recipient: etsy.recipient } : {}),
+              ...(etsy.jewelryType ? { jewelryType: etsy.jewelryType } : {}),
+              ...(etsy.gemstone ? { gemstone: etsy.gemstone } : {}),
+              ...(etsy.gemColor ? { gemColor: etsy.gemColor } : {}),
+              ...(etsy.sustainability ? { sustainability: etsy.sustainability } : {}),
+              ...(etsy.goldSolidity ? { goldSolidity: etsy.goldSolidity } : {}),
+              ...(etsy.recycled ? { recycled: etsy.recycled } : {}),
+              ...(etsy.canBePersonalized ? { canBePersonalized: etsy.canBePersonalized } : {}),
+              ...(etsy.age ? { age: etsy.age } : {}),
+            },
+          }
+        : {}),
+    },
+    fillReadiness: {
+      ebay: {
+        titleReady: Boolean(normalizedEbay.title),
+        descriptionReady: Boolean(normalizedEbay.description),
+        categoryReady: Boolean(normalizedEbay.category),
+        canonicalCategoryReady: Boolean(canonicalVendooCategoryPath),
+        brandReady: Boolean(itemSpecifics.brand),
+        sizeReady: Boolean(itemSpecifics.size),
+        colorReady: Boolean(itemSpecifics.color),
+        photosReady: sanitizedPhotos.length > 0,
+      },
     },
   };
 }

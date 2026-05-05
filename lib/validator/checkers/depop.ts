@@ -24,11 +24,15 @@ export function validateDepop(
   const section = rawSection ?? '';
 
   result.metrics.hasAestheticMode = hasLabeledContent(section, LABELS.depop.aestheticMode);
+  result.metrics.hasAttributes = hasLabeledContent(section, LABELS.depop.attributes);
   result.metrics.hasListingBlock = hasLabeledContent(section, LABELS.depop.listingBlock);
   result.metrics.hasMeasurementsBlock = hasLabeledContent(section, LABELS.depop.measurements);
 
   if (!result.metrics.hasAestheticMode) {
     addIssue(result, 'DEPOP_AESTHETIC_MODE_MISSING', 'Depop Aesthetic Mode is missing.');
+  }
+  if (!result.metrics.hasAttributes) {
+    addIssue(result, 'DEPOP_ATTRIBUTES_MISSING', 'Depop attributes section is missing.');
   }
 
   if (!result.metrics.hasListingBlock) {
@@ -50,11 +54,11 @@ export function validateDepop(
   result.metrics.brandHashtagCount = brandHashtagCount;
   result.metrics.totalHashtagCount = requiredHashtagCount + brandHashtagCount;
 
-  if (requiredHashtagCount !== REQUIRED_DEPOP_HASHTAGS) {
+  if (requiredHashtagCount > REQUIRED_DEPOP_HASHTAGS) {
     addIssue(
       result,
       'DEPOP_REQUIRED_HASHTAGS_COUNT',
-      `Depop required hashtags must equal ${REQUIRED_DEPOP_HASHTAGS}. Optional brand hashtags are counted separately.`,
+      `Depop required hashtags must be at most ${REQUIRED_DEPOP_HASHTAGS}. Optional brand hashtags are counted separately.`,
     );
   }
 

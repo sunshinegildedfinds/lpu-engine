@@ -12,7 +12,47 @@ type IncomingImage = {
 type GenerateBody = {
   notes: string;
   images: IncomingImage[];
+  includeGeneratorInstructionsReport?: boolean;
 };
+
+type GeneratorInstructionsReport = {
+  instructions: string;
+  characterLength: number;
+  checks: {
+    ebayTitleAOrder: boolean;
+    ebayThemeRequirement: boolean;
+    depopAttributesRequirement: boolean;
+    etsyExactly13TagsRequirement: boolean;
+    poshmarkStyleTagsMasterListRequirement: boolean;
+    compact3TagMasterListRequirement: boolean;
+  };
+  generatedAt: string;
+};
+
+function buildGeneratorInstructionsReport(): GeneratorInstructionsReport {
+  const instructions = MASTER_LPU_INSTRUCTIONS;
+  return {
+    instructions,
+    characterLength: instructions.length,
+    checks: {
+      ebayTitleAOrder: instructions.includes(
+        "[Brand/Maker] + [Item Name] + [Key Descriptor/Material] + [Color] + [Size] + [Gender/Dept]"
+      ),
+      ebayThemeRequirement:
+        instructions.includes('Theme requirement:') &&
+        instructions.includes('eBay Item Specifics must always include a "Theme:" line.'),
+      depopAttributesRequirement: instructions.includes("Include official Depop Attributes section."),
+      etsyExactly13TagsRequirement: instructions.includes("Output exactly 13 Etsy tags"),
+      poshmarkStyleTagsMasterListRequirement:
+        instructions.includes("BOTH Poshmark tag groups must use the saved Poshmark Style Tag master list verbatim:") &&
+        instructions.includes("1. Style Tags"),
+      compact3TagMasterListRequirement:
+        instructions.includes("2. Compact 3-Tag Strategy (Alt Option)") &&
+        instructions.includes("use only tags from the saved master list"),
+    },
+    generatedAt: new Date().toISOString(),
+  };
+}
 
 function hasOnlyTitleLengthIssues(validation: any): boolean {
   if (!validation || !Array.isArray(validation.issues) || validation.issues.length === 0) {
@@ -82,6 +122,9 @@ export async function POST(request: Request) {
     const body = (await request.json()) as GenerateBody;
     const notes = body?.notes?.trim();
     const images = Array.isArray(body?.images) ? body.images : [];
+    const includeGeneratorInstructionsReport = Boolean(
+      body?.includeGeneratorInstructionsReport
+    );
 
     if (!notes) {
       return NextResponse.json(
@@ -157,6 +200,9 @@ if (hasOnlyTitleLengthIssues(validation)) {
 return NextResponse.json({
   output: lpuOutput,
   validation,
+  ...(includeGeneratorInstructionsReport
+    ? { generatorInstructionsReport: buildGeneratorInstructionsReport() }
+    : {}),
 });
   } catch (error) {
     console.error("LP-U generation error:", error);

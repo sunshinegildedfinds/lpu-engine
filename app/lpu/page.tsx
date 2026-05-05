@@ -64,6 +64,20 @@ type ValidationResult = {
   };
 };
 
+type GeneratorInstructionsReport = {
+  instructions: string;
+  characterLength: number;
+  checks: {
+    ebayTitleAOrder: boolean;
+    ebayThemeRequirement: boolean;
+    depopAttributesRequirement: boolean;
+    etsyExactly13TagsRequirement: boolean;
+    poshmarkStyleTagsMasterListRequirement: boolean;
+    compact3TagMasterListRequirement: boolean;
+  };
+  generatedAt: string;
+};
+
 type WorkflowStatus = "ready" | "generating" | "pass" | "needs-review";
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -260,6 +274,10 @@ export default function LpuPage() {
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
   const [layer3Photos, setLayer3Photos] = useState<ImagePayload[]>([]);
   const [enableResearchPanel, setEnableResearchPanel] = useState(false);
+  const [showGeneratorInstructionsReport, setShowGeneratorInstructionsReport] =
+    useState(false);
+  const [generatorInstructionsReport, setGeneratorInstructionsReport] =
+    useState<GeneratorInstructionsReport | null>(null);
   const [priceDecision, setPriceDecision] = useState<OptionalPriceInput>(
     INITIAL_PRICE_DECISION
   );
@@ -276,6 +294,7 @@ export default function LpuPage() {
     setValidation(null);
     setCopiedTarget(null);
     setIsLoading(true);
+    setGeneratorInstructionsReport(null);
 
     try {
       const images: ImagePayload[] = await Promise.all(
@@ -295,6 +314,7 @@ export default function LpuPage() {
         body: JSON.stringify({
           notes,
           images,
+          includeGeneratorInstructionsReport: showGeneratorInstructionsReport,
         }),
       });
 
@@ -306,6 +326,7 @@ export default function LpuPage() {
 
       setOutput(data.output || "");
       setValidation(data.validation ?? null);
+      setGeneratorInstructionsReport(data.generatorInstructionsReport ?? null);
       setLayer3Photos(images);
       setPriceDecision(INITIAL_PRICE_DECISION);
     } catch (err) {
@@ -315,6 +336,7 @@ export default function LpuPage() {
       setValidation(null);
       setCopiedTarget(null);
       setLayer3Photos([]);
+      setGeneratorInstructionsReport(null);
       setPriceDecision(INITIAL_PRICE_DECISION);
     } finally {
       setIsLoading(false);
@@ -628,16 +650,115 @@ export default function LpuPage() {
       </form>
 
       <section className="mt-8 rounded-2xl border p-4">
-        <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
-          <input
-            type="checkbox"
-            checked={enableResearchPanel}
-            onChange={(event) => setEnableResearchPanel(event.target.checked)}
-            className="h-4 w-4"
-          />
-          Enable Research Panel
-        </label>
+        <div className="space-y-3">
+          <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
+            <input
+              type="checkbox"
+              checked={enableResearchPanel}
+              onChange={(event) => setEnableResearchPanel(event.target.checked)}
+              className="h-4 w-4"
+            />
+            Enable Research Panel
+          </label>
+          <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
+            <input
+              type="checkbox"
+              checked={showGeneratorInstructionsReport}
+              onChange={(event) =>
+                setShowGeneratorInstructionsReport(event.target.checked)
+              }
+              className="h-4 w-4"
+            />
+            Show Generator Instructions Report
+          </label>
+        </div>
       </section>
+
+      {showGeneratorInstructionsReport && generatorInstructionsReport ? (
+        <section className="mt-6 rounded-2xl border p-6">
+          <details open>
+            <summary className="cursor-pointer text-lg font-semibold">
+              Generator Instructions Report
+            </summary>
+            <div className="mt-4 space-y-4 text-sm">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-xl border bg-gray-50 p-3">
+                  <div className="text-xs uppercase tracking-wide text-gray-500">
+                    Character Length
+                  </div>
+                  <div className="mt-1 font-semibold">
+                    {generatorInstructionsReport.characterLength}
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-gray-50 p-3">
+                  <div className="text-xs uppercase tracking-wide text-gray-500">
+                    Report Generated
+                  </div>
+                  <div className="mt-1 font-semibold">
+                    {new Date(
+                      generatorInstructionsReport.generatedAt
+                    ).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="mb-2 font-semibold">Framework Checks</div>
+                <ul className="list-disc space-y-1 pl-5">
+                  <li>
+                    eBay Title A order present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks.ebayTitleAOrder
+                    )}
+                  </li>
+                  <li>
+                    eBay Theme requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks.ebayThemeRequirement
+                    )}
+                  </li>
+                  <li>
+                    Depop Attributes requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks.depopAttributesRequirement
+                    )}
+                  </li>
+                  <li>
+                    Etsy exactly 13 tags requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks
+                        .etsyExactly13TagsRequirement
+                    )}
+                  </li>
+                  <li>
+                    Poshmark Style Tags master-list requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks
+                        .poshmarkStyleTagsMasterListRequirement
+                    )}
+                  </li>
+                  <li>
+                    Compact 3-Tag Strategy master-list requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks
+                        .compact3TagMasterListRequirement
+                    )}
+                  </li>
+                </ul>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="mb-2 font-semibold">
+                  Runtime MASTER_LPU_INSTRUCTIONS
+                </div>
+                <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-800">
+                  {generatorInstructionsReport.instructions}
+                </pre>
+              </div>
+            </div>
+          </details>
+        </section>
+      ) : null}
 
       {enableResearchPanel && validation && researchRecord ? (
         <ResearchPanel
