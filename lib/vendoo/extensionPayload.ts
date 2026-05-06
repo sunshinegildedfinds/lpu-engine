@@ -38,7 +38,10 @@ export type VendooPhotoPayload = {
   name: string;
   type: string;
   size: number;
-  dataUrl: string;
+  dataUrl?: string;
+  storagePath?: string;
+  imageUrl?: string;
+  signedUrl?: string;
 };
 
 export type VendooResearchMeta = {
@@ -208,8 +211,18 @@ export function buildVendooExtensionPayload(input: {
               ? photo.size
               : 0,
           dataUrl: typeof photo?.dataUrl === "string" ? photo.dataUrl.trim() : "",
+          storagePath:
+            typeof photo?.storagePath === "string" ? photo.storagePath.trim() : "",
+          imageUrl: typeof photo?.imageUrl === "string" ? photo.imageUrl.trim() : "",
+          signedUrl: typeof photo?.signedUrl === "string" ? photo.signedUrl.trim() : "",
         }))
-        .filter((photo) => photo.dataUrl)
+        .filter(
+          (photo) =>
+            Boolean(photo.dataUrl) ||
+            Boolean(photo.storagePath) ||
+            Boolean(photo.imageUrl) ||
+            Boolean(photo.signedUrl)
+        )
     : [];
   const itemSpecifics: EbayItemSpecifics = {
     brand: input.itemSpecifics.brand.trim(),

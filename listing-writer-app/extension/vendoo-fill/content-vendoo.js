@@ -3794,6 +3794,26 @@
       uploadVerificationReason: "",
       photoStageStatus: "skipped_no_photos",
       photoStageError: "",
+      photoReferenceCount: photoResolution.photoReferenceCount,
+      resolvedPhotoCount: 0,
+      failedPhotoCount: 0,
+      resolverSource: "unavailable",
+      resolutionFailureReasons: [],
+      storedPayloadPhotoReferences: photoResolution.storedPayloadPhotoReferences,
+      transientPhotoReferences: photoResolution.transientPhotoReferences,
+      payloadPhotoReferences: photoResolution.payloadPhotoReferences,
+      hasStoragePath: false,
+      hasImageUrl: false,
+      hasSignedUrl: false,
+      attemptedResolverOrder: [],
+      signingEndpointCalled: false,
+      signingEndpointStatus: "",
+      signingEndpointUrlUsed: "",
+      signingEndpointError: "",
+      signingEndpointResponseText: "",
+      fetchUrlSource: "",
+      fetchStatus: 0,
+      fetchContentType: "",
     };
     try {
       if (!photos.length) {
@@ -3809,11 +3829,29 @@
       diagnostics.fileInputFound = uploadSurface.fileInput instanceof HTMLInputElement;
       diagnostics.dropzoneNodeFound = uploadSurface.dropzoneNode instanceof Element;
 
-      const files = buildFilesFromPhotoPayload(photos);
+      const fileResolution = await buildFilesFromPhotoPayload(photos, payload);
+      diagnostics.photoReferenceCount = fileResolution.photoReferenceCount;
+      diagnostics.resolvedPhotoCount = fileResolution.resolvedPhotoCount;
+      diagnostics.failedPhotoCount = fileResolution.failedPhotoCount;
+      diagnostics.resolverSource = fileResolution.resolverSource;
+      diagnostics.resolutionFailureReasons = fileResolution.failureReasons.slice(0, 10);
+      diagnostics.hasStoragePath = fileResolution.hasStoragePath;
+      diagnostics.hasImageUrl = fileResolution.hasImageUrl;
+      diagnostics.hasSignedUrl = fileResolution.hasSignedUrl;
+      diagnostics.attemptedResolverOrder = fileResolution.attemptedResolverOrder;
+      diagnostics.signingEndpointCalled = fileResolution.signingEndpointCalled;
+      diagnostics.signingEndpointStatus = fileResolution.signingEndpointStatus;
+      diagnostics.signingEndpointUrlUsed = fileResolution.signingEndpointUrlUsed;
+      diagnostics.signingEndpointError = fileResolution.signingEndpointError;
+      diagnostics.signingEndpointResponseText = fileResolution.signingEndpointResponseText;
+      diagnostics.fetchUrlSource = fileResolution.fetchUrlSource;
+      diagnostics.fetchStatus = fileResolution.fetchStatus;
+      diagnostics.fetchContentType = fileResolution.fetchContentType;
+      const files = fileResolution.files;
       if (!files.length) {
-        diagnostics.photoStageStatus = "failed";
-        diagnostics.uploadVerificationReason = "no valid photo files from payload";
-        diagnostics.photoStageError = "payload photos could not be converted to File objects";
+        diagnostics.photoStageStatus = "needs_review";
+        diagnostics.uploadVerificationReason = "photo references could not be resolved";
+        diagnostics.photoStageError = "no uploadable files resolved from photo payload";
         console.debug("[LPU Vendoo] Photo stage diagnostics", diagnostics);
         return diagnostics;
       }
@@ -9885,6 +9923,10 @@
               ? photo.size
               : 0,
           dataUrl: typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "",
+          storagePath:
+            typeof photo.storagePath === "string" ? photo.storagePath.trim() : "",
+          imageUrl: typeof photo.imageUrl === "string" ? photo.imageUrl.trim() : "",
+          signedUrl: typeof photo.signedUrl === "string" ? photo.signedUrl.trim() : "",
         };
       })
       .filter(Boolean);
@@ -9897,6 +9939,10 @@
     );
     const persistedMetadataOnly =
       persistedPhotos.length > 0 && persistedWithData.length === 0;
+    const persistedReferenceCount = persistedPhotos.filter(
+      (photo) =>
+        Boolean(photo?.storagePath) || Boolean(photo?.imageUrl) || Boolean(photo?.signedUrl)
+    ).length;
 
     let transientPhotos = [];
     let transientPhotoPayloadSource = "none";
@@ -9907,7 +9953,13 @@
           if (!photo || typeof photo !== "object") return null;
           const dataUrl =
             typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "";
-          if (!dataUrl) return null;
+          const storagePath =
+            typeof photo.storagePath === "string" ? photo.storagePath.trim() : "";
+          const imageUrl =
+            typeof photo.imageUrl === "string" ? photo.imageUrl.trim() : "";
+          const signedUrl =
+            typeof photo.signedUrl === "string" ? photo.signedUrl.trim() : "";
+          if (!dataUrl && !storagePath && !imageUrl && !signedUrl) return null;
           return {
             index:
               typeof photo.index === "number" && Number.isFinite(photo.index)
@@ -9921,7 +9973,10 @@
               photo.size >= 0
                 ? photo.size
                 : 0,
-            dataUrl,
+            ...(dataUrl ? { dataUrl } : {}),
+            ...(storagePath ? { storagePath } : {}),
+            ...(imageUrl ? { imageUrl } : {}),
+            ...(signedUrl ? { signedUrl } : {}),
           };
         })
         .filter(Boolean);
@@ -9933,6 +9988,10 @@
       transientPhotos = extensionTransient.photos;
       transientPhotoPayloadSource = extensionTransient.source;
     }
+    const transientReferenceCount = transientPhotos.filter(
+      (photo) =>
+        Boolean(photo?.storagePath) || Boolean(photo?.imageUrl) || Boolean(photo?.signedUrl)
+    ).length;
 
     const fallbackByIndex = new Map(transientPhotos.map((photo) => [photo.index, photo]));
     const fallbackByName = new Map(
@@ -9943,11 +10002,27 @@
 
     const merged = persistedPhotos
       .map((photo) => {
-        if (photo.dataUrl) return photo;
+        if (photo.dataUrl || photo.signedUrl || photo.imageUrl || photo.storagePath) return photo;
         const byIndex = fallbackByIndex.get(photo.index);
-        if (byIndex) return { ...photo, dataUrl: byIndex.dataUrl };
+        if (byIndex) {
+          return {
+            ...photo,
+            dataUrl: byIndex.dataUrl || "",
+            signedUrl: byIndex.signedUrl || "",
+            imageUrl: byIndex.imageUrl || "",
+            storagePath: byIndex.storagePath || "",
+          };
+        }
         const byName = photo.name ? fallbackByName.get(normalizeText(photo.name)) : null;
-        if (byName) return { ...photo, dataUrl: byName.dataUrl };
+        if (byName) {
+          return {
+            ...photo,
+            dataUrl: byName.dataUrl || "",
+            signedUrl: byName.signedUrl || "",
+            imageUrl: byName.imageUrl || "",
+            storagePath: byName.storagePath || "",
+          };
+        }
         return null;
       })
       .filter(Boolean);
@@ -9970,6 +10045,19 @@
         typeof payload?.meta?.storedPayloadByteEstimate === "number"
           ? payload.meta.storedPayloadByteEstimate
           : -1,
+      photoReferenceCount: usablePhotos.filter(
+        (photo) =>
+          Boolean(photo?.dataUrl) ||
+          Boolean(photo?.signedUrl) ||
+          Boolean(photo?.imageUrl) ||
+          Boolean(photo?.storagePath)
+      ).length,
+      storedPayloadPhotoReferences: persistedReferenceCount,
+      transientPhotoReferences: transientReferenceCount,
+      payloadPhotoReferences: usablePhotos.filter(
+        (photo) =>
+          Boolean(photo?.signedUrl) || Boolean(photo?.imageUrl) || Boolean(photo?.storagePath)
+      ).length,
     };
   }
 
@@ -9992,7 +10080,13 @@
                 if (!photo || typeof photo !== "object") return null;
                 const dataUrl =
                   typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "";
-                if (!dataUrl) return null;
+                const storagePath =
+                  typeof photo.storagePath === "string" ? photo.storagePath.trim() : "";
+                const imageUrl =
+                  typeof photo.imageUrl === "string" ? photo.imageUrl.trim() : "";
+                const signedUrl =
+                  typeof photo.signedUrl === "string" ? photo.signedUrl.trim() : "";
+                if (!dataUrl && !storagePath && !imageUrl && !signedUrl) return null;
                 return {
                   index:
                     typeof photo.index === "number" && Number.isFinite(photo.index)
@@ -10006,7 +10100,10 @@
                     photo.size >= 0
                       ? photo.size
                       : 0,
-                  dataUrl,
+                  ...(dataUrl ? { dataUrl } : {}),
+                  ...(storagePath ? { storagePath } : {}),
+                  ...(imageUrl ? { imageUrl } : {}),
+                  ...(signedUrl ? { signedUrl } : {}),
                 };
               })
               .filter(Boolean)
@@ -10220,17 +10317,392 @@
     }
   }
 
-  function buildFilesFromPhotoPayload(photos) {
+  async function buildFilesFromPhotoPayload(photos, payload) {
     const files = [];
+    const failureReasons = [];
+    const resolverSources = new Set();
+    const sourcePage = typeof payload?.meta?.sourcePage === "string" ? payload.meta.sourcePage : "";
+    let hasStoragePath = false;
+    let hasImageUrl = false;
+    let hasSignedUrl = false;
+    const attemptedResolverOrder = new Set();
+    let signingEndpointCalled = false;
+    let signingEndpointStatus = "";
+    let signingEndpointUrlUsed = "";
+    let signingEndpointError = "";
+    let signingEndpointResponseText = "";
+    let fetchUrlSource = "";
+    let fetchStatus = 0;
+    let fetchContentType = "";
 
     for (let index = 0; index < photos.length; index += 1) {
       const photo = photos[index];
-      if (!photo?.dataUrl || typeof photo.dataUrl !== "string") continue;
-      const built = buildFileFromDataUrl(photo, index);
-      if (built) files.push(built);
+      const resolved = await resolvePhotoToFile(photo, index, sourcePage);
+      hasStoragePath = hasStoragePath || resolved.hasStoragePath;
+      hasImageUrl = hasImageUrl || resolved.hasImageUrl;
+      hasSignedUrl = hasSignedUrl || resolved.hasSignedUrl;
+      for (const step of resolved.attemptedResolverOrder) {
+        attemptedResolverOrder.add(step);
+      }
+      signingEndpointCalled = signingEndpointCalled || resolved.signingEndpointCalled;
+      if (!signingEndpointStatus && resolved.signingEndpointStatus) {
+        signingEndpointStatus = resolved.signingEndpointStatus;
+      }
+      if (!signingEndpointUrlUsed && resolved.signingEndpointUrlUsed) {
+        signingEndpointUrlUsed = resolved.signingEndpointUrlUsed;
+      }
+      if (!signingEndpointError && resolved.signingEndpointError) {
+        signingEndpointError = resolved.signingEndpointError;
+      }
+      if (!signingEndpointResponseText && resolved.signingEndpointResponseText) {
+        signingEndpointResponseText = resolved.signingEndpointResponseText;
+      }
+      if (!fetchUrlSource && resolved.fetchUrlSource) {
+        fetchUrlSource = resolved.fetchUrlSource;
+      }
+      if (!fetchStatus && resolved.fetchStatus) {
+        fetchStatus = resolved.fetchStatus;
+      }
+      if (!fetchContentType && resolved.fetchContentType) {
+        fetchContentType = resolved.fetchContentType;
+      }
+      if (resolved.file) {
+        files.push(resolved.file);
+        if (resolved.source) resolverSources.add(resolved.source);
+      } else if (resolved.reason) {
+        failureReasons.push(`${photo?.name || `photo-${index + 1}`}: ${resolved.reason}`);
+      }
     }
 
-    return files;
+    return {
+      files,
+      photoReferenceCount: photos.length,
+      resolvedPhotoCount: files.length,
+      failedPhotoCount: Math.max(0, photos.length - files.length),
+      resolverSource: resolverSources.size ? Array.from(resolverSources).join("|") : "unavailable",
+      failureReasons,
+      hasStoragePath,
+      hasImageUrl,
+      hasSignedUrl,
+      attemptedResolverOrder: Array.from(attemptedResolverOrder),
+      signingEndpointCalled,
+      signingEndpointStatus,
+      signingEndpointUrlUsed,
+      signingEndpointError,
+      signingEndpointResponseText,
+      fetchUrlSource,
+      fetchStatus,
+      fetchContentType,
+    };
+  }
+
+  async function resolvePhotoToFile(photo, index, sourcePage) {
+    const attemptedResolverOrder = [];
+    const hasStoragePath =
+      Boolean(typeof photo?.storagePath === "string" && photo.storagePath.trim());
+    const hasImageUrl =
+      Boolean(typeof photo?.imageUrl === "string" && photo.imageUrl.trim());
+    const hasSignedUrl =
+      Boolean(typeof photo?.signedUrl === "string" && photo.signedUrl.trim());
+    let signingEndpointCalled = false;
+    let signingEndpointStatus = "";
+    let signingEndpointUrlUsed = "";
+    let signingEndpointError = "";
+    let signingEndpointResponseText = "";
+    let fetchUrlSource = "";
+    let fetchStatus = 0;
+    let fetchContentType = "";
+
+    if (!photo || typeof photo !== "object") {
+      return {
+        file: null,
+        source: "unavailable",
+        reason: "invalid photo reference",
+        hasStoragePath: false,
+        hasImageUrl: false,
+        hasSignedUrl: false,
+        attemptedResolverOrder,
+        signingEndpointCalled,
+        signingEndpointStatus,
+        signingEndpointUrlUsed,
+        signingEndpointError,
+        signingEndpointResponseText,
+        fetchUrlSource,
+        fetchStatus,
+        fetchContentType,
+      };
+    }
+    if (typeof photo.dataUrl === "string" && photo.dataUrl.trim()) {
+      attemptedResolverOrder.push("dataUrl");
+      const file = buildFileFromDataUrl(photo, index);
+      return file
+        ? {
+            file,
+            source: "dataUrl",
+            reason: "",
+            hasStoragePath,
+            hasImageUrl,
+            hasSignedUrl,
+            attemptedResolverOrder,
+            signingEndpointCalled,
+            signingEndpointStatus,
+            signingEndpointUrlUsed,
+            signingEndpointError,
+            signingEndpointResponseText,
+            fetchUrlSource,
+            fetchStatus,
+            fetchContentType,
+          }
+        : {
+            file: null,
+            source: "dataUrl",
+            reason: "invalid dataUrl",
+            hasStoragePath,
+            hasImageUrl,
+            hasSignedUrl,
+            attemptedResolverOrder,
+            signingEndpointCalled,
+            signingEndpointStatus,
+            signingEndpointUrlUsed,
+            signingEndpointError,
+            signingEndpointResponseText,
+            fetchUrlSource,
+            fetchStatus,
+            fetchContentType,
+          };
+    }
+
+    const signedUrl =
+      typeof photo.signedUrl === "string" && photo.signedUrl.trim() ? photo.signedUrl.trim() : "";
+    const imageUrl =
+      typeof photo.imageUrl === "string" && photo.imageUrl.trim() ? photo.imageUrl.trim() : "";
+    const storagePath =
+      typeof photo.storagePath === "string" && photo.storagePath.trim()
+        ? photo.storagePath.trim()
+        : "";
+
+    let resolvedUrl = signedUrl;
+    let source = signedUrl ? "signedUrl" : "unavailable";
+
+    if (!resolvedUrl && storagePath) {
+      attemptedResolverOrder.push("storagePathSignedUrl");
+      signingEndpointCalled = true;
+      const signResult = await getSignedPhotoUrlFromAppOrigin(storagePath, sourcePage);
+      signingEndpointStatus = signResult.status;
+      signingEndpointUrlUsed = signResult.endpointUrl;
+      signingEndpointError = signResult.error;
+      signingEndpointResponseText = signResult.responseText;
+      if (signResult.url) {
+        resolvedUrl = signResult.url;
+        source = "storagePathSignedUrl";
+      }
+    }
+
+    if (!resolvedUrl && imageUrl) {
+      attemptedResolverOrder.push("imageUrl");
+      resolvedUrl = imageUrl;
+      source = "imageUrl";
+    }
+
+    if (signedUrl) {
+      attemptedResolverOrder.unshift("signedUrl");
+    }
+
+    if (!resolvedUrl) {
+      return {
+        file: null,
+        source: "unavailable",
+        reason: signingEndpointCalled && signingEndpointStatus
+          ? `signing failed (${signingEndpointStatus})`
+          : "no fetchable photo reference",
+        hasStoragePath,
+        hasImageUrl,
+        hasSignedUrl,
+        attemptedResolverOrder,
+        signingEndpointCalled,
+        signingEndpointStatus,
+        signingEndpointUrlUsed,
+        signingEndpointError,
+        signingEndpointResponseText,
+        fetchUrlSource,
+        fetchStatus,
+        fetchContentType,
+      };
+    }
+
+    try {
+      fetchUrlSource = source;
+      const response = await fetch(resolvedUrl, { method: "GET" });
+      fetchStatus = response.status;
+      fetchContentType = response.headers.get("content-type") || "";
+      if (!response.ok) {
+        return {
+          file: null,
+          source,
+          reason: `fetch failed (${source}:${response.status})`,
+          hasStoragePath,
+          hasImageUrl,
+          hasSignedUrl,
+          attemptedResolverOrder,
+          signingEndpointCalled,
+          signingEndpointStatus,
+          signingEndpointUrlUsed,
+          signingEndpointError,
+          signingEndpointResponseText,
+          fetchUrlSource,
+          fetchStatus,
+          fetchContentType,
+        };
+      }
+      const blob = await response.blob();
+      const inferredType = (photo.type || blob.type || "image/jpeg").trim();
+      const fallbackExt = inferredType.split("/")[1] || "jpg";
+      const name = photo.name?.trim() || `photo-${index + 1}.${fallbackExt}`;
+      const file = new File([blob], name, { type: inferredType });
+      return {
+        file,
+        source,
+        reason: "",
+        hasStoragePath,
+        hasImageUrl,
+        hasSignedUrl,
+        attemptedResolverOrder,
+        signingEndpointCalled,
+        signingEndpointStatus,
+        signingEndpointUrlUsed,
+        signingEndpointError,
+        signingEndpointResponseText,
+        fetchUrlSource,
+        fetchStatus,
+        fetchContentType,
+      };
+    } catch (error) {
+      return {
+        file: null,
+        source,
+        reason: error instanceof Error ? error.message : "photo fetch error",
+        hasStoragePath,
+        hasImageUrl,
+        hasSignedUrl,
+        attemptedResolverOrder,
+        signingEndpointCalled,
+        signingEndpointStatus,
+        fetchUrlSource,
+        fetchStatus,
+        fetchContentType,
+      };
+    }
+  }
+
+  async function getSignedPhotoUrlFromAppOrigin(storagePath, sourcePage) {
+    if (!storagePath) {
+      return {
+        url: "",
+        status: "missing_storage_path",
+        endpointUrl: "",
+        error: "",
+        responseText: "",
+      };
+    }
+
+    const originCandidates = buildSigningOriginCandidates(sourcePage);
+    if (!originCandidates.length) {
+      return {
+        url: "",
+        status: "no_origin_candidates",
+        endpointUrl: "",
+        error: "",
+        responseText: "",
+      };
+    }
+
+    let lastFailure = {
+      status: "request_failed",
+      endpointUrl: `${originCandidates[0]}/api/lpu/sign-storage-image`,
+      error: "request_failed",
+      responseText: "",
+    };
+
+    for (const origin of originCandidates) {
+      const endpoint = `${origin}/api/lpu/sign-storage-image`;
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ storagePath }),
+        });
+        const responseTextRaw = await response.text();
+        const responseText = responseTextRaw.slice(0, 220);
+        if (!response.ok) {
+          lastFailure = {
+            status: String(response.status),
+            endpointUrl: endpoint,
+            error: "non_ok_response",
+            responseText,
+          };
+          continue;
+        }
+        let data = {};
+        try {
+          data = responseTextRaw ? JSON.parse(responseTextRaw) : {};
+        } catch {
+          data = {};
+        }
+        const signedUrl = typeof data?.signedUrl === "string" ? data.signedUrl.trim() : "";
+        if (signedUrl) {
+          return {
+            url: signedUrl,
+            status: String(response.status),
+            endpointUrl: endpoint,
+            error: "",
+            responseText,
+          };
+        }
+        lastFailure = {
+          status: String(response.status),
+          endpointUrl: endpoint,
+          error: "missing_signed_url",
+          responseText,
+        };
+      } catch (error) {
+        lastFailure = {
+          status: "request_failed",
+          endpointUrl: endpoint,
+          error: error instanceof Error ? error.message : "request_failed",
+          responseText: "",
+        };
+        continue;
+      }
+    }
+    return {
+      url: "",
+      status: lastFailure.status,
+      endpointUrl: lastFailure.endpointUrl,
+      error: lastFailure.error,
+      responseText: lastFailure.responseText,
+    };
+  }
+
+  function buildSigningOriginCandidates(sourcePage) {
+    const candidates = [];
+    const seen = new Set();
+    const addOrigin = (value) => {
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      candidates.push(value);
+    };
+
+    try {
+      if (typeof sourcePage === "string" && sourcePage.trim()) {
+        addOrigin(new URL(sourcePage).origin);
+      }
+    } catch {
+      // ignore invalid sourcePage
+    }
+
+    addOrigin("https://lpu-engine.vercel.app");
+    addOrigin("http://localhost:3000");
+    return candidates;
   }
 
   function buildFileFromDataUrl(photo, index) {

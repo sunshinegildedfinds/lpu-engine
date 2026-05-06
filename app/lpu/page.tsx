@@ -30,6 +30,9 @@ type ImagePayload = {
   type: string;
   size: number;
   dataUrl: string;
+  storagePath?: string;
+  imageUrl?: string;
+  signedUrl?: string;
 };
 
 type GeneratorImageReference = {
@@ -442,7 +445,18 @@ export default function LpuPage() {
       setOutput(data.output || "");
       setValidation(data.validation ?? null);
       setGeneratorInstructionsReport(data.generatorInstructionsReport ?? null);
-      setLayer3Photos(layer3ImagePayloads);
+      const layer3PhotosWithReferences: ImagePayload[] = layer3ImagePayloads.map(
+        (photo, index) => {
+          const reference = generatorImageReferences[index];
+          return {
+            ...photo,
+            ...(reference?.storagePath ? { storagePath: reference.storagePath } : {}),
+            ...(reference?.imageUrl ? { imageUrl: reference.imageUrl } : {}),
+          };
+        }
+      );
+
+      setLayer3Photos(layer3PhotosWithReferences);
       setPriceDecision(INITIAL_PRICE_DECISION);
       setGeneratorImageUploadStatus(
         files.length
