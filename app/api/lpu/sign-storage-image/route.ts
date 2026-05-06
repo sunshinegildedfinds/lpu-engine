@@ -4,14 +4,63 @@ type SignRequest = {
   storagePath?: string;
 };
 
+const ALLOWED_ORIGINS = new Set([
+  "https://web.vendoo.co",
+  "https://lpu-engine.vercel.app",
+  "http://localhost:3000",
+]);
+
+function buildCorsHeaders(origin: string | null): HeadersInit {
+  const allowOrigin = origin && ALLOWED_ORIGINS.has(origin) ? origin : !origin ? "*" : "";
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    Vary: "Origin",
+  };
+  if (allowOrigin) {
+    headers["Access-Control-Allow-Origin"] = allowOrigin;
+  }
+  return headers;
+}
+
+function jsonWithCors(
+  request: Request,
+  body: unknown,
+  init?: { status?: number }
+): NextResponse {
+  const origin = request.headers.get("origin");
+  return NextResponse.json(body, {
+    ...(init ?? {}),
+    headers: buildCorsHeaders(origin),
+  });
+}
+
+export async function OPTIONS(request: Request) {
+  const origin = request.headers.get("origin");
+  return new NextResponse(null, {
+    status: 204,
+    headers: buildCorsHeaders(origin),
+  });
+}
+
 export async function POST(request: Request) {
+  const origin = request.headers.get("origin");
+  if (origin && !ALLOWED_ORIGINS.has(origin)) {
+    return jsonWithCors(
+      request,
+      { error: "Origin not allowed." },
+      { status: 403 }
+    );
+  }
+
   try {
     const body = (await request.json()) as SignRequest;
     const storagePath =
       typeof body?.storagePath === "string" ? body.storagePath.trim() : "";
 
     if (!storagePath) {
-      return NextResponse.json(
+      return jsonWithCors(
+        request,
         { error: "Missing required storagePath." },
         { status: 400 }
       );
@@ -24,7 +73,8 @@ export async function POST(request: Request) {
       "lpu-generator-images";
 
     if (!supabaseUrl || !serviceRoleKey) {
-      return NextResponse.json(
+      return jsonWithCors(
+        request,
         { error: "Storage signing is not configured." },
         { status: 500 }
       );
@@ -48,7 +98,8 @@ export async function POST(request: Request) {
 
     if (!signResponse.ok) {
       const text = await signResponse.text();
-      return NextResponse.json(
+      return jsonWithCors(
+        request,
         { error: `Unable to create signed URL: ${signResponse.status} ${text}` },
         { status: 502 }
       );
@@ -66,7 +117,8 @@ export async function POST(request: Request) {
           : "";
 
     if (!relativeSigned) {
-      return NextResponse.json(
+      return jsonWithCors(
+        request,
         { error: "Signed URL response missing signedURL." },
         { status: 502 }
       );
@@ -76,10 +128,10 @@ export async function POST(request: Request) {
       ? relativeSigned
       : `${supabaseUrl}/storage/v1${relativeSigned}`;
 
-    return NextResponse.json({ signedUrl });
+    return jsonWithCors(request, { signedUrl });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to sign storage image.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return jsonWithCors(request, { error: message }, { status: 500 });
   }
 }
