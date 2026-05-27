@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { openai } from "@/lib/openai";
-import { MASTER_LPU_INSTRUCTIONS } from "@/lib/lpu/masterPrompt";
+import { getMasterPrompt } from "@/lib/lpu/masterPrompt";
 import { validateLpuOutput } from "@/lib/validator";
 
 type IncomingImage = {
@@ -14,6 +14,8 @@ type GenerateBody = {
   notes: string;
   images: IncomingImage[];
   includeGeneratorInstructionsReport?: boolean;
+  interfaceVersion?: string;
+  promptVersion?: string;
 };
 
 type GeneratorInstructionsReport = {
@@ -28,7 +30,31 @@ type GeneratorInstructionsReport = {
     compact3TagMasterListRequirement: boolean;
   };
   generatedAt: string;
+  promptVersion: "v1" | "v2";
+  interfaceVersion?: string;
 };
+
+type TitleValidationIssue = {
+  code?: unknown;
+  message?: unknown;
+  severity?: unknown;
+};
+
+type TitleValidationShape = {
+  issues?: TitleValidationIssue[];
+  platformResults?: Record<string, { metrics?: Record<string, unknown> }>;
+};
+
+function normalizePromptVersion(promptVersion: unknown): "v1" | "v2" {
+  return promptVersion === "v2" ? "v2" : "v1";
+}
+
+function normalizeInterfaceVersion(interfaceVersion: unknown): string | undefined {
+  if (typeof interfaceVersion !== "string") return undefined;
+
+  const normalized = interfaceVersion.trim();
+  return normalized || undefined;
+}
 
 async function resolveGeneratorImageUrl(
   image: IncomingImage
@@ -75,8 +101,14 @@ async function resolveGeneratorImageUrl(
   return `${supabaseUrl}/storage/v1${signedPath}`;
 }
 
-function buildGeneratorInstructionsReport(): GeneratorInstructionsReport {
-  const instructions = MASTER_LPU_INSTRUCTIONS;
+function buildGeneratorInstructionsReport({
+  interfaceVersion,
+  promptVersion,
+}: {
+  interfaceVersion?: string;
+  promptVersion: "v1" | "v2";
+}): GeneratorInstructionsReport {
+  const instructions = getMasterPrompt(promptVersion);
   return {
     instructions,
     characterLength: instructions.length,
@@ -97,10 +129,12 @@ function buildGeneratorInstructionsReport(): GeneratorInstructionsReport {
         instructions.includes("use only tags from the saved master list"),
     },
     generatedAt: new Date().toISOString(),
+    promptVersion,
+    ...(interfaceVersion ? { interfaceVersion } : {}),
   };
 }
 
-function hasOnlyTitleLengthIssues(validation: any): boolean {
+function hasOnlyTitleLengthIssues(validation: TitleValidationShape): boolean {
   if (!validation || !Array.isArray(validation.issues) || validation.issues.length === 0) {
     return false;
   }
@@ -113,13 +147,19 @@ function hasOnlyTitleLengthIssues(validation: any): boolean {
   ]);
 
   return validation.issues.every(
-    (issue: any) => issue?.severity === "error" && allowedCodes.has(issue?.code)
+    (issue) =>
+      issue?.severity === "error" &&
+      typeof issue?.code === "string" &&
+      allowedCodes.has(issue.code)
   );
 }
 
-function buildTitleRevisionInstruction(output: string, validation: any): string {
+function buildTitleRevisionInstruction(
+  output: string,
+  validation: TitleValidationShape
+): string {
   const issueLines = (validation?.issues ?? []).map(
-    (issue: any) => `- ${issue.code}: ${issue.message}`
+    (issue) => `- ${String(issue.code)}: ${String(issue.message)}`
   );
 
   const platformResults = validation?.platformResults ?? {};
@@ -171,6 +211,9 @@ export async function POST(request: Request) {
     const includeGeneratorInstructionsReport = Boolean(
       body?.includeGeneratorInstructionsReport
     );
+    const promptVersion = normalizePromptVersion(body?.promptVersion);
+    const interfaceVersion = normalizeInterfaceVersion(body?.interfaceVersion);
+    const instructions = getMasterPrompt(promptVersion);
 
     if (!notes) {
       return NextResponse.json(
@@ -203,7 +246,7 @@ ${notes}`,
 
     const response = await openai.responses.create({
   model: "gpt-5.3-chat-latest",
-  instructions: MASTER_LPU_INSTRUCTIONS,
+  instructions,
   input: [
     {
       role: "user",
@@ -250,8 +293,15 @@ if (hasOnlyTitleLengthIssues(validation)) {
 return NextResponse.json({
   output: lpuOutput,
   validation,
+  promptVersion,
+  ...(interfaceVersion ? { interfaceVersion } : {}),
   ...(includeGeneratorInstructionsReport
-    ? { generatorInstructionsReport: buildGeneratorInstructionsReport() }
+    ? {
+        generatorInstructionsReport: buildGeneratorInstructionsReport({
+          interfaceVersion,
+          promptVersion,
+        }),
+      }
     : {}),
 });
   } catch (error) {
