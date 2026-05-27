@@ -19,7 +19,97 @@ const WORKFLOW_SECTIONS = [
 type GenerationMetadata = {
   promptVersion?: string;
   interfaceVersion?: string;
+  requestImageCount?: number;
 };
+
+type GeneratorImageReference = {
+  name: string;
+  type: string;
+  size: number;
+  storagePath: string;
+  imageUrl: string;
+};
+
+function sanitizeFileName(name: string): string {
+  return name
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function buildStoragePath(file: File): string {
+  const safeName = sanitizeFileName(file.name) || "upload.jpg";
+  const stamp = Date.now();
+  const random = Math.random().toString(36).slice(2, 10);
+  return `lpu/${stamp}-${random}-${safeName}`;
+}
+
+function encodeStoragePath(path: string): string {
+  return path
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+async function uploadFilesToSupabaseStorage(
+  files: File[]
+): Promise<GeneratorImageReference[]> {
+  if (!files.length) return [];
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+  const bucketName =
+    process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() ||
+    "lpu-generator-images";
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error(
+      "Missing Supabase configuration. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+    );
+  }
+
+  const references: GeneratorImageReference[] = [];
+
+  for (const file of files) {
+    const storagePath = buildStoragePath(file);
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucketName}/${encodeStoragePath(
+      storagePath
+    )}`;
+
+    const uploadResponse = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+        "x-upsert": "false",
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: file,
+    });
+
+    if (!uploadResponse.ok) {
+      const bodyText = await uploadResponse.text();
+      throw new Error(
+        `Supabase image upload failed for ${file.name}: ${uploadResponse.status} ${bodyText}`
+      );
+    }
+
+    const imageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${encodeStoragePath(
+      storagePath
+    )}`;
+
+    references.push({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      storagePath,
+      imageUrl,
+    });
+  }
+
+  return references;
+}
 
 function SectionShell({
   children,
@@ -94,6 +184,7 @@ export default function LpuV2Page() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [metadata, setMetadata] = useState<GenerationMetadata | null>(null);
+  const [imageUploadStatus, setImageUploadStatus] = useState("");
 
   const compiledNotes = useMemo(
     () =>
@@ -116,9 +207,20 @@ export default function LpuV2Page() {
     setError("");
     setOutput("");
     setMetadata(null);
+    setImageUploadStatus("");
     setIsLoading(true);
 
     try {
+      if (files.length) {
+        setImageUploadStatus("Uploading images to Supabase Storage...");
+      }
+      const generatorImageReferences = await uploadFilesToSupabaseStorage(files);
+      if (files.length) {
+        setImageUploadStatus(
+          `Uploaded ${generatorImageReferences.length} image(s). Generating LP-U...`
+        );
+      }
+
       const response = await fetch("/api/lpu/generate", {
         method: "POST",
         headers: {
@@ -126,7 +228,7 @@ export default function LpuV2Page() {
         },
         body: JSON.stringify({
           notes: compiledNotes,
-          images: [],
+          images: generatorImageReferences,
           interfaceVersion: INTERFACE_VERSION,
           promptVersion: PROMPT_VERSION,
         }),
@@ -153,9 +255,16 @@ export default function LpuV2Page() {
       setMetadata({
         interfaceVersion: data.interfaceVersion,
         promptVersion: data.promptVersion,
+        requestImageCount: generatorImageReferences.length,
       });
+      setImageUploadStatus(
+        files.length
+          ? "Generation used Supabase image references successfully."
+          : ""
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate output.");
+      setImageUploadStatus("");
     } finally {
       setIsLoading(false);
     }
@@ -271,8 +380,7 @@ export default function LpuV2Page() {
                 className="mt-2 block w-full text-sm"
               />
               <p className="mt-2 text-sm text-gray-500">
-                Selected: {files.length} image(s). Image upload processing is not
-                connected in this V2 shell yet.
+                Selected: {files.length} image(s).
               </p>
             </SectionShell>
 
@@ -298,6 +406,12 @@ export default function LpuV2Page() {
                 </div>
               ) : null}
 
+              {imageUploadStatus ? (
+                <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
+                  {imageUploadStatus}
+                </div>
+              ) : null}
+
               {metadata ? (
                 <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
                   Response metadata: promptVersion{" "}
@@ -305,6 +419,10 @@ export default function LpuV2Page() {
                   interfaceVersion{" "}
                   <span className="font-semibold">
                     {metadata.interfaceVersion ?? "not provided"}
+                  </span>
+                  , requestImageCount{" "}
+                  <span className="font-semibold">
+                    {metadata.requestImageCount ?? 0}
                   </span>
                 </div>
               ) : null}
