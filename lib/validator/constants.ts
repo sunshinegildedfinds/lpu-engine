@@ -8,6 +8,47 @@ export const REQUIRED_MERCARI_HASHTAGS = 3;
 export const REQUIRED_POSHMARK_STYLE_TAGS = 3;
 export const REQUIRED_ETSY_TAGS = 13;
 
+export const DEPOP_AESTHETIC_MODE_NOT_APPLICABLE =
+  'Not applicable - non-style-led item';
+
+export const DEPOP_AESTHETIC_MODE_LIST = [
+  'COQUETTE',
+  'BALLETCORE',
+  'SOFT GIRL',
+  'ROMANTIC-FEMININE',
+  'CLEAN GIRL',
+  'MINIMALIST',
+  'NORMCORE',
+  'SCANDI MINIMAL',
+  'Y2K',
+  'MCBLING',
+  'INDIE SLEAZE',
+  'DOWNTOWN GIRL',
+  '90s MINIMAL',
+  '70s VINTAGE',
+  'BLOKETTE',
+  'TENNISCORE',
+  'ATHLEISURE',
+  'RETRO ATHLETIC',
+  'GORPCORE',
+  'TECHWEAR-LITE',
+  'GRUNGE',
+  'ALT',
+  'PUNK',
+  'BIKERCORE',
+  'GOTH',
+  'WHIMSYGOTH',
+  'DARK ACADEMIA',
+  'BOHO',
+  'COTTAGECORE',
+  'FAIRYCORE',
+  'PRAIRIE',
+  'WESTERN-INSPIRED',
+  'COASTAL',
+  'PREPPY',
+  'OLD MONEY',
+] as const;
+
 export const POSHMARK_STYLE_TAG_MASTER_LIST = [
   '70s',
   '80s',

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { openai } from "@/lib/openai";
 import { getMasterPrompt } from "@/lib/lpu/masterPrompt";
 import {
+  DEPOP_AESTHETIC_MODE_LIST,
+  DEPOP_AESTHETIC_MODE_NOT_APPLICABLE,
   POSHMARK_STYLE_TAG_MASTER_LIST,
   validateLpuOutput,
 } from "@/lib/validator";
@@ -187,6 +189,18 @@ function hasPoshmarkInvalidStyleTagIssues(validation: TitleValidationShape): boo
   );
 }
 
+function hasDepopInvalidAestheticModeIssues(validation: TitleValidationShape): boolean {
+  if (!validation || !Array.isArray(validation.issues) || validation.issues.length === 0) {
+    return false;
+  }
+
+  return validation.issues.some(
+    (issue) =>
+      issue?.severity === "error" &&
+      issue?.code === "DEPOP_INVALID_AESTHETIC_MODE"
+  );
+}
+
 function buildTitleRevisionInstruction(
   output: string,
   validation: TitleValidationShape
@@ -228,6 +242,39 @@ Current failing titles and lengths:
 - EBAY Title B (${ebayTitleBLength} chars): ${ebayTitleB}
 - POSHMARK Title (${poshmarkTitleLength} chars): ${poshmarkTitle}
 - MERCARI Title (${mercariTitleLength} chars): ${mercariTitle}
+
+Validation failures:
+${issueLines.join("\n")}
+
+Current LP-U output:
+${output}`;
+}
+
+function buildDepopInvalidAestheticModeRevisionInstruction(
+  output: string,
+  validation: TitleValidationShape
+): string {
+  const issueLines = (validation?.issues ?? [])
+    .filter((issue) => issue?.code === "DEPOP_INVALID_AESTHETIC_MODE")
+    .map((issue) => `- ${String(issue.code)}: ${String(issue.message)}`);
+
+  return `Revise the LP-U output below.
+
+IMPORTANT:
+- Fix ONLY invalid Depop Aesthetic Mode Primary and Secondary values.
+- Preserve every other platform section unchanged.
+- Preserve all Depop listing text, attributes, hashtags, measurements, and footer unchanged except the invalid Aesthetic Mode replacements.
+- Do not reclassify the item.
+- Do not add new item attributes.
+- Do not change image-derived facts.
+- Use only exact values from this saved Depop Aesthetic Mode list, preserving spelling and capitalization.
+- If the item is not aesthetic-led or not fashion/style related, use exactly "${DEPOP_AESTHETIC_MODE_NOT_APPLICABLE}".
+- Return the full corrected LP-U output only.
+- Do not add commentary.
+
+Allowed Depop Aesthetic Mode values:
+${DEPOP_AESTHETIC_MODE_LIST.join("; ")}
+${DEPOP_AESTHETIC_MODE_NOT_APPLICABLE}
 
 Validation failures:
 ${issueLines.join("\n")}
@@ -404,6 +451,34 @@ if (promptVersion === "v2" && hasPoshmarkInvalidStyleTagIssues(validation)) {
           {
             type: "input_text",
             text: buildPoshmarkInvalidStyleTagRevisionInstruction(lpuOutput, validation),
+          },
+        ],
+      },
+    ],
+  });
+
+  const revisedOutput = revisionResponse.output_text ?? "";
+
+  if (revisedOutput.trim()) {
+    lpuOutput = revisedOutput;
+
+    validation = validateLpuOutput(lpuOutput, {
+      itemType: "auto",
+      requirePoshmarkCompactTagStrategy: true,
+    });
+  }
+}
+
+if (promptVersion === "v2" && hasDepopInvalidAestheticModeIssues(validation)) {
+  const revisionResponse = await openai.responses.create({
+    model: "gpt-5.3-chat-latest",
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: buildDepopInvalidAestheticModeRevisionInstruction(lpuOutput, validation),
           },
         ],
       },
