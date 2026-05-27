@@ -154,6 +154,24 @@ function hasOnlyTitleLengthIssues(validation: TitleValidationShape): boolean {
   );
 }
 
+function hasPoshmarkOutputOrderIssues(validation: TitleValidationShape): boolean {
+  if (!validation || !Array.isArray(validation.issues) || validation.issues.length === 0) {
+    return false;
+  }
+
+  const formatOrderCodes = new Set([
+    "POSHMARK_FIELD_ORDER",
+    "POSHMARK_FOOTER_ORDER",
+  ]);
+
+  return validation.issues.some(
+    (issue) =>
+      issue?.severity === "error" &&
+      typeof issue?.code === "string" &&
+      formatOrderCodes.has(issue.code)
+  );
+}
+
 function buildTitleRevisionInstruction(
   output: string,
   validation: TitleValidationShape
@@ -195,6 +213,46 @@ Current failing titles and lengths:
 - EBAY Title B (${ebayTitleBLength} chars): ${ebayTitleB}
 - POSHMARK Title (${poshmarkTitleLength} chars): ${poshmarkTitle}
 - MERCARI Title (${mercariTitleLength} chars): ${mercariTitle}
+
+Validation failures:
+${issueLines.join("\n")}
+
+Current LP-U output:
+${output}`;
+}
+
+function buildPoshmarkOrderRevisionInstruction(
+  output: string,
+  validation: TitleValidationShape
+): string {
+  const issueLines = (validation?.issues ?? [])
+    .filter((issue) =>
+      issue?.code === "POSHMARK_FIELD_ORDER" ||
+      issue?.code === "POSHMARK_FOOTER_ORDER"
+    )
+    .map((issue) => `- ${String(issue.code)}: ${String(issue.message)}`);
+
+  return `Revise the LP-U output below.
+
+IMPORTANT:
+- Fix ONLY the Poshmark output order.
+- Preserve every other platform section unchanged.
+- Preserve the existing Poshmark wording and values; only move existing blocks as needed.
+- Do not reclassify the item.
+- Do not add new item attributes.
+- Do not change image-derived facts.
+- Return the full corrected LP-U output only.
+- Do not add commentary.
+
+Required Poshmark order:
+Title:
+Description:
+Style Tags:
+Compact 3-Tag Strategy (Alt Option):
+Approximate Measurements:
+footer
+
+The Poshmark footer must appear after the Approximate Measurements block.
 
 Validation failures:
 ${issueLines.join("\n")}
@@ -261,6 +319,34 @@ let validation = validateLpuOutput(lpuOutput, {
   itemType: "auto",
   requirePoshmarkCompactTagStrategy: true,
 });
+
+if (hasPoshmarkOutputOrderIssues(validation)) {
+  const revisionResponse = await openai.responses.create({
+    model: "gpt-5.3-chat-latest",
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: buildPoshmarkOrderRevisionInstruction(lpuOutput, validation),
+          },
+        ],
+      },
+    ],
+  });
+
+  const revisedOutput = revisionResponse.output_text ?? "";
+
+  if (revisedOutput.trim()) {
+    lpuOutput = revisedOutput;
+
+    validation = validateLpuOutput(lpuOutput, {
+      itemType: "auto",
+      requirePoshmarkCompactTagStrategy: true,
+    });
+  }
+}
 
 if (hasOnlyTitleLengthIssues(validation)) {
   const revisionResponse = await openai.responses.create({
