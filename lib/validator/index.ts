@@ -4,15 +4,20 @@ import { validateDepop } from './checkers/depop';
 import { validateEbay } from './checkers/ebay';
 import { validateEtsy } from './checkers/etsy';
 import { validateMercari } from './checkers/mercari';
+import { checkUnsupportedEstimatedMeasurements } from './checkers/measurements';
 import { validatePoshmark } from './checkers/poshmark';
 import { PlatformName, ValidationResult, ValidatorOptions } from './types';
 
 export * from './types';
 export * from './constants';
 
+type MeasurementValidatorOptions = ValidatorOptions & {
+  enforceUnsupportedEstimatedMeasurements?: boolean;
+};
+
 export function validateLpuOutput(
   raw: string,
-  options?: ValidatorOptions,
+  options?: MeasurementValidatorOptions,
 ): ValidationResult {
   const parsed = splitLpuSections(raw);
   const expectedFooterType = resolveExpectedFooterType(raw, options);
@@ -24,6 +29,12 @@ export function validateLpuOutput(
     mercari: validateMercari(parsed.sections.mercari, expectedFooterType),
     etsy: validateEtsy(parsed.sections.etsy, expectedFooterType),
   };
+
+  if (options?.enforceUnsupportedEstimatedMeasurements) {
+    for (const platform of PLATFORM_ORDER) {
+      checkUnsupportedEstimatedMeasurements(platformResults[platform], parsed.sections[platform]);
+    }
+  }
 
   const issues = PLATFORM_ORDER.flatMap(
     (platform: PlatformName) => platformResults[platform].issues,

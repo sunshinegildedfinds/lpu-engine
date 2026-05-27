@@ -649,7 +649,7 @@ CORE UNIVERSAL RULES
 - Use visible text, tags, labels, stamps, marks, packaging, model numbers, measurements, and condition details when readable.
 - Do not ask clarifying questions during normal listing generation. Produce the best evidence-based LP-U output using what is available.
 - If evidence is missing, say so cleanly using Not provided, Not specified, or Not applicable.
-- Do not estimate measurements.
+- Do not invent measurements. Approximate measurements are allowed only when derived from visible ruler photos, measurement-board photos, typed measurement graphics, or user-provided measurements.
 - Do not invent details to make the listing sound richer.
 - Do not use vague filler to satisfy title length or description length.
 - Do not create a generic listing that could apply to many unrelated items.
@@ -940,14 +940,16 @@ Approximate Measurements:
 
 Use exact measurements only when supplied by the user, clearly visible on a ruler or measurement board photo, or visible in a typed measurement graphic.
 
-Measurements must be in inches using the __" style when exact measurements are present.
+Approximate measurements are allowed when derived from visible ruler photos, measurement-board photos, typed measurement graphics, or user-provided measurement references. Put supported approximate measurements in this block and include source wording such as "approx. 8-10 mm based on ruler photo" or "approx. __ cm from measurement graphic".
+
+Measurements should use inches with the __" style when exact inch measurements are present. For jewelry and small components, mm and cm are allowed when supported by ruler/photo/measurement-reference evidence.
 
 If no measurements are available, use exactly:
 
 Approximate Measurements:
 Not provided (see photos)
 
-Do not estimate measurements.
+Do not invent measurements.
 Do not infer measurements from item type.
 Do not invent measurements to help the listing.
 

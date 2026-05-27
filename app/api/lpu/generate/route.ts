@@ -177,6 +177,26 @@ function hasPoshmarkOutputOrderIssues(validation: TitleValidationShape): boolean
   );
 }
 
+function hasMercariOutputFormatIssues(validation: TitleValidationShape): boolean {
+  if (!validation || !Array.isArray(validation.issues) || validation.issues.length === 0) {
+    return false;
+  }
+
+  const formatCodes = new Set([
+    "MERCARI_FIELD_ORDER",
+    "MERCARI_DUPLICATE_LABEL",
+    "MERCARI_FOOTER_ORDER",
+    "MERCARI_DUPLICATE_FOOTER",
+  ]);
+
+  return validation.issues.some(
+    (issue) =>
+      issue?.severity === "error" &&
+      typeof issue?.code === "string" &&
+      formatCodes.has(issue.code)
+  );
+}
+
 function hasPoshmarkInvalidStyleTagIssues(validation: TitleValidationShape): boolean {
   if (!validation || !Array.isArray(validation.issues) || validation.issues.length === 0) {
     return false;
@@ -198,6 +218,19 @@ function hasDepopInvalidAestheticModeIssues(validation: TitleValidationShape): b
     (issue) =>
       issue?.severity === "error" &&
       issue?.code === "DEPOP_INVALID_AESTHETIC_MODE"
+  );
+}
+
+function hasEstimatedMeasurementUnsupportedIssues(validation: TitleValidationShape): boolean {
+  if (!validation || !Array.isArray(validation.issues) || validation.issues.length === 0) {
+    return false;
+  }
+
+  return validation.issues.some(
+    (issue) =>
+      issue?.severity === "error" &&
+      (issue?.code === "ESTIMATED_MEASUREMENT_UNSUPPORTED" ||
+        issue?.code === "MEASUREMENT_SHOULD_BE_IN_BLOCK")
   );
 }
 
@@ -242,6 +275,41 @@ Current failing titles and lengths:
 - EBAY Title B (${ebayTitleBLength} chars): ${ebayTitleB}
 - POSHMARK Title (${poshmarkTitleLength} chars): ${poshmarkTitle}
 - MERCARI Title (${mercariTitleLength} chars): ${mercariTitle}
+
+Validation failures:
+${issueLines.join("\n")}
+
+Current LP-U output:
+${output}`;
+}
+
+function buildEstimatedMeasurementUnsupportedRevisionInstruction(
+  output: string,
+  validation: TitleValidationShape
+): string {
+  const issueLines = (validation?.issues ?? [])
+    .filter((issue) =>
+      issue?.code === "ESTIMATED_MEASUREMENT_UNSUPPORTED" ||
+      issue?.code === "MEASUREMENT_SHOULD_BE_IN_BLOCK"
+    )
+    .map((issue) => `- ${String(issue.code)}: ${String(issue.message)}`);
+
+  return `Revise the LP-U output below.
+
+IMPORTANT:
+- Fix ONLY estimated physical measurement language listed in the validation failures.
+- Preserve every platform section unchanged except the offending estimated measurement wording.
+- If the offending numeric measurement says it is based on a ruler photo, measurement-board photo, measurement-reference photo, typed measurement graphic, or visual comparison to a visible measurement reference, move that existing measurement into that platform's Approximate Measurements block.
+- When moving a supported approximate measurement into the block, replace "Not provided (see photos)" with the existing measurement line and preserve source wording such as "based on ruler photo" or "from ruler photo".
+- For jewelry and small components, mm and cm measurements are allowed when supported by ruler/photo/measurement-reference evidence.
+- If the offending numeric measurement does not include ruler/photo/measurement-reference source language, remove the unsupported numeric estimate.
+- Replace removed unsupported estimates with non-numeric descriptive wording supported by the existing item details, such as "graduated bead sizes" or "varied bead sizes".
+- Do not invent a new measurement.
+- Do not change product volume or packaging volume claims such as fl oz, oz, ml, or mL.
+- Do not reclassify the item.
+- Do not add new item attributes.
+- Return the full corrected LP-U output only.
+- Do not add commentary.
 
 Validation failures:
 ${issueLines.join("\n")}
@@ -354,6 +422,48 @@ Current LP-U output:
 ${output}`;
 }
 
+function buildMercariOutputFormatRevisionInstruction(
+  output: string,
+  validation: TitleValidationShape
+): string {
+  const issueLines = (validation?.issues ?? [])
+    .filter((issue) =>
+      issue?.code === "MERCARI_FIELD_ORDER" ||
+      issue?.code === "MERCARI_DUPLICATE_LABEL" ||
+      issue?.code === "MERCARI_FOOTER_ORDER" ||
+      issue?.code === "MERCARI_DUPLICATE_FOOTER"
+    )
+    .map((issue) => `- ${String(issue.code)}: ${String(issue.message)}`);
+
+  return `Revise the LP-U output below.
+
+IMPORTANT:
+- Fix ONLY the Mercari output format issues listed in the validation failures.
+- Preserve every other platform section unchanged.
+- Preserve the existing Mercari wording and values; only move existing blocks as needed.
+- Remove duplicate Mercari Approximate Measurements blocks and duplicate Mercari footer lines.
+- Do not reclassify the item.
+- Do not add new item attributes.
+- Do not change image-derived facts.
+- Return the full corrected LP-U output only.
+- Do not add commentary.
+
+Required Mercari order:
+Title:
+Description:
+Hashtags:
+Approximate Measurements:
+footer
+
+The Mercari footer must appear once, after the Approximate Measurements block.
+
+Validation failures:
+${issueLines.join("\n")}
+
+Current LP-U output:
+${output}`;
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as GenerateBody;
@@ -408,10 +518,13 @@ ${notes}`,
 
 let lpuOutput = response.output_text ?? "";
 
-let validation = validateLpuOutput(lpuOutput, {
+const validationOptions = {
   itemType: "auto",
   requirePoshmarkCompactTagStrategy: true,
-});
+  enforceUnsupportedEstimatedMeasurements: promptVersion === "v2",
+} as const;
+
+let validation = validateLpuOutput(lpuOutput, validationOptions);
 
 if (hasPoshmarkOutputOrderIssues(validation)) {
   const revisionResponse = await openai.responses.create({
@@ -434,10 +547,32 @@ if (hasPoshmarkOutputOrderIssues(validation)) {
   if (revisedOutput.trim()) {
     lpuOutput = revisedOutput;
 
-    validation = validateLpuOutput(lpuOutput, {
-      itemType: "auto",
-      requirePoshmarkCompactTagStrategy: true,
-    });
+    validation = validateLpuOutput(lpuOutput, validationOptions);
+  }
+}
+
+if (promptVersion === "v2" && hasMercariOutputFormatIssues(validation)) {
+  const revisionResponse = await openai.responses.create({
+    model: "gpt-5.3-chat-latest",
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: buildMercariOutputFormatRevisionInstruction(lpuOutput, validation),
+          },
+        ],
+      },
+    ],
+  });
+
+  const revisedOutput = revisionResponse.output_text ?? "";
+
+  if (revisedOutput.trim()) {
+    lpuOutput = revisedOutput;
+
+    validation = validateLpuOutput(lpuOutput, validationOptions);
   }
 }
 
@@ -462,10 +597,7 @@ if (promptVersion === "v2" && hasPoshmarkInvalidStyleTagIssues(validation)) {
   if (revisedOutput.trim()) {
     lpuOutput = revisedOutput;
 
-    validation = validateLpuOutput(lpuOutput, {
-      itemType: "auto",
-      requirePoshmarkCompactTagStrategy: true,
-    });
+    validation = validateLpuOutput(lpuOutput, validationOptions);
   }
 }
 
@@ -490,10 +622,32 @@ if (promptVersion === "v2" && hasDepopInvalidAestheticModeIssues(validation)) {
   if (revisedOutput.trim()) {
     lpuOutput = revisedOutput;
 
-    validation = validateLpuOutput(lpuOutput, {
-      itemType: "auto",
-      requirePoshmarkCompactTagStrategy: true,
-    });
+    validation = validateLpuOutput(lpuOutput, validationOptions);
+  }
+}
+
+if (promptVersion === "v2" && hasEstimatedMeasurementUnsupportedIssues(validation)) {
+  const revisionResponse = await openai.responses.create({
+    model: "gpt-5.3-chat-latest",
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: buildEstimatedMeasurementUnsupportedRevisionInstruction(lpuOutput, validation),
+          },
+        ],
+      },
+    ],
+  });
+
+  const revisedOutput = revisionResponse.output_text ?? "";
+
+  if (revisedOutput.trim()) {
+    lpuOutput = revisedOutput;
+
+    validation = validateLpuOutput(lpuOutput, validationOptions);
   }
 }
 
@@ -518,10 +672,7 @@ if (hasOnlyTitleLengthIssues(validation)) {
   if (revisedOutput.trim()) {
     lpuOutput = revisedOutput;
 
-    validation = validateLpuOutput(lpuOutput, {
-      itemType: "auto",
-      requirePoshmarkCompactTagStrategy: true,
-    });
+    validation = validateLpuOutput(lpuOutput, validationOptions);
   }
 }
 
