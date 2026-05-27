@@ -1,6 +1,7 @@
 import {
   LABELS,
   JEWELRY_FOOTER,
+  POSHMARK_STYLE_TAG_MASTER_LIST,
   REQUIRED_POSHMARK_STYLE_TAGS,
   STANDARD_FOOTER,
   TITLE_MAX_LENGTH,
@@ -19,6 +20,8 @@ import {
   splitListItems,
 } from '../helpers';
 import { ExpectedFooterType, PlatformValidationResult, ValidatorOptions } from '../types';
+
+const POSHMARK_STYLE_TAG_MASTER_SET = new Set<string>(POSHMARK_STYLE_TAG_MASTER_LIST);
 
 function checkRequiredFieldOrder(result: PlatformValidationResult, section: string): void {
   const requiredFields = [
@@ -62,6 +65,33 @@ function checkRequiredFieldOrder(result: PlatformValidationResult, section: stri
       result,
       'POSHMARK_FOOTER_ORDER',
       'Poshmark footer must appear after the Approximate Measurements block.',
+    );
+  }
+}
+
+function checkStyleTagsAgainstMasterList(
+  result: PlatformValidationResult,
+  blockName: string,
+  tags: string[],
+): void {
+  const invalidTags = tags.filter((tag) => !POSHMARK_STYLE_TAG_MASTER_SET.has(tag));
+
+  if (invalidTags.length === 0) return;
+
+  const existingInvalidTags = Array.isArray(result.metrics.invalidStyleTags)
+    ? result.metrics.invalidStyleTags
+    : [];
+
+  result.metrics.invalidStyleTags = [
+    ...existingInvalidTags,
+    ...invalidTags.map((tag) => ({ block: blockName, tag })),
+  ];
+
+  for (const tag of invalidTags) {
+    addIssue(
+      result,
+      'POSHMARK_INVALID_STYLE_TAG',
+      `${blockName} contains invalid Poshmark style tag "${tag}". Use exact tags from the saved Poshmark Style Tag master list only.`,
     );
   }
 }
@@ -112,6 +142,8 @@ export function validatePoshmark(
   result.metrics.styleTagCount = styleTags.length;
   result.metrics.styleTags = styleTags;
 
+  checkStyleTagsAgainstMasterList(result, 'Style Tags', styleTags);
+
   if (styleTags.length !== REQUIRED_POSHMARK_STYLE_TAGS) {
     addIssue(
       result,
@@ -122,9 +154,20 @@ export function validatePoshmark(
 
   const requireCompact = options?.requirePoshmarkCompactTagStrategy ?? false;
   const hasCompactAlt = hasLabeledContent(section, LABELS.poshmark.compactAlt);
+  const compactAltBlock = extractLabeledBlockText(section, LABELS.poshmark.compactAlt) ?? '';
+  const compactAltTags = splitListItems(compactAltBlock);
 
   result.metrics.requiresCompact3TagStrategy = requireCompact;
   result.metrics.hasCompact3TagStrategy = hasCompactAlt;
+  result.metrics.compact3TagStrategyTags = compactAltTags;
+
+  if (hasCompactAlt) {
+    checkStyleTagsAgainstMasterList(
+      result,
+      'Compact 3-Tag Strategy (Alt Option)',
+      compactAltTags,
+    );
+  }
 
   if (requireCompact && !hasCompactAlt) {
     addIssue(

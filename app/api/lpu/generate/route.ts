@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { openai } from "@/lib/openai";
 import { getMasterPrompt } from "@/lib/lpu/masterPrompt";
-import { validateLpuOutput } from "@/lib/validator";
+import {
+  POSHMARK_STYLE_TAG_MASTER_LIST,
+  validateLpuOutput,
+} from "@/lib/validator";
 
 type IncomingImage = {
   name: string;
@@ -172,6 +175,18 @@ function hasPoshmarkOutputOrderIssues(validation: TitleValidationShape): boolean
   );
 }
 
+function hasPoshmarkInvalidStyleTagIssues(validation: TitleValidationShape): boolean {
+  if (!validation || !Array.isArray(validation.issues) || validation.issues.length === 0) {
+    return false;
+  }
+
+  return validation.issues.some(
+    (issue) =>
+      issue?.severity === "error" &&
+      issue?.code === "POSHMARK_INVALID_STYLE_TAG"
+  );
+}
+
 function buildTitleRevisionInstruction(
   output: string,
   validation: TitleValidationShape
@@ -213,6 +228,37 @@ Current failing titles and lengths:
 - EBAY Title B (${ebayTitleBLength} chars): ${ebayTitleB}
 - POSHMARK Title (${poshmarkTitleLength} chars): ${poshmarkTitle}
 - MERCARI Title (${mercariTitleLength} chars): ${mercariTitle}
+
+Validation failures:
+${issueLines.join("\n")}
+
+Current LP-U output:
+${output}`;
+}
+
+function buildPoshmarkInvalidStyleTagRevisionInstruction(
+  output: string,
+  validation: TitleValidationShape
+): string {
+  const issueLines = (validation?.issues ?? [])
+    .filter((issue) => issue?.code === "POSHMARK_INVALID_STYLE_TAG")
+    .map((issue) => `- ${String(issue.code)}: ${String(issue.message)}`);
+
+  return `Revise the LP-U output below.
+
+IMPORTANT:
+- Fix ONLY invalid Poshmark tags in Style Tags and Compact 3-Tag Strategy (Alt Option).
+- Preserve every other platform section unchanged.
+- Preserve all Poshmark fields, order, titles, descriptions, measurements, and footer unchanged except the invalid tag replacements.
+- Do not reclassify the item.
+- Do not add new item attributes.
+- Do not change image-derived facts.
+- Use only exact tags from this Poshmark Style Tag master list.
+- Return the full corrected LP-U output only.
+- Do not add commentary.
+
+Allowed Poshmark Style Tag master list:
+${POSHMARK_STYLE_TAG_MASTER_LIST.join("; ")}
 
 Validation failures:
 ${issueLines.join("\n")}
@@ -330,6 +376,34 @@ if (hasPoshmarkOutputOrderIssues(validation)) {
           {
             type: "input_text",
             text: buildPoshmarkOrderRevisionInstruction(lpuOutput, validation),
+          },
+        ],
+      },
+    ],
+  });
+
+  const revisedOutput = revisionResponse.output_text ?? "";
+
+  if (revisedOutput.trim()) {
+    lpuOutput = revisedOutput;
+
+    validation = validateLpuOutput(lpuOutput, {
+      itemType: "auto",
+      requirePoshmarkCompactTagStrategy: true,
+    });
+  }
+}
+
+if (promptVersion === "v2" && hasPoshmarkInvalidStyleTagIssues(validation)) {
+  const revisionResponse = await openai.responses.create({
+    model: "gpt-5.3-chat-latest",
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: buildPoshmarkInvalidStyleTagRevisionInstruction(lpuOutput, validation),
           },
         ],
       },
