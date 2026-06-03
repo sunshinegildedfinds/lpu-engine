@@ -30,6 +30,8 @@ type GeneratorImageReference = {
   imageUrl: string;
 };
 
+type GenerationMode = "sellingBrief" | "finalFromBrief";
+
 function sanitizeFileName(name: string): string {
   return name
     .trim()
@@ -180,9 +182,14 @@ export default function LpuV2Page() {
   const [measurements, setMeasurements] = useState("");
   const [markings, setMarkings] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [uploadedImageReferences, setUploadedImageReferences] = useState<
+    GeneratorImageReference[]
+  >([]);
+  const [sellingBrief, setSellingBrief] = useState("");
   const [output, setOutput] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [activeMode, setActiveMode] = useState<GenerationMode | null>(null);
   const [metadata, setMetadata] = useState<GenerationMetadata | null>(null);
   const [imageUploadStatus, setImageUploadStatus] = useState("");
 
@@ -200,24 +207,49 @@ export default function LpuV2Page() {
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setFiles(Array.from(event.target.files ?? []));
+    setUploadedImageReferences([]);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function getGeneratorImageReferences() {
+    if (uploadedImageReferences.length) {
+      return uploadedImageReferences;
+    }
+
+    if (files.length) {
+      setImageUploadStatus("Uploading images to Supabase Storage...");
+    }
+
+    const generatorImageReferences = await uploadFilesToSupabaseStorage(files);
+    setUploadedImageReferences(generatorImageReferences);
+
+    return generatorImageReferences;
+  }
+
+  async function runV2Generation(mode: GenerationMode) {
     setError("");
-    setOutput("");
     setMetadata(null);
     setImageUploadStatus("");
     setIsLoading(true);
+    setActiveMode(mode);
 
     try {
-      if (files.length) {
-        setImageUploadStatus("Uploading images to Supabase Storage...");
+      if (mode === "finalFromBrief" && !sellingBrief.trim()) {
+        throw new Error("Generate or enter a Selling Brief before final LP-U generation.");
       }
-      const generatorImageReferences = await uploadFilesToSupabaseStorage(files);
+
+      if (mode === "sellingBrief") {
+        setSellingBrief("");
+        setOutput("");
+      }
+
+      const generatorImageReferences = await getGeneratorImageReferences();
       if (files.length) {
         setImageUploadStatus(
-          `Uploaded ${generatorImageReferences.length} image(s). Generating LP-U...`
+          `Using ${generatorImageReferences.length} uploaded image reference(s). ${
+            mode === "sellingBrief"
+              ? "Generating Selling Brief..."
+              : "Generating final LP-U from brief..."
+          }`
         );
       }
 
@@ -229,6 +261,10 @@ export default function LpuV2Page() {
         body: JSON.stringify({
           notes: compiledNotes,
           images: generatorImageReferences,
+          mode,
+          ...(mode === "finalFromBrief"
+            ? { sellingBrief: sellingBrief.trim() }
+            : {}),
           interfaceVersion: INTERFACE_VERSION,
           promptVersion: PROMPT_VERSION,
         }),
@@ -251,7 +287,13 @@ export default function LpuV2Page() {
         throw new Error("Server returned a non-JSON success response.");
       }
 
-      setOutput(data.output || "");
+      if (mode === "sellingBrief") {
+        setSellingBrief(data.sellingBrief || data.output || "");
+        setOutput("");
+      } else {
+        setOutput(data.output || "");
+      }
+
       setMetadata({
         interfaceVersion: data.interfaceVersion,
         promptVersion: data.promptVersion,
@@ -267,7 +309,13 @@ export default function LpuV2Page() {
       setImageUploadStatus("");
     } finally {
       setIsLoading(false);
+      setActiveMode(null);
     }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void runV2Generation("finalFromBrief");
   }
 
   return (
@@ -384,19 +432,53 @@ export default function LpuV2Page() {
               </p>
             </SectionShell>
 
-            <SectionShell title="Generate LP-U">
+            <SectionShell title="Universal Selling Brief">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => void runV2Generation("sellingBrief")}
+                  className="rounded-lg bg-black px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isLoading && activeMode === "sellingBrief"
+                    ? "Generating Selling Brief..."
+                    : "Generate Selling Brief"}
+                </button>
+                <div className="text-sm text-gray-600">
+                  Creates the visible strategy brief before final LP-U generation.
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <FieldLabel htmlFor="selling-brief">
+                  Editable Universal Selling Brief
+                </FieldLabel>
+                <textarea
+                  id="selling-brief"
+                  value={sellingBrief}
+                  onChange={(event) => setSellingBrief(event.target.value)}
+                  placeholder="Generated Selling Brief will appear here. You can edit it before final LP-U generation."
+                  className="mt-2 min-h-[420px] w-full rounded-lg border border-gray-300 bg-white p-3 font-mono text-xs outline-none focus:border-black"
+                />
+              </div>
+            </SectionShell>
+
+            <SectionShell title="Generate Final LP-U">
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="submit"
-                  disabled={isLoading}
+                  disabled={isLoading || !sellingBrief.trim()}
                   className="rounded-lg bg-black px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isLoading ? "Generating V2..." : "Generate with V2 Prompt"}
+                  {isLoading && activeMode === "finalFromBrief"
+                    ? "Generating Final LP-U..."
+                    : "Generate Final LP-U From Brief"}
                 </button>
                 <div className="text-sm text-gray-600">
-                  Sends <span className="font-semibold">promptVersion: v2</span>{" "}
-                  and{" "}
-                  <span className="font-semibold">interfaceVersion: v2</span>.
+                  Sends <span className="font-semibold">promptVersion: v2</span>,{" "}
+                  <span className="font-semibold">interfaceVersion: v2</span>,
+                  original notes, uploaded image references, and the edited Selling
+                  Brief.
                 </div>
               </div>
 
