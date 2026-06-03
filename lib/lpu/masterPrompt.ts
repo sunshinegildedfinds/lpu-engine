@@ -1717,12 +1717,38 @@ Platform Angle Map must include exactly these platform subsections, in this exac
 
 Each platform angle must contain exactly these fields:
 - Buyer Intent
+- Search / Discovery Mechanic
+- Buyer Decision Problem
 - Supported Evidence to Use
-- Specific Selling Angle
-- Style/Theme/Aesthetic Candidate to Use
-- Phrases to Avoid
+- Candidate Bank Terms to Use
+- Backend / Attribute Strategy
+- Title / Opening Strategy
+- Description Strategy
+- Tag / Keyword Strategy
 - Required Final Copy Moves
-- One Example Sentence Direction
+- Phrases to Avoid
+- Do Not Say / Say Instead
+- One Example Direction
+
+PLATFORM-SPECIFIC SEARCH / DISCOVERY ANGLE RULES
+The Platform Angle Map must not only describe platform voice.
+It must define how each platform should make the item discoverable, filterable, understandable, and conversion-ready in the final LP-U.
+Do not claim secret algorithm access.
+Use practical platform-specific listing behavior only.
+
+Field definitions:
+- Search / Discovery Mechanic: explain how this platform section should help buyers find and choose the item through practical platform listing behavior.
+- Backend / Attribute Strategy: explain which supported item facts must be captured in platform attributes, item specifics, categories, tags, or structured details rather than only in description.
+- Title / Opening Strategy: explain how the title or first line should be built for this platform.
+- Description Strategy: explain how the description should support search, buyer trust, and conversion on that platform.
+- Tag / Keyword Strategy: explain how tags, hashtags, style tags, or keyword blocks should be used for that platform.
+
+Each platform angle must combine at least three supported evidence anchors:
+1. identity/proof anchor
+2. visual/structural/function anchor
+3. buyer-decision anchor
+
+The angle fails if it could apply to many similar resale items after replacing brand/category/color.
 
 Each platform angle must use the STYLE / THEME / AESTHETIC CANDIDATE BANK differently when relevant:
 - Platform angles may use Confirmed candidates with Claim Limits. The Claim Limit should guide wording, not suppress the angle.
@@ -1732,32 +1758,250 @@ Each platform angle must use the STYLE / THEME / AESTHETIC CANDIDATE BANK differ
 - Mercari: use Confirmed candidates only if they help fast identification; avoid decorative over-explanation.
 - Etsy: use the strongest Confirmed named style/theme/aesthetic candidate in title, long-tail tags, and curated description language when useful and not misleading.
 
-Specific Selling Angle rules:
-- It must combine at least two supported evidence anchors.
-- At least one anchor should be a visual cue from photos when available.
-- If a style/theme/aesthetic cue is used, cite the evidence source and safe wording.
-- The angle fails if it could apply to many similar resale items after replacing the brand/category/color with another item.
-- Good direction patterns include: use visible mark/label/model, specific construction or form, measurement/size, and condition basis to guide buyer trust.
-- Good direction patterns include: use specific color/pattern/shape/texture to support a styling, decor, collecting, functional, replacement, or gift angle.
-- Good direction patterns include: use visible closure/hardware/packaging/component as buyer-trust proof.
-- Good direction patterns include: use a Confirmed style/theme/aesthetic candidate from supported item, seller, label, marking, packaging, or measurement-photo evidence with safe wording and clear Claim Limit language.
-- Good direction patterns include: if no Confirmed or Seller-provided style/theme/aesthetic candidate exists, use motif, construction, form factor, or visible function instead.
+EBAY SEARCH / DISCOVERY RULES
+eBay Angle must be search-filter and proof driven.
+eBay must treat backend item specifics as a search/filter layer, not optional decoration.
 
-QUALITY RULES
+eBay Angle must include:
+- Title A strategy
+- Title B strategy
+- Category strategy
+- Item Specifics strategy
+- Description strategy
+- Condition/measurement proof strategy
+
+Title A strategy:
+- Clean buyer-search identity title.
+- Use as much of the 80-character limit as useful, ideally 75-80 characters, without filler or unsupported terms.
+- Prioritize brand/maker, item type, size/measurement, material/appearance, color, model/style, condition, and strongest buyer-search identifiers.
+
+Title B strategy:
+- Style/theme/aesthetic-led or alternate-search title.
+- Use the strongest Confirmed style/theme/aesthetic candidate when it fits and is not misleading.
+- Use as much of the 80-character limit as useful, ideally 75-80 characters, without filler or unsupported terms.
+- Must not be only Title A reordered.
+
+Item Specifics strategy:
+- Fill every relevant supported item specific possible.
+- Do not leave a relevant field blank if a supported value exists.
+- If the field is relevant but unsupported, use a safe value such as Not specified, Does Not Apply, Not applicable, Unbranded, Unknown, or the closest platform-safe equivalent only when appropriate.
+- Do not invent specifics.
+- Item specifics must adapt to the item and category.
+- Prioritize filter-critical specifics: brand, type, size, material/appearance, color, condition, style/theme, pattern/motif, closure, model, item form, included parts, measurements, signed/marked status, tested status, and category-specific filters.
+
+Description strategy:
+- Proof/search/specification driven.
+- Must include visible proof anchors, condition basis, measurement basis, included/not-included details, and photo-review guidance.
+- Avoid styling-first copy unless it supports buyer search.
+
+EBAY ANGLE SELF-CHECK:
+- Did Title A use the strongest identity/search terms?
+- Did Title B use the strongest confirmed style/theme/aesthetic or alternate-search term?
+- Are backend item specifics filled with every supported field?
+- Are filter-critical fields not buried only in description?
+- Is condition/measurement proof clear?
+
+DEPOP SEARCH / DISCOVERY RULES
+Depop Angle must be aesthetic, style, and social-discovery driven when the item is style-led.
+
+Depop Angle must include:
+- short hook/opening strategy
+- aesthetic/vibe strategy
+- fit/measurement/condition/material strategy when relevant
+- hashtag strategy
+- attribute strategy
+
+Depop Listing opening:
+- Short, casual, and searchable.
+- For style-led items, begin with the strongest confirmed style/theme/aesthetic candidate before or immediately after brand/item type when useful.
+- Mention brand and item identity early.
+- Do not sound like eBay item specifics.
+- Keep it conversational and buyer-facing.
+
+Depop Description:
+- Mention condition, size/fit/measurement, material/appearance, and flaws when relevant.
+- For fit-based items, include fit notes and material when supported.
+- For non-fit-based items, include scale, condition, included parts, compatibility, use, or display context when relevant.
+- Use style/subculture/era/aesthetic language only when supported by photos, Known Details, or candidate bank.
+
+Depop Hashtags:
+- Use up to 5 hyper-relevant hashtags.
+- Use tags for aesthetic, style, era, subculture, item type, brand, or material/appearance when supported.
+- Avoid irrelevant high-traffic tags.
+- Optional Brand Hashtags may include up to 2 brand hashtags only when brand is confirmed.
+
+Depop Attributes:
+- Fill category, subcategory, brand, color, style, size, condition, and material when supported.
+- If not applicable, use Not applicable.
+- If unknown but relevant, use Not specified.
+
+DEPOP ANGLE SELF-CHECK:
+- Does the opening read like Depop, not compact eBay?
+- Are hashtags hyper-relevant and not spammy?
+- Does the description include fit/condition/material/measurement when relevant?
+- Is vibe language supported?
+- If the item is non-style-led, did Depop stay short, searchable, and practical?
+
+POSHMARK SEARCH / DISCOVERY RULES
+Poshmark Angle must make the description act as the keyword-rich detail layer while staying readable.
+Do not claim secret algorithm access.
+Treat this as a practical Poshmark listing strategy.
+
+Poshmark Title:
+- Under 80 characters.
+- Include brand, item type, key style/theme/aesthetic candidate when useful, color/material/appearance, size/measurement when relevant.
+- For fit-based items, put brand/category/size/color/style early when supported.
+- For non-fit-based items, use brand/item/use/condition/measurement/category terms.
+
+Poshmark Description:
+- Polished and social-commerce friendly.
+- Must include a keyword-rich natural description.
+- Must include 3 to 6 item detail bullets.
+- Must include condition basis.
+- Must include measurement/fit/scale where relevant.
+- Must include one specific use, wardrobe, occasion, display, or function line when supported.
+- Must not be generic closet filler.
+
+Poshmark Keyword Block:
+- Add a short keyword/search phrase line near the bottom of the Description before measurements/footer.
+- This is not a hashtag block.
+- It should be readable and not spammy.
+- Format: Search keywords: [comma-separated phrases]
+- Use only supported phrases.
+- Include brand, item type, style/theme/aesthetic candidate, color/material/appearance, size/measurement, condition, motif/pattern, use context, and category terms when relevant.
+- Do not repeat exact same phrase excessively.
+- Do not use unrelated brands.
+- Do not invent Poshmark Style Tags.
+
+Poshmark Style Tags:
+- Must still use exactly 3 relevant tags from the saved master list.
+- Compact 3-Tag Strategy must also use exactly 3 saved master-list tags.
+- Do not add custom Poshmark tags outside the saved list.
+
+POSHMARK ANGLE SELF-CHECK:
+- Does the description act as a searchable detail database?
+- Are brand, size, style/theme, color/material, condition, and use context included where relevant?
+- Is there a readable Search keywords line direction?
+- Are Style Tags valid saved tags only?
+- Is the copy still human-readable, not keyword spam?
+
+MERCARI SEARCH / DISCOVERY RULES
+Mercari Angle must stay concise, practical, and trust-first.
+
+Mercari Title:
+- Under 80 characters.
+- Use brand, item type, size/measurement, condition, color/material/appearance, and strongest practical search term.
+- Style/theme/aesthetic candidate only if it helps fast identification.
+- Do not over-style the title.
+
+Mercari Description:
+- Short and scannable.
+- State what buyer receives.
+- Include condition basis.
+- Include measurement basis.
+- Include included/not-included details when relevant.
+- Include visible proof when useful.
+- Avoid decorative storytelling.
+
+Mercari Hashtags:
+- Exactly 3 relevant hashtags.
+- Use brand, item type, category, condition/use, or style/material only when supported.
+- No irrelevant or self-promotional hashtags.
+
+MERCARI ANGLE SELF-CHECK:
+- Is the listing quick to understand?
+- Does it state what buyer gets?
+- Is condition and measurement clear?
+- Are hashtags relevant?
+- Did it avoid Etsy/Depop-style decorative language?
+
+ETSY SEARCH / DISCOVERY RULES
+Etsy Angle must be semantic-search, human-readability, and listing-quality driven.
+
+Etsy should treat the listing as a holistic semantic object:
+- title
+- category
+- materials
+- attributes
+- tags
+- description
+- first photo/video suggestions
+These must work together without keyword stuffing.
+
+Etsy Title:
+- Human-readable, conversational phrase.
+- Front-load the most important buyer-search phrase in the first 40 characters.
+- Use as much of the 140-character limit as useful, without filler or unsupported terms.
+- Do not write a comma-stuffed keyword string.
+- Use strongest Confirmed style/theme/aesthetic candidate when it improves long-tail search and is not misleading.
+- Keep title natural and readable.
+
+Etsy Category / Attributes:
+- Use the deepest accurate category suggestion.
+- Fill every relevant supported attribute.
+- Materials must include only confirmed or safely worded material/appearance values.
+- Do not invent material, occasion, style, or recipient fields.
+
+Etsy Tags:
+- Must output exactly 13 tags.
+- Each tag must be 20 characters or fewer.
+- Tags should capture alternate search paths, not merely duplicate title words.
+- Avoid duplicate or near-duplicate phrasing.
+- Use tags to cover brand/maker when supported, item type, style/theme/aesthetic candidate, material/appearance, color/pattern/motif, use/gift/display/collector context when supported, and buyer search synonyms.
+- Do not use generic tags unless made evidence-specific or strategically necessary.
+- Do not use unsupported material, era, rarity, or audience claims.
+
+Etsy Description:
+- Warm, curated, and long-tail aware.
+- Must explain item-specific appeal using evidence.
+- Use gift, collector, display, decor, supply, or styling language only when tied to supported evidence.
+- Include photo/video suggestions only when they add buyer confidence, not filler.
+
+ETSY ANGLE SELF-CHECK:
+- Is the first 40 characters of the title the strongest search phrase?
+- Are all 13 tags unique, useful, and 20 characters or fewer?
+- Do tags add alternate search coverage instead of copying the title?
+- Are category, materials, attributes, tags, and description semantically aligned?
+- Is listing appeal tied to evidence, not generic gift/collector language?
+
+GENERIC PHRASES TO AVOID REQUIREMENT
+The Generic Phrases to Avoid section must include weak phrases likely to appear from the generated brief itself.
+It should catch phrases such as:
+- ready-to-wear
+- decorative accessory
+- statement piece
+- standout piece
+- gift for her
+- great for collectors
+- wearable condition
+- unique vintage item
+- classic design
+- beautiful piece
+- stylish accessory
+- versatile item
+- perfect for any outfit
+- works with any outfit
+- must-have
+- rare find
+- high quality
+- eye-catching
+- timeless
+
+If a phrase is retained, the brief must make it evidence-specific or avoid it.
+
+PLATFORM ANGLE MAP QUALITY RULES
 - Make Evidence Anchors concrete and tied to notes or visible image evidence.
 - Make Claim Limits explicit so the final generator knows what not to claim.
 - Make Buyer Search Keywords specific but evidence-supported.
 - Make Generic Phrases to Avoid useful for preventing bland marketplace copy.
 - Make each platform angle distinct and platform-native without inventing facts.
-- Do not use broad generic angles such as "clean, ready-to-wear item", "decorative accessory", "statement piece", "giftable item", "unique find", "works with any outfit", "perfect for display", "useful everyday item", "vintage style item", or "trendy aesthetic item".
+- If a style/theme/aesthetic cue is used, cite the evidence source and safe wording.
+- Use visible mark/label/model, specific construction or form, measurement/size, condition basis, visible color/pattern/shape/texture, visible closure/hardware/packaging/component, included parts, compatibility, function, or display/use context when supported.
+- If no Confirmed or Seller-provided style/theme/aesthetic candidate exists, use motif, construction, form factor, visible function, or supported identifier language instead.
 - eBay Angle must give Title B guidance that uses the strongest Confirmed style/theme/aesthetic candidate from supported item, seller, label, marking, packaging, or measurement-photo evidence when appropriate, or the strongest supported motif, construction, visual descriptor, or form-factor phrase when not.
 - If a Confirmed style/theme/aesthetic candidate is useful for buyer search, Platform Angle Map should make it available for eBay Title B, Poshmark Title, Etsy Title, and Depop Listing opening when it fits and is not misleading.
 - Platform Angle Map must not route only generic visual descriptors into eBay Title B, Poshmark Title, Etsy Title, or Depop Listing opening when a stronger Confirmed named style/theme/aesthetic candidate exists, fits, improves search, and is not misleading.
 - Each platform angle must give the final generator a different writing job.
-- Depop must not become compact eBay.
-- Poshmark must not become generic closet wording.
-- Mercari must stay practical.
-- Etsy must avoid generic gift or collector wording unless supported by evidence.
 - Do not output final titles, final descriptions, hashtags, tags, item specifics, categories, or prices.
 - Do not include commentary before or after the brief.
 
@@ -1791,12 +2035,26 @@ Before returning the Selling Brief, silently check:
 - Are rejected candidates rejected only because evidence is insufficient, conflicting, misleading, too broad, or based on unsupported assumptions?
 - Is Claim Limit never used as the sole reason to reject a candidate?
 - Are unsupported weak candidates still rejected?
-- Does each platform angle combine at least two evidence anchors?
+- Does each platform angle include platform-specific search/discovery mechanics?
+- Does eBay treat item specifics as a filter/search layer?
+- Does eBay Title B use the strongest confirmed candidate or alternate search term when appropriate?
+- Does Etsy use title, category, materials, attributes, 13 tags, and description as a semantic system?
+- Are Etsy tags 20 characters or fewer and varied?
+- Does Depop use supported aesthetic/vibe and hyper-relevant hashtags?
+- Does Poshmark description function as a keyword-rich detail layer without spam?
+- Does Poshmark include a readable Search keywords line direction?
+- Does Mercari stay concise, practical, and trust-first?
+- Does each platform angle combine at least three evidence anchors?
 - Does each platform angle give the final generator a different writing job?
+- Does any angle rely on generic resale language?
+- Would the angle still work for a different item after swapping brand/category/color?
+- Are Known Details seller-confirmed facts preserved?
+- Are claim limits respected?
 - Does Depop avoid becoming compact eBay?
 - Does Poshmark avoid generic closet wording?
 - Does Mercari stay practical?
 - Does Etsy avoid generic gift/collector wording?
+- Are non-style-led functional items protected from forced aesthetic language?
 If any answer fails, rewrite the Selling Brief before returning.
 
 Return the Universal Selling Brief now.
