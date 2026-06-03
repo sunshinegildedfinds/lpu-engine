@@ -760,18 +760,25 @@ function repairFinalFromBriefExactCandidateSuffixes({
     .join("\n");
 }
 
-function buildFinalFromBriefHighVisibilityRepairInstruction({
+function buildFinalFromBriefTargetedRepairInstruction({
   lpuOutput,
   sellingBrief,
 }: {
   lpuOutput: string;
   sellingBrief: string;
 }): string {
-  return `Repair exact confirmed style/theme/aesthetic candidate wording in this V2 final LP-U output.
+  return `Repair targeted Selling Brief enforcement issues in this V2 final LP-U output.
 
 This is a narrow V2-only finalFromBrief repair pass.
 Use only the Universal Selling Brief and current LP-U output below.
 Do not use external research, brand history, category-specific assumptions, test-item examples, or any source outside these inputs.
+Repair only these targeted issues and the directly affected surrounding words needed for readable grammar:
+- Etsy Title strategy
+- Etsy Tags rules
+- Poshmark Description Search keywords line
+- rejected STYLE / THEME / AESTHETIC CANDIDATE BANK terms
+- phrases from Generic Phrases to Avoid
+- exact Confirmed style/theme/aesthetic Safe Wording
 
 Review the full final LP-U output, including:
 - eBay Title B
@@ -786,7 +793,7 @@ Review the full final LP-U output, including:
 - Etsy Description
 - any other generated text where a Confirmed style/theme/aesthetic candidate appears
 
-Required behavior:
+Exact Confirmed candidate wording behavior:
 - The Selling Brief's Safe Wording is controlling.
 - For Confirmed STYLE / THEME / AESTHETIC CANDIDATE BANK rows where Safe Wording equals the exact Candidate Term, copy that exact Safe Wording in final LP-U copy.
 - Treat STYLE / THEME / AESTHETIC CANDIDATE BANK Use In directions as controlling guidance.
@@ -807,6 +814,57 @@ Required behavior:
 - Preserve seller-confirmed Known Details as direct facts. If Known Details states Vintage and the Selling Brief does not show a conflict, final copy should use vintage confidently and must not rewrite it as vintage style, vintage-inspired, appears vintage, or possibly vintage.
 - Do not claim exact decade, antique status, production period, historical era, provenance, material composition, authenticity, designer intent, or rarity unless separately supported by the brief.
 - Preserve material-safe and appearance-safe wording such as gold-tone, silver-tone, leather-like, wood-tone, glass-like, stone-like, rhinestone-style, material not confirmed, exact material not confirmed, metal not specified, and gemstone not confirmed.
+
+Etsy Title repair:
+- Rewrite only the Etsy Title if it violates the Selling Brief's Etsy strategy.
+- Etsy Title must be human-readable and conversational, not a comma-stuffed keyword string.
+- Front-load the strongest useful buyer-search phrase in the first 40 characters.
+- Keep it under 140 characters.
+- If the title is too short and omits supported high-value search details, expand it naturally using only supported details from the Selling Brief and final listing evidence.
+- Use as much room under 140 characters as useful, without filler, repetition, or unsupported terms.
+- Include supported details when natural and useful: brand/maker, item type, strongest Confirmed style/theme/aesthetic candidate, motif/design/construction, color/material appearance, size/measurement when important, seller-confirmed condition/age category, or standout buyer-search detail.
+- If it includes unwanted suffixes on exact Confirmed style/theme/aesthetic candidates, remove those suffixes unless they are part of the Selling Brief Safe Wording.
+- Do not change eBay, Poshmark, Depop, or Mercari titles for this Etsy Title repair.
+
+Etsy Tags repair:
+- Rewrite only the Etsy Tags line/list if needed.
+- Etsy Tags must contain exactly 13 tags.
+- Every tag must be 20 characters or fewer.
+- No duplicate tags.
+- Avoid near-duplicate tags when a supported alternate search path is available.
+- Do not use unsupported material, era, rarity, audience, or condition claims.
+- Tags should cover alternate search paths rather than simply duplicating the title.
+- If a tag is over 20 characters, replace it with a shorter meaningful supported phrase. Do not blindly truncate words into awkward or meaningless tags.
+- Prefer meaningful supported alternatives from the Selling Brief and final evidence: brand/maker, item type, confirmed style/theme/aesthetic candidate, motif/design, color/material appearance, size/measurement, closure/component, use/display/collector/gift context when supported, known item category, or buyer search synonym.
+- Preserve exactly 13 total tags after repair.
+
+Poshmark Search keywords line repair:
+- The final Poshmark Description must include a line beginning exactly with:
+  Search keywords:
+- This line must appear inside the Poshmark Description near the bottom, before Style Tags.
+- If the line is missing, insert it before the Style Tags label.
+- If present but spammy, hashtag-based, repetitive, unsupported, or unrelated, rewrite only that line.
+- Do not use #.
+- Keep it readable and not spammy.
+- Use only supported comma-separated phrases from the Selling Brief and final listing evidence.
+- Include relevant supported phrases such as brand, item type, confirmed style/theme/aesthetic candidate, color/material appearance, size/measurement, condition, motif/pattern, use context, and category terms when useful.
+- Do not invent Poshmark Style Tags.
+- Do not alter Style Tags or Compact 3-Tag Strategy (Alt Option) values.
+- Preserve Poshmark label order: Title, Description, Style Tags, Compact 3-Tag Strategy (Alt Option), Approximate Measurements, footer.
+
+Rejected/generic phrase suppression:
+- Read the Selling Brief's Generic Phrases to Avoid section.
+- Read STYLE / THEME / AESTHETIC CANDIDATE BANK rows whose Evidence Source is Rejected or whose Confidence Level is Weak/Do not use.
+- Remove or rewrite those phrases and rejected terms wherever they appear in final LP-U titles, descriptions, tags, hashtags, attributes, item specifics, keyword lines, and photo/video suggestions.
+- Replace them only with supported evidence: confirmed candidate Safe Wording, motif/design/construction, form factor, color/material appearance, category, use context, or specific visual descriptor.
+- Do not remove required platform labels.
+- Do not remove valid saved Poshmark Style Tags merely because they are broad.
+- Do not remove valid Depop Aesthetic Mode values.
+- Do not remove material safety wording.
+- If a generic phrase appears because it is part of a valid saved Poshmark Style Tag, leave it.
+- If a generic phrase appears in a Depop hashtag, Etsy tag, title, or description, replace it with a supported specific term or remove it.
+- If a rejected candidate appears in Etsy tags, remove or replace it with a supported tag.
+- If a rejected candidate appears in description copy, remove or replace it with a supported confirmed candidate, motif, construction, form factor, or visual descriptor.
 
 Preservation rules:
 - Do not alter final LP-U strict output labels.
@@ -1031,7 +1089,7 @@ ${notes}`;
     }
   }
 
-  if (promptVersion === "v2" && sellingBrief?.trim()) {
+  if (hasOnlyTitleLengthIssues(validation)) {
     const revisionResponse = await openai.responses.create({
       model: "gpt-5.3-chat-latest",
       input: [
@@ -1040,10 +1098,7 @@ ${notes}`;
           content: [
             {
               type: "input_text",
-              text: buildFinalFromBriefHighVisibilityRepairInstruction({
-                lpuOutput,
-                sellingBrief,
-              }),
+              text: buildTitleRevisionInstruction(lpuOutput, validation),
             },
           ],
         },
@@ -1059,7 +1114,7 @@ ${notes}`;
     }
   }
 
-  if (hasOnlyTitleLengthIssues(validation)) {
+  if (promptVersion === "v2" && sellingBrief?.trim()) {
     const revisionResponse = await openai.responses.create({
       model: "gpt-5.3-chat-latest",
       input: [
@@ -1068,7 +1123,10 @@ ${notes}`;
           content: [
             {
               type: "input_text",
-              text: buildTitleRevisionInstruction(lpuOutput, validation),
+              text: buildFinalFromBriefTargetedRepairInstruction({
+                lpuOutput,
+                sellingBrief,
+              }),
             },
           ],
         },
