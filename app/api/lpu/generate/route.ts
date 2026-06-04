@@ -499,6 +499,12 @@ Universal rule:
 - Content entered in Known Details / user notes is seller-provided evidence.
 - If Known Details contains a direct factual descriptor such as Vintage, Handmade, Deadstock, New, NOS, Signed, Tested, Untested, Complete, Sealed, or a similar seller-known item fact, treat it as seller-confirmed unless it conflicts with photos or the brief's evidence.
 - If Known Details says Vintage, then Vintage = Yes. Do not weaken it into vintage style, vintage-inspired, appears vintage, or possibly vintage. Do not claim exact decade, antique status, production period, historical era, provenance, or rarity unless separately supported.
+- If Known Details contains a style/theme/aesthetic term and the brief evidence does not contradict it, treat it as a seller-preferred candidate.
+- Seller-preferred Confirmed or Seller-provided style/theme/aesthetic candidates outrank purely model-selected candidates for high-visibility placement.
+- Seller preference can come from Known Details, seller notes, an edited Selling Brief, a manually edited Primary Style / Theme / Aesthetic Candidate field, or a candidate emphasized by the user in the Selling Brief before final LP-U generation.
+- If seller preference exists and that candidate is Confirmed or Seller-provided, not misleading, and useful for buyer search, it must become the Primary Style / Theme / Aesthetic Candidate.
+- Do not demote a seller-preferred Confirmed or Seller-provided candidate because another candidate is shorter, broader, safer-sounding, easier to fit, or because Claim Limit blocks harder claims.
+- If the seller edited the Selling Brief to mark a candidate as primary, preserve that primary choice unless the term is misleading, unsupported, not useful for the platform, or violates platform length limits.
 
 Repaired candidate row requirements:
 - Evidence Source: preserve the correct original source, such as Photo-derived.
@@ -517,18 +523,42 @@ Repaired candidate row requirements:
 
 Candidate priority for high-visibility fields:
 Use this universal ranking when choosing which candidate should guide eBay Title B, Poshmark Title, Etsy Title, and Depop Listing opening:
-1. Confirmed named style/theme/aesthetic/search phrase
-2. Confirmed seller-provided style/theme/aesthetic/search phrase
-3. Confirmed label/marking/packaging-derived style/theme/aesthetic/search phrase
-4. Confirmed photo-derived named style/theme/aesthetic/search phrase
-5. Confirmed motif/design family
+1. Seller-preferred Confirmed or Seller-provided style/theme/aesthetic candidate from Known Details or an edited Selling Brief
+2. Confirmed named style/theme/aesthetic candidate that is most specific and useful for buyer search
+3. Confirmed label/marking/packaging-derived style/theme/aesthetic term
+4. Confirmed photo-derived named style/theme/aesthetic term
+5. Confirmed motif/design-family term
 6. Confirmed construction/form descriptor
 7. Confirmed color/material/finish descriptor
-8. Generic visual adjectives
+8. Generic visual adjective
 
 - If a stronger Confirmed named style/theme/aesthetic candidate exists and is useful for buyer search, it must outrank generic descriptors such as ornate, decorative, scrollwork, textured, colorful, bold, structured, or similar broad visual adjectives.
 - Do not let generic descriptors outrank a stronger Confirmed named style/theme/aesthetic candidate for eBay Title B, Poshmark Title, Etsy Title, or Depop Listing opening.
 - Generic descriptors may support high-visibility copy only after the strongest Confirmed named candidate has been considered and placed where useful, not misleading, and within platform limits.
+- Tie-breakers: prefer the candidate that is more specific, better matches buyer search language, creates a more distinct Title B / Etsy title / Poshmark title / Depop opening, and is supported by multiple evidence anchors.
+- Do not prefer a shorter candidate solely because it is shorter when a more specific candidate also fits.
+- Do not prefer generic descriptors over a Confirmed named style/theme/aesthetic candidate.
+- Do not demote a candidate only because Claim Limit blocks harder claims.
+- Do not demote a candidate because it is photo-derived if it is Confirmed.
+
+Primary Style / Theme / Aesthetic Candidate repair:
+- Add or update this required field group after the candidate rows when any Confirmed or Seller-provided style/theme/aesthetic candidate exists:
+  Primary Style / Theme / Aesthetic Candidate:
+  - Candidate Term:
+  - Reason Selected:
+  - Evidence Anchors:
+  - Seller Preference:
+  - Use In:
+  - Claim Limit:
+- Select the strongest candidate for high-visibility buyer-search placement using the universal priority rule.
+- If seller preference exists and the seller-preferred candidate is Confirmed or Seller-provided, not misleading, and useful for buyer search, seller preference overrides model preference and must control the Primary Style / Theme / Aesthetic Candidate.
+- If seller preference controls the choice, Reason Selected must state that seller preference controlled the choice.
+- Seller Preference must state the source of preference when available, such as Known Details, seller notes, edited Selling Brief, manually edited primary candidate field, or emphasized brief wording.
+- If a broader candidate is chosen over a more specific one, explain why.
+- The primary candidate must not be chosen only because it is shorter.
+- Use In should route the primary candidate to eBay Title B, Poshmark Title, Etsy Title, Depop Listing opening, eBay Theme / Item Specifics, Etsy Tags, and Etsy Description when each use is useful, fits, and is not misleading.
+- If the primary candidate cannot be used in one of those high-visibility places, state the reason: too long, misleading, less useful for that platform, non-style-led item, or platform format conflict.
+- Do not silently substitute a broader candidate for the primary candidate.
 
 Do not reject a candidate only because:
 - it is inferred from photos
@@ -561,7 +591,9 @@ If rejecting a candidate:
 
 Directly related guidance repairs:
 - Revise only directly related eBay Title B guidance and Platform Angle Map references if a repaired candidate should be considered there.
-- If a repaired candidate is Confirmed and Safe Wording is short enough, eBay Title B guidance must use the strongest Confirmed style/theme/aesthetic candidate when it fits under 80 characters, improves buyer search, and does not mislead.
+- If a primary candidate is selected and Safe Wording is short enough, eBay Title B guidance must use the Primary Style / Theme / Aesthetic Candidate when it fits under 80 characters, improves buyer search, and does not mislead.
+- Do not choose a broader or shorter candidate for Title B only because it is shorter.
+- If Title B cannot fit the primary candidate, use the next strongest Confirmed candidate and route the primary candidate to Theme/Item Specifics or Description.
 - Title B must not fall back to only motif, construction, color, material appearance, or form-factor wording when a stronger Confirmed style/theme/aesthetic candidate exists and fits.
 - Title B must not be only Title A reordered.
 - If Safe Wording is too long for Title B, direct it to eBay Theme/Item Specifics, eBay Description, Etsy Tags, or Etsy Description instead.
@@ -572,6 +604,7 @@ Directly related guidance repairs:
 - Mercari should use Confirmed candidates only if they help fast identification.
 - Etsy may use Confirmed candidates in title, long-tail tags, and curated description language when useful.
 - Update Platform Angle Map references so the strongest Confirmed style/theme/aesthetic candidate is available for eBay Title B, Poshmark Title, Etsy Title, and Depop Listing opening when useful and not misleading.
+- Update Platform Angle Map references so the Primary Style / Theme / Aesthetic Candidate is available for eBay Title B, Poshmark Title, Etsy Title, and Depop Listing opening when useful and not misleading.
 - Ensure Platform Angle Map does not route only generic visual descriptors to those four fields when the strongest Confirmed named style/theme/aesthetic candidate fits, improves search, and is not misleading.
 - For functional, technical, replacement, utility, media, appliance, tool, book, supply, or parts-type items, do not force style/theme/aesthetic terms into titles or openings. Use the candidate only when it genuinely improves buyer search; otherwise prioritize supported identifier, model, function, compatibility, form factor, or use-case language.
 
@@ -716,7 +749,7 @@ function getExactConfirmedStyleCandidateSafeWordings(
 }
 
 function shouldSkipExactCandidateSuffixRepairLine(line: string): boolean {
-  return /^\s*(?:Style Tags|Compact 3-Tag Strategy \(Alt Option\)|Depop Aesthetic Mode)\s*:/i.test(
+  return /^\s*(?:Style Tags|Compact 3-Tag Strategy \(Alt Option\)|Depop Aesthetic Mode|Aesthetic Mode)\s*:/i.test(
     line
   );
 }
@@ -734,10 +767,27 @@ function repairFinalFromBriefExactCandidateSuffixes({
     return lpuOutput;
   }
 
+  let isInsideDepopAestheticModeBlock = false;
+
   return lpuOutput
     .split("\n")
     .map((line) => {
-      if (shouldSkipExactCandidateSuffixRepairLine(line)) {
+      const isAestheticModeLabel =
+        /^\s*(?:Depop Aesthetic Mode|Aesthetic Mode)\s*:/i.test(line);
+      const isAestheticModeValueLine =
+        isInsideDepopAestheticModeBlock && /^\s*(?:Primary|Secondary)\s*:/i.test(line);
+
+      if (isAestheticModeLabel) {
+        isInsideDepopAestheticModeBlock = true;
+      } else if (
+        isInsideDepopAestheticModeBlock &&
+        line.trim() &&
+        !isAestheticModeValueLine
+      ) {
+        isInsideDepopAestheticModeBlock = false;
+      }
+
+      if (shouldSkipExactCandidateSuffixRepairLine(line) || isAestheticModeValueLine) {
         return line;
       }
 
@@ -745,7 +795,7 @@ function repairFinalFromBriefExactCandidateSuffixes({
 
       for (const safeWording of exactSafeWordings) {
         const suffixPattern = new RegExp(
-          `(^|[^A-Za-z0-9])(${escapeRegExp(safeWording)})(?:\\s+(?:style|look|inspired|design|styling)|-inspired)\\b`,
+          `(^|[^A-Za-z0-9])(${escapeRegExp(safeWording)})(?:\\s+(?:style|look|inspired|design|styling|visual\\s+style|aesthetic|motif|influence)|-inspired)\\b`,
           "gi"
         );
 
@@ -774,55 +824,90 @@ Use only the Universal Selling Brief and current LP-U output below.
 Do not use external research, brand history, category-specific assumptions, test-item examples, or any source outside these inputs.
 Repair only these targeted issues and the directly affected surrounding words needed for readable grammar:
 - Etsy Title strategy
+- Depop Aesthetic Mode when a style-led brief incorrectly used Not applicable
 - Etsy Tags rules
 - Poshmark Description Search keywords line
 - rejected STYLE / THEME / AESTHETIC CANDIDATE BANK terms
 - phrases from Generic Phrases to Avoid
 - exact Confirmed style/theme/aesthetic Safe Wording
+- Primary Style / Theme / Aesthetic Candidate placement
+- weak generic marketplace body copy
+- awkward Confirmed candidate term sentence fragments
+- Etsy Description quality
 
 Review the full final LP-U output, including:
 - eBay Title B
 - eBay Item Specifics
 - eBay Description
 - Depop Listing
+- Depop hashtags
 - Poshmark Title
 - Poshmark Description
+- Poshmark Search keywords line
 - Etsy Title
 - Etsy Tags
 - Etsy Attributes / Key Details
 - Etsy Description
+- Mercari Description if present
+- photo/video suggestions if present
 - any other generated text where a Confirmed style/theme/aesthetic candidate appears
 
 Exact Confirmed candidate wording behavior:
 - The Selling Brief's Safe Wording is controlling.
+- Treat the Selling Brief's Primary Style / Theme / Aesthetic Candidate as controlling guidance.
 - For Confirmed STYLE / THEME / AESTHETIC CANDIDATE BANK rows where Safe Wording equals the exact Candidate Term, copy that exact Safe Wording in final LP-U copy.
 - Treat STYLE / THEME / AESTHETIC CANDIDATE BANK Use In directions as controlling guidance.
 - Identify the strongest Confirmed named style/theme/aesthetic candidate using this universal priority order:
-  1. Confirmed named style/theme/aesthetic/search phrase
-  2. Confirmed seller-provided style/theme/aesthetic/search phrase
-  3. Confirmed label/marking/packaging-derived style/theme/aesthetic/search phrase
-  4. Confirmed photo-derived named style/theme/aesthetic/search phrase
-  5. Confirmed motif/design family
+  1. Seller-preferred Confirmed or Seller-provided style/theme/aesthetic candidate from Known Details or an edited Selling Brief
+  2. Confirmed named style/theme/aesthetic candidate that is most specific and useful for buyer search
+  3. Confirmed label/marking/packaging-derived style/theme/aesthetic term
+  4. Confirmed photo-derived named style/theme/aesthetic term
+  5. Confirmed motif/design-family term
   6. Confirmed construction/form descriptor
   7. Confirmed color/material/finish descriptor
-  8. Generic visual adjectives
-- If the brief directs a Confirmed style/theme/aesthetic candidate into eBay Title B, Poshmark Title, Etsy Title, or Depop Listing opening, use that exact Safe Wording in the directed location unless it violates title length, would be misleading, or a stronger Confirmed candidate is selected for that platform.
+  8. Generic visual adjective
+- If the brief directs the Primary Style / Theme / Aesthetic Candidate into eBay Title B, Poshmark Title, Etsy Title, or Depop Listing opening, use that exact Safe Wording in the directed location unless it violates title length, would be misleading, is not useful for that platform, or the item is non-style-led and style language would hurt search.
+- If final copy uses a different candidate in those fields, the Selling Brief must explicitly permit that fallback.
+- Do not silently replace the primary candidate with a broader one.
+- If the Primary Style / Theme / Aesthetic Candidate indicates Seller Preference and the candidate is Confirmed or Seller-provided, useful for buyer search, and not misleading, seller preference controls high-visibility placement. Do not demote it because another candidate is shorter, broader, safer-sounding, or easier to fit.
+- Do not choose a shorter candidate solely because it is shorter when the primary or more specific candidate fits.
+- If the brief directs a Confirmed style/theme/aesthetic candidate into eBay Title B, Poshmark Title, Etsy Title, or Depop Listing opening, use that exact Safe Wording in the directed location unless it violates title length, would be misleading, is not useful for that platform, or the item is non-style-led and style language would hurt search.
 - Do not let generic visual descriptors such as ornate, decorative, scrollwork, textured, colorful, bold, structured, or similar broad adjectives replace a stronger Confirmed named style/theme/aesthetic candidate when that candidate fits, improves search, and is not misleading.
-- Remove unwanted style, look, inspired, design, or styling suffixes from exact Confirmed style/theme/aesthetic Safe Wording unless that suffix appears in the Selling Brief Candidate Term or Safe Wording, the seller explicitly typed it, readable label/marking/packaging uses it, or exact wording would materially mislead.
-- Claim Limit controls blocked overclaims. It does not require adding style, look, inspired, design, or styling suffixes.
+- Remove unwanted style, look, inspired, design, styling, visual style, aesthetic, motif, or influence suffixes from exact Confirmed style/theme/aesthetic Safe Wording unless that suffix appears in the Selling Brief Candidate Term or Safe Wording, the seller explicitly typed it, readable label/marking/packaging uses it, or exact wording would materially mislead.
+- Claim Limit controls blocked overclaims. It does not require adding style, look, inspired, design, styling, visual style, aesthetic, motif, or influence suffixes.
 - If a directed candidate cannot fit in a title/opening, leave that field within platform limits and keep the candidate in the closest already-allowed location such as description, item specifics, tags, or attributes if present. Do not invent a new section.
 - Preserve seller-confirmed Known Details as direct facts. If Known Details states Vintage and the Selling Brief does not show a conflict, final copy should use vintage confidently and must not rewrite it as vintage style, vintage-inspired, appears vintage, or possibly vintage.
 - Do not claim exact decade, antique status, production period, historical era, provenance, material composition, authenticity, designer intent, or rarity unless separately supported by the brief.
 - Preserve material-safe and appearance-safe wording such as gold-tone, silver-tone, leather-like, wood-tone, glass-like, stone-like, rhinestone-style, material not confirmed, exact material not confirmed, metal not specified, and gemstone not confirmed.
+- Do not add untested, not tested, functionality not tested, clasp not tested, not formally tested, working status unknown, or similar defensive functionality caveats unless the seller explicitly provided that information in Known Details, condition notes, flaw notes, or item notes.
+
+Depop Aesthetic Mode repair:
+- Review the Selling Brief's Depop Angle, Platform Angle Map, STYLE / THEME / AESTHETIC CANDIDATE BANK, and Primary Style / Theme / Aesthetic Candidate.
+- If the Selling Brief has Confirmed or Seller-provided style/theme/aesthetic candidates and the Depop Angle says the item is style-led, visual/vibe-driven, style-driven, aesthetic-driven, fashion-led, decor-led, collector/display-led, or otherwise style-relevant, Aesthetic Mode Primary and Secondary must not be "${DEPOP_AESTHETIC_MODE_NOT_APPLICABLE}".
+- In that style-led case, replace any "${DEPOP_AESTHETIC_MODE_NOT_APPLICABLE}" Primary or Secondary value with an exact saved Depop Aesthetic Mode value only.
+- Do not invent new Depop Aesthetic Mode values.
+- Do not use custom candidate terms as Depop Aesthetic Mode values unless they already exist exactly in the saved Depop list.
+- If no exact saved Depop value matches a candidate, choose the closest honest saved Depop modes based on the Selling Brief.
+- If only one strong saved mode exists, choose a second broad-but-valid saved mode that does not conflict with the item.
+- Do not choose contradictory modes unless the Selling Brief supports them.
+- Do not force style/vibe modes for non-style-led functional items.
+- Preserve the exact "Aesthetic Mode", "Primary", and "Secondary" labels.
+- Do not change Depop hashtags for this Aesthetic Mode repair unless a tiny grammar repair is required.
+
+Allowed Depop Aesthetic Mode values:
+${DEPOP_AESTHETIC_MODE_LIST.join("; ")}
+${DEPOP_AESTHETIC_MODE_NOT_APPLICABLE}
 
 Etsy Title repair:
 - Rewrite only the Etsy Title if it violates the Selling Brief's Etsy strategy.
 - Etsy Title must be human-readable and conversational, not a comma-stuffed keyword string.
 - Front-load the strongest useful buyer-search phrase in the first 40 characters.
 - Keep it under 140 characters.
+- Do not leave Etsy Title bare or minimal when the Selling Brief provides supported high-value details that fit naturally.
 - If the title is too short and omits supported high-value search details, expand it naturally using only supported details from the Selling Brief and final listing evidence.
 - Use as much room under 140 characters as useful, without filler, repetition, or unsupported terms.
-- Include supported details when natural and useful: brand/maker, item type, strongest Confirmed style/theme/aesthetic candidate, motif/design/construction, color/material appearance, size/measurement when important, seller-confirmed condition/age category, or standout buyer-search detail.
+- Include supported details when natural and useful: brand/maker, item type, Primary Style / Theme / Aesthetic Candidate, motif/design/construction, color/material appearance, size/measurement when important, seller-confirmed Vintage when relevant, condition/age category, or standout buyer-search detail.
+- If the Etsy Title misses the Primary Style / Theme / Aesthetic Candidate, add it when useful, not misleading, and natural under 140 characters.
 - If it includes unwanted suffixes on exact Confirmed style/theme/aesthetic candidates, remove those suffixes unless they are part of the Selling Brief Safe Wording.
 - Do not change eBay, Poshmark, Depop, or Mercari titles for this Etsy Title repair.
 
@@ -866,13 +951,48 @@ Rejected/generic phrase suppression:
 - If a rejected candidate appears in Etsy tags, remove or replace it with a supported tag.
 - If a rejected candidate appears in description copy, remove or replace it with a supported confirmed candidate, motif, construction, form factor, or visual descriptor.
 
+Weak generic marketplace language repair:
+- Remove or rewrite weak generic phrases wherever they appear as standalone selling claims in body copy, tags, hashtags, keyword lines, attributes, key details, and photo/video suggestions.
+- Weak generic phrases include: great for collectors, anyone drawn to, works well, statement piece, standout piece, beautiful piece, unique find, perfect for any outfit, great addition, timeless, high quality, stylish accessory, versatile piece, eye-catching, must-have, rare find, collector's item, collector’s item, decorative piece, classic design, perfect gift, gift for her.
+- Do not leave those phrases in eBay Description, Depop Listing, Poshmark Description, Mercari Description, Etsy Description, Etsy Tags, Depop Hashtags, Poshmark Search keywords line, Photo tips, Video ideas, Attributes, or Key Details unless the phrase is seller-provided exact text and still safe.
+- If a weak phrase is seller-provided exact text and safe, preserve the seller-provided fact but improve the surrounding sentence so it is evidence-grounded.
+- Replace weak phrases only with supported anchors from the Selling Brief and current final output.
+- A replacement sentence must use at least two supported anchors, such as brand/maker/mark/model, confirmed candidate Safe Wording, item type, visible construction, closure/hardware/component, color/pattern/motif, material appearance, measurement basis, condition basis, included/not-included details, seller-confirmed Known Details, claim limit, packaging/label/marking, or use/fit/display/function context.
+- Do not hardcode examples into the output.
+- Do not remove valid saved Poshmark Style Tags.
+- Do not remove valid Depop Aesthetic Mode values.
+- Do not remove required platform labels.
+- Do not remove material-safe wording.
+
+Awkward candidate wording repair:
+- Scan every final LP-U sentence that contains an exact Confirmed candidate Safe Wording.
+- If the sentence uses the candidate as an awkward fragment, rewrite only that sentence or remove it.
+- Bad patterns include: creating an [candidate], with [candidate] when the candidate is not a natural noun phrase, [candidate] that when the candidate cannot stand alone, This piece is [candidate] when awkward, reflects [candidate] styling, works well for [candidate] looks, or any sentence that adds style/look/inspired/design/styling/visual style/aesthetic/motif/influence to exact Safe Wording without support.
+- Preserve the exact Confirmed Safe Wording. Do not add unwanted suffixes to make grammar work.
+- Use the candidate naturally as a search descriptor, adjective, title/tag term, or concise descriptive phrase only when it reads clearly.
+- If exact candidate wording cannot be used naturally in a sentence, remove that sentence and let the candidate remain in title, tags, hashtags, keywords, item specifics, or attributes where appropriate.
+- Do not turn a candidate into an unsupported historical, origin, authenticity, rarity, material, designer-intent, or production-period claim.
+
+Etsy Description quality repair:
+- Specifically review Etsy Description after the generic phrase and awkward candidate repairs.
+- If Etsy Description contains weak generic copy, awkward candidate fragments, broad filler use/context language, unsupported caveats, or a thin generated tone, rewrite only Etsy Description.
+- Preserve Etsy Title, Etsy Tags, Etsy Category, Etsy Materials, Etsy Attributes / Key Details, Measurements, and footer unless a sentence-level consistency repair inside Etsy Description requires changing description words.
+- Etsy Description should use this structure without adding new labels unless the existing section already uses labels:
+  1. Opening paragraph: human-readable item identification with supported brand/maker when available, primary confirmed style/theme/aesthetic candidate when useful, item type, and one or two strongest visible design details.
+  2. Evidence/design paragraph: concrete appeal based on visible construction, motif, color, material appearance, closure/component, mark/label, measurement details, or condition basis.
+  3. Buyer decision paragraph or bullets: condition basis, measurement/fit/scale basis, included/not-included detail when relevant, seller-confirmed Known Details, and claim limits where needed.
+  4. Optional use/context sentence only when evidence-specific.
+  5. Photo/video suggestions only if they add buyer trust and are specific to the item.
+- Etsy Description must avoid broad generic lines such as great for collectors, anyone drawn to, perfect gift, gift for her, timeless, beautiful, rare, high quality, must-have, unique find, statement piece, decorative piece, works well, or versatile.
+- If a use/context sentence remains, tie it to supported evidence such as confirmed candidate Safe Wording, visible construction or design detail, condition basis, measurement/fit/scale, brand/mark, included component, or use/display/function context.
+
 Preservation rules:
 - Do not alter final LP-U strict output labels.
 - Do not alter platform order.
 - Do not alter footer text.
 - Do not alter measurement labels.
 - Do not alter Poshmark Style Tags or Compact 3-Tag Strategy.
-- Do not alter Depop Aesthetic Mode values.
+- Do not alter valid saved Depop Aesthetic Mode values except when replacing "${DEPOP_AESTHETIC_MODE_NOT_APPLICABLE}" for a style-led item under the Depop Aesthetic Mode repair above.
 - Do not alter material descriptors or material/appearance safety wording.
 - Do not alter Mercari structure.
 - Do not alter any unrelated platform content.
@@ -907,13 +1027,25 @@ Use the Universal Selling Brief below as controlling guidance for merchandising 
 Do not create new platform angles from scratch unless the brief is missing required parts.
 If the brief conflicts with the original notes or image evidence, preserve evidence accuracy and do not invent unsupported claims.
 Treat STYLE / THEME / AESTHETIC CANDIDATE BANK Use In directions as controlling guidance.
-If the brief says a Confirmed style/theme/aesthetic candidate should be used in eBay Title B, Poshmark Title, Etsy Title, or Depop Listing opening, use that exact Safe Wording unless it violates title length, would be misleading, or a stronger Confirmed candidate is selected for that platform.
+Treat the Primary Style / Theme / Aesthetic Candidate as controlling guidance for high-visibility fields.
+If the Primary Style / Theme / Aesthetic Candidate indicates Seller Preference and the candidate is Confirmed or Seller-provided, useful for buyer search, and not misleading, seller preference controls high-visibility placement. Do not demote it because another candidate is shorter, broader, safer-sounding, or easier to fit.
+If the brief says the Primary Style / Theme / Aesthetic Candidate should be used in eBay Title B, Poshmark Title, Etsy Title, or Depop Listing opening, use that exact Safe Wording unless it violates title length, would be misleading, is not useful for that platform, or the item is non-style-led and style language would hurt search.
+If final copy uses a different candidate in those fields, the Selling Brief must explicitly permit that fallback.
+Do not silently replace the primary candidate with a broader one.
+If the brief says a Confirmed style/theme/aesthetic candidate should be used in eBay Title B, Poshmark Title, Etsy Title, or Depop Listing opening, use that exact Safe Wording unless it violates title length, would be misleading, is not useful for that platform, or the item is non-style-led and style language would hurt search.
 For Confirmed STYLE / THEME / AESTHETIC CANDIDATE BANK rows where Safe Wording equals the exact Candidate Term, copy that exact Safe Wording everywhere final LP-U copy uses the candidate.
-When choosing between candidates for high-visibility fields, prioritize the strongest Confirmed named style/theme/aesthetic/search phrase over generic visual descriptors. Do not let generic visual adjectives replace the strongest Confirmed named candidate when it fits, improves search, and is not misleading.
+When choosing between candidates for high-visibility fields, prioritize seller-preferred candidates first, then the most specific and buyer-search-useful Confirmed named style/theme/aesthetic/search phrase over generic visual descriptors. Do not let generic visual adjectives replace the primary or strongest Confirmed named candidate when it fits, improves search, and is not misleading.
+Do not prefer a shorter candidate solely because it is shorter when a more specific candidate also fits.
 Do not silently ignore high-visibility placement instructions from the brief.
 If a Confirmed candidate cannot fit in a title/opening, move it to the closest appropriate allowed location such as description, item specifics, tags, or attributes.
 Do not add style, look, inspired, design, or styling suffixes to Confirmed style/theme/aesthetic Safe Wording unless the suffix appears in the Selling Brief Safe Wording or Candidate Term, the seller explicitly typed it, readable label/marking/packaging uses it, or exact wording would materially mislead.
 Claim Limit controls blocked overclaims. It does not require adding style, look, inspired, design, or styling suffixes.
+For Depop Aesthetic Mode, if the Selling Brief has Confirmed or Seller-provided style/theme/aesthetic candidates and the Depop Angle is style-led, visual/vibe-driven, style-driven, aesthetic-driven, fashion-led, decor-led, collector/display-led, or otherwise style-relevant, do not use "${DEPOP_AESTHETIC_MODE_NOT_APPLICABLE}" for Primary or Secondary. Use only exact saved Depop Aesthetic Mode values.
+For Etsy Title, write a human-readable title under 140 characters that front-loads the strongest buyer-search phrase in the first 40 characters and expands naturally with supported high-value details. Do not leave it bare/minimal when brand/maker, item type, Primary Style / Theme / Aesthetic Candidate, motif/design/construction, color/material appearance, important size/measurement, seller-confirmed Vintage, or standout buyer-search detail can fit naturally.
+For all final body copy, do not use weak generic marketplace claims such as great for collectors, anyone drawn to, works well, statement piece, standout piece, beautiful piece, unique find, perfect for any outfit, great addition, timeless, high quality, stylish accessory, versatile piece, eye-catching, must-have, rare find, collector's item, collector’s item, decorative piece, classic design, perfect gift, or gift for her unless rewritten with at least two supported evidence anchors from the Selling Brief.
+Use exact Confirmed candidate Safe Wording naturally. Do not soften it with unsupported suffixes, and do not force it into awkward fragments such as creating an [candidate], with [candidate], reflects [candidate] styling, or works well for [candidate] looks. If it cannot read naturally in a sentence, leave it in search fields such as titles, tags, hashtags, keywords, item specifics, or attributes and describe the visible evidence in body copy.
+For Etsy Description, write human curated copy grounded in the Selling Brief: identify the supported brand/maker and item type when available, use the primary confirmed candidate when useful, describe visible design/construction/color/material appearance/closure/marking details, include condition and measurement basis, preserve relevant seller-confirmed Known Details, and avoid broad gift/collector/styling filler.
+Do not add untested, not tested, functionality not tested, clasp not tested, not formally tested, working status unknown, or similar defensive functionality caveats unless the seller explicitly provided that information in Known Details, condition notes, flaw notes, or item notes.
 Preserve seller-confirmed Known Details as direct facts. If Known Details states Vintage and the Selling Brief does not show a conflict, use vintage confidently and do not rewrite it as vintage style, vintage-inspired, appears vintage, or possibly vintage. Do not claim exact decade, antique status, production period, historical era, provenance, or rarity unless separately supported.
 Keep material-safe and appearance-safe wording intact when material identity is not confirmed.
 Preserve all final LP-U strict output labels, platform order, footer text, measurement labels, and validation-sensitive structure.

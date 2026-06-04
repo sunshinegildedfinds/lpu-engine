@@ -1541,6 +1541,18 @@ For each candidate, include exactly these fields:
 - Use In
 - Claim Limit
 
+After the candidate rows, include this required field group when any Confirmed or Seller-provided style/theme/aesthetic candidate exists:
+
+Primary Style / Theme / Aesthetic Candidate:
+- Candidate Term:
+- Reason Selected:
+- Evidence Anchors:
+- Seller Preference:
+- Use In:
+- Claim Limit:
+
+If no primary style/theme/aesthetic candidate is appropriate, still include the field group and explain why under Reason Selected. Use motif, construction, form factor, function, or supported visual descriptors instead.
+
 Candidate Term definition:
 - The possible style, theme, motif, aesthetic, design influence, visual genre, or buyer-search style phrase.
 
@@ -1608,6 +1620,13 @@ Claim Limit definition:
 Candidate bank rules:
 - Infer candidates directly from the item photos and seller notes.
 - Treat seller-provided style/theme/aesthetic terms as high-priority seller guidance, but still state claim limits.
+- Known Details is seller-provided evidence. If Known Details contains a style/theme/aesthetic term and photos do not contradict it, treat that term as a seller-preferred candidate.
+- Seller preference can come from Known Details, seller notes, an edited Selling Brief, a manually edited Primary Style / Theme / Aesthetic Candidate field, or a candidate emphasized by the user in the Selling Brief before final LP-U generation.
+- Seller-preferred Confirmed or Seller-provided style/theme/aesthetic candidates outrank purely model-selected candidates for high-visibility placement.
+- If seller preference exists and that candidate is Confirmed or Seller-provided, not misleading, and useful for buyer search, it must become the Primary Style / Theme / Aesthetic Candidate.
+- Do not demote a seller-preferred Confirmed or Seller-provided candidate because another candidate is shorter, broader, safer-sounding, easier to fit, or because Claim Limit blocks harder claims.
+- If the seller edits the Selling Brief to mark a candidate as primary, final LP-U generation must treat that as controlling guidance unless the term is misleading, unsupported, not useful for the platform, or violates platform length limits.
+- Do not weaken seller-preferred terms with suffixes unless the seller typed the suffix, readable label/marking/packaging/product text used it, the exact Candidate Term includes it, or exact wording would materially mislead.
 - Do not invent an aesthetic term just to make the title more interesting.
 - Do not reject a candidate only because it is inferred from visual evidence.
 - If a candidate has Evidence Source Photo-derived, Seller-provided, Label/marking-derived, Packaging-derived, or Measurement-photo-derived; Confidence Level Confirmed; Safe Wording that is not misleading; and Use In includes one or more platform locations, then the candidate is accepted even when Claim Limit contains restrictions.
@@ -1633,18 +1652,34 @@ Candidate bank rules:
 
 Candidate priority for high-visibility fields:
 Use this universal ranking when choosing which candidate should guide eBay Title B, Poshmark Title, Etsy Title, and Depop Listing opening:
-1. Confirmed named style/theme/aesthetic/search phrase
-2. Confirmed seller-provided style/theme/aesthetic/search phrase
-3. Confirmed label/marking/packaging-derived style/theme/aesthetic/search phrase
-4. Confirmed photo-derived named style/theme/aesthetic/search phrase
-5. Confirmed motif/design family
+1. Seller-preferred Confirmed or Seller-provided style/theme/aesthetic candidate from Known Details or an edited Selling Brief
+2. Confirmed named style/theme/aesthetic candidate that is most specific and useful for buyer search
+3. Confirmed label/marking/packaging-derived style/theme/aesthetic term
+4. Confirmed photo-derived named style/theme/aesthetic term
+5. Confirmed motif/design-family term
 6. Confirmed construction/form descriptor
 7. Confirmed color/material/finish descriptor
-8. Generic visual adjectives
+8. Generic visual adjective
 
 - If a stronger Confirmed named style/theme/aesthetic candidate exists and is useful for buyer search, it must outrank generic descriptors such as ornate, decorative, scrollwork, textured, colorful, bold, structured, or similar broad visual adjectives.
 - Do not let generic descriptors outrank a stronger Confirmed named style/theme/aesthetic candidate for eBay Title B, Poshmark Title, Etsy Title, or Depop Listing opening.
 - Generic descriptors may support the title or opening only after the stronger Confirmed named candidate has been considered and placed where useful, not misleading, and within platform limits.
+- Tie-breakers: prefer the candidate that is more specific, better matches buyer search language, creates a more distinct Title B / Etsy title / Poshmark title / Depop opening, and is supported by multiple evidence anchors.
+- Do not prefer a shorter candidate solely because it is shorter when a more specific candidate also fits.
+- Do not prefer generic descriptors over a Confirmed named style/theme/aesthetic candidate.
+- Do not demote a candidate only because Claim Limit blocks harder claims.
+- Do not demote a candidate because it is photo-derived if it is Confirmed.
+
+Primary candidate rules:
+- The Primary Style / Theme / Aesthetic Candidate must be the strongest candidate for high-visibility buyer-search placement.
+- If seller preference exists and the seller-preferred candidate is Confirmed or Seller-provided, not misleading, and useful for buyer search, seller preference overrides model preference and must control the Primary Style / Theme / Aesthetic Candidate.
+- The primary candidate must not be chosen only because it is shorter.
+- If seller preference controls the choice, Reason Selected must state that seller preference controlled the choice.
+- Seller Preference must state the source of preference when available, such as Known Details, seller notes, edited Selling Brief, manually edited primary candidate field, or emphasized brief wording.
+- If a broader candidate is chosen over a more specific one, explain why in Reason Selected.
+- Use In should route the primary candidate to eBay Title B, Poshmark Title, Etsy Title, Depop Listing opening, eBay Theme / Item Specifics, Etsy Tags, and Etsy Description when each use is useful, fits, and is not misleading.
+- If the primary candidate cannot be used in one of those high-visibility places, state the reason: too long, misleading, less useful for that platform, non-style-led item, or platform format conflict.
+- Do not silently substitute a broader candidate for the primary candidate.
 
 Universal visual evidence categories to consider:
 - shape
@@ -1688,6 +1723,9 @@ Claim Limit does not exclude a candidate from Title B.
 If Safe Wording fits under 80 characters and improves buyer search, Title B may use it.
 For Confirmed style/theme/aesthetic candidates, Safe Wording should be the exact Candidate Term unless a suffix is supported or required to avoid misleading buyers.
 Title B must use the strongest Confirmed style/theme/aesthetic candidate when it fits under 80 characters, improves buyer search, and does not mislead.
+If the Selling Brief has a Primary Style / Theme / Aesthetic Candidate, Title B must use that primary candidate when it fits under 80 characters and is not misleading.
+Do not choose a broader or shorter candidate for Title B only because it is shorter.
+If Title B cannot fit the primary candidate, use the next strongest Confirmed candidate and route the primary candidate to Theme/Item Specifics or Description.
 Title B must not fall back to only motif, construction, color, material appearance, or form-factor wording when a stronger Confirmed style/theme/aesthetic candidate exists and fits.
 Title B should consider Confirmed style/theme/aesthetic candidates before falling back to generic motif, construction, color, or form-factor wording.
 Title B should use the strongest visually supported style/theme/aesthetic buyer-search term when it improves search and does not create a hard unsupported claim.
@@ -1754,9 +1792,9 @@ Each platform angle must use the STYLE / THEME / AESTHETIC CANDIDATE BANK differ
 - Platform angles may use Confirmed candidates with Claim Limits. The Claim Limit should guide wording, not suppress the angle.
 - eBay: use Confirmed candidates in Title B, Theme/Item Specifics, or Description when useful.
 - Depop: for style-led items, use the strongest Confirmed named style/theme/aesthetic candidate in the first few words of the listing opening when it improves search and vibe, fits naturally, and is not misleading. Do not force this for non-style-led functional items.
-- Poshmark: use the strongest Confirmed named style/theme/aesthetic candidate in the title when it fits naturally under 80 characters, improves buyer search, and is not misleading; otherwise use it in description when useful. Style Tags must still come only from the saved master list.
+- Poshmark: use the Primary Style / Theme / Aesthetic Candidate, or otherwise the strongest Confirmed named style/theme/aesthetic candidate, in the title when it fits naturally under 80 characters, improves buyer search, and is not misleading; otherwise use it in description when useful. Style Tags must still come only from the saved master list.
 - Mercari: use Confirmed candidates only if they help fast identification; avoid decorative over-explanation.
-- Etsy: use the strongest Confirmed named style/theme/aesthetic candidate in title, long-tail tags, and curated description language when useful and not misleading.
+- Etsy: use the Primary Style / Theme / Aesthetic Candidate, or otherwise the strongest Confirmed named style/theme/aesthetic candidate, in title, long-tail tags, and curated description language when useful and not misleading.
 
 EBAY SEARCH / DISCOVERY RULES
 eBay Angle must be search-filter and proof driven.
@@ -1777,7 +1815,7 @@ Title A strategy:
 
 Title B strategy:
 - Style/theme/aesthetic-led or alternate-search title.
-- Use the strongest Confirmed style/theme/aesthetic candidate when it fits and is not misleading.
+- Use the Primary Style / Theme / Aesthetic Candidate when it fits and is not misleading; otherwise use the strongest Confirmed style/theme/aesthetic candidate.
 - Use as much of the 80-character limit as useful, ideally 75-80 characters, without filler or unsupported terms.
 - Must not be only Title A reordered.
 
@@ -1813,7 +1851,7 @@ Depop Angle must include:
 
 Depop Listing opening:
 - Short, casual, and searchable.
-- For style-led items, begin with the strongest confirmed style/theme/aesthetic candidate before or immediately after brand/item type when useful.
+- For style-led items, begin with the Primary Style / Theme / Aesthetic Candidate before or immediately after brand/item type when useful; otherwise use the strongest confirmed style/theme/aesthetic candidate.
 - Mention brand and item identity early.
 - Do not sound like eBay item specifics.
 - Keep it conversational and buyer-facing.
@@ -1835,6 +1873,15 @@ Depop Attributes:
 - If not applicable, use Not applicable.
 - If unknown but relevant, use Not specified.
 
+Depop Aesthetic Mode:
+- Use only exact saved Depop Aesthetic Mode values.
+- If the Selling Brief has Confirmed or Seller-provided style/theme/aesthetic candidates and the Depop Angle is style-led, visual/vibe-driven, style-driven, aesthetic-driven, fashion-led, decor-led, collector/display-led, or otherwise style-relevant, Primary and Secondary must not be Not applicable - non-style-led item.
+- Do not use custom candidate terms as Aesthetic Mode values unless they already exist exactly in the saved Depop list.
+- If no exact saved Depop value matches the candidate, choose the closest honest saved Depop modes based on the Selling Brief.
+- If only one strong saved mode exists, choose a second broad-but-valid saved mode that does not conflict with the item.
+- Do not choose contradictory modes unless the Selling Brief supports them.
+- Do not force style/vibe modes for non-style-led functional items.
+
 DEPOP ANGLE SELF-CHECK:
 - Does the opening read like Depop, not compact eBay?
 - Are hashtags hyper-relevant and not spammy?
@@ -1849,7 +1896,8 @@ Treat this as a practical Poshmark listing strategy.
 
 Poshmark Title:
 - Under 80 characters.
-- Include brand, item type, key style/theme/aesthetic candidate when useful, color/material/appearance, size/measurement when relevant.
+- Include brand, item type, Primary Style / Theme / Aesthetic Candidate when useful, color/material/appearance, size/measurement when relevant.
+- If the primary candidate does not fit or would be misleading, use the next strongest useful Confirmed candidate or route the primary candidate to description/search keywords.
 - For fit-based items, put brand/category/size/color/style early when supported.
 - For non-fit-based items, use brand/item/use/condition/measurement/category terms.
 
@@ -1932,8 +1980,10 @@ Etsy Title:
 - Human-readable, conversational phrase.
 - Front-load the most important buyer-search phrase in the first 40 characters.
 - Use as much of the 140-character limit as useful, without filler or unsupported terms.
+- Do not leave the title bare or minimal when supported high-value detail can fit naturally under 140 characters.
 - Do not write a comma-stuffed keyword string.
-- Use strongest Confirmed style/theme/aesthetic candidate when it improves long-tail search and is not misleading.
+- Use the Primary Style / Theme / Aesthetic Candidate when it improves long-tail search and is not misleading; otherwise use the strongest Confirmed style/theme/aesthetic candidate.
+- Include supported details when natural: brand/maker, item type, Primary Style / Theme / Aesthetic Candidate, motif/design/construction, color/material appearance, important size/measurement, seller-confirmed Vintage when relevant, or a standout buyer-search detail.
 - Keep title natural and readable.
 
 Etsy Category / Attributes:
@@ -2024,6 +2074,12 @@ Before returning the Selling Brief, silently check:
 - Does Claim Limit clearly separate Allowed Safe Use from Blocked Overclaims?
 - Does every Confirmed style/theme/aesthetic candidate from supported item, seller, label, marking, packaging, or measurement-photo evidence include the required Allowed Safe Use and Blocked Overclaims Claim Limit boundary?
 - Does every Confirmed style/theme/aesthetic candidate from supported item, seller, label, marking, packaging, or measurement-photo evidence remain eligible for the platform locations listed in Use In?
+- Is there a Primary Style / Theme / Aesthetic Candidate when style/theme/aesthetic candidates exist?
+- Did seller preference from Known Details or an edited Selling Brief get honored?
+- Did a broader candidate outrank a more specific candidate only because it was shorter?
+- If yes, fix it.
+- Does the primary candidate appear in Use In for eBay Title B, Poshmark Title, Etsy Title, and Depop Listing opening when useful?
+- Are generic descriptors prevented from outranking the primary candidate?
 - Does Use In include high-visibility title/opening fields when the candidate is useful for buyer search and not misleading?
 - Does the strongest Confirmed named style/theme/aesthetic/search phrase outrank generic visual adjectives for eBay Title B, Poshmark Title, Etsy Title, and Depop Listing opening?
 - Does Platform Angle Map make the strongest Confirmed named style/theme/aesthetic candidate available for those fields when useful, not misleading, and within limits?
