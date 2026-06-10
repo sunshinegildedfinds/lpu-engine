@@ -2,6 +2,14 @@
 
 import { ChangeEvent, FormEvent, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import {
+  buildPricingResearchFromBrief,
+  calculatePricingRecommendation,
+  type ConditionMatch,
+  type LookbackWindow,
+  type ManualCompInputs,
+  type ShippingIncluded,
+} from "@/lib/lpu/pricingResearch";
 
 const INTERFACE_VERSION = "v2";
 const PROMPT_VERSION = "v2";
@@ -31,6 +39,34 @@ type GeneratorImageReference = {
 };
 
 type GenerationMode = "sellingBrief" | "finalFromBrief";
+
+type ManualPricingFormState = {
+  averageSoldPrice: string;
+  medianSoldPrice: string;
+  lowRelevantSold: string;
+  highRelevantSold: string;
+  soldCount: string;
+  activeCount: string;
+  sellThroughPercent: string;
+  lookbackWindow: LookbackWindow;
+  shippingIncluded: ShippingIncluded;
+  conditionMatch: ConditionMatch;
+  compNotes: string;
+};
+
+const DEFAULT_MANUAL_PRICING_FORM: ManualPricingFormState = {
+  averageSoldPrice: "",
+  medianSoldPrice: "",
+  lowRelevantSold: "",
+  highRelevantSold: "",
+  soldCount: "",
+  activeCount: "",
+  sellThroughPercent: "",
+  lookbackWindow: "90d",
+  shippingIncluded: "unknown",
+  conditionMatch: "unknown",
+  compNotes: "",
+};
 
 function sanitizeFileName(name: string): string {
   return name
@@ -142,6 +178,99 @@ function FieldLabel({
   );
 }
 
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function parseOptionalNumber(value: string): number | undefined {
+  const cleaned = value.replace(/[$,%]/g, "").trim();
+  if (!cleaned) return undefined;
+
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function buildManualCompInputs(
+  form: ManualPricingFormState
+): ManualCompInputs {
+  return {
+    averageSoldPrice: parseOptionalNumber(form.averageSoldPrice),
+    medianSoldPrice: parseOptionalNumber(form.medianSoldPrice),
+    lowRelevantSold: parseOptionalNumber(form.lowRelevantSold),
+    highRelevantSold: parseOptionalNumber(form.highRelevantSold),
+    soldCount: parseOptionalNumber(form.soldCount),
+    activeCount: parseOptionalNumber(form.activeCount),
+    sellThroughPercent: parseOptionalNumber(form.sellThroughPercent),
+    lookbackWindow: form.lookbackWindow,
+    shippingIncluded: form.shippingIncluded,
+    conditionMatch: form.conditionMatch,
+    compNotes: form.compNotes,
+  };
+}
+
+function hasManualCompData(inputs: ManualCompInputs): boolean {
+  return Boolean(
+    inputs.averageSoldPrice ||
+      inputs.medianSoldPrice ||
+      (inputs.lowRelevantSold && inputs.highRelevantSold) ||
+      inputs.soldCount ||
+      inputs.activeCount ||
+      inputs.sellThroughPercent ||
+      inputs.compNotes?.trim()
+  );
+}
+
+function PricingMetric({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+        {label}
+      </div>
+      <div className="mt-1 text-sm font-semibold text-gray-950">{value}</div>
+    </div>
+  );
+}
+
+function ManualPricingInput({
+  label,
+  name,
+  onChange,
+  placeholder,
+  value,
+}: {
+  label: string;
+  name: keyof ManualPricingFormState;
+  onChange: (name: keyof ManualPricingFormState, value: string) => void;
+  placeholder?: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <FieldLabel htmlFor={`manual-${name}`}>{label}</FieldLabel>
+      <input
+        id={`manual-${name}`}
+        type="text"
+        inputMode="decimal"
+        value={value}
+        onChange={(event) => onChange(name, event.target.value)}
+        placeholder={placeholder}
+        className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
+      />
+    </div>
+  );
+}
+
 function buildV2Notes({
   conditionNotes,
   knownDetails,
@@ -192,6 +321,8 @@ export default function LpuV2Page() {
   const [activeMode, setActiveMode] = useState<GenerationMode | null>(null);
   const [metadata, setMetadata] = useState<GenerationMetadata | null>(null);
   const [imageUploadStatus, setImageUploadStatus] = useState("");
+  const [manualPricingForm, setManualPricingForm] =
+    useState<ManualPricingFormState>(DEFAULT_MANUAL_PRICING_FORM);
 
   const compiledNotes = useMemo(
     () =>
@@ -205,9 +336,45 @@ export default function LpuV2Page() {
     [conditionNotes, knownDetails, markings, measurements, notes]
   );
 
+  const pricingResearch = useMemo(
+    () =>
+      buildPricingResearchFromBrief({
+        sellingBrief,
+        finalOutput: output,
+        notes,
+        knownDetails,
+        conditionFlaws: conditionNotes,
+        measurements,
+        markingsLabels: markings,
+      }),
+    [conditionNotes, knownDetails, markings, measurements, notes, output, sellingBrief]
+  );
+
+  const manualCompInputs = useMemo(
+    () => buildManualCompInputs(manualPricingForm),
+    [manualPricingForm]
+  );
+
+  const pricingRecommendation = useMemo(
+    () => calculatePricingRecommendation(manualCompInputs, pricingResearch),
+    [manualCompInputs, pricingResearch]
+  );
+
+  const manualDataEntered = hasManualCompData(manualCompInputs);
+
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setFiles(Array.from(event.target.files ?? []));
     setUploadedImageReferences([]);
+  }
+
+  function updateManualPricingField(
+    name: keyof ManualPricingFormState,
+    value: string
+  ) {
+    setManualPricingForm((current) => ({
+      ...current,
+      [name]: value,
+    }));
   }
 
   async function getGeneratorImageReferences() {
@@ -463,6 +630,329 @@ export default function LpuV2Page() {
               </div>
             </SectionShell>
 
+            <SectionShell title="Pricing Research">
+              {!sellingBrief.trim() ? (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                  Generate or paste a Universal Selling Brief to populate pricing
+                  research shortcuts. This panel does not scrape eBay, open
+                  marketplace pages automatically, or create comp data automatically.
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    Manual comp data overrides AI starting range. Suggested pricing
+                    depends on the data you enter. Research links are shortcuts for
+                    manual review, not manually confirmed comp data.
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                      <div className="text-sm font-semibold text-gray-950">
+                        eBay Sold Search
+                      </div>
+                      <p className="mt-2 text-xs text-gray-600">
+                        Open eBay Sold Search is a research shortcut, not manually
+                        confirmed comp data.
+                      </p>
+                      <a
+                        href={pricingResearch.ebaySoldCompsUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-3 inline-flex rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white"
+                      >
+                        Open eBay Sold Search
+                      </a>
+                      <div className="mt-3 break-words rounded-md bg-white p-3 font-mono text-xs text-gray-700">
+                        {pricingResearch.researchKeywords || "No supported query yet"}
+                      </div>
+                      <p className="mt-2 text-xs text-gray-500">
+                        {pricingResearch.ebaySoldCompsExplanation}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                      <div className="text-sm font-semibold text-gray-950">
+                        Product Research Query
+                      </div>
+                      <p className="mt-2 text-xs text-gray-600">
+                        Product Research query is for manual use in eBay Seller Hub
+                        / Research tab.
+                      </p>
+                      <div className="mt-3 grid gap-3">
+                        <PricingMetric
+                          label="Recommended"
+                          value={
+                            <span className="font-mono">
+                              {pricingResearch.terapeakResearchQuery}
+                            </span>
+                          }
+                        />
+                        <PricingMetric
+                          label="Narrower"
+                          value={
+                            <span className="font-mono">
+                              {pricingResearch.narrowerResearchQuery}
+                            </span>
+                          }
+                        />
+                        <PricingMetric
+                          label="Broader"
+                          value={
+                            <span className="font-mono">
+                              {pricingResearch.broaderResearchQuery}
+                            </span>
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <div className="rounded-lg border border-gray-200 bg-white p-4">
+                      <div className="text-sm font-semibold text-gray-950">
+                        Suggested eBay Category
+                      </div>
+                      <div className="mt-3 grid gap-3">
+                        <PricingMetric
+                          label="Name"
+                          value={pricingResearch.suggestedEbayCategoryName}
+                        />
+                        <PricingMetric
+                          label="Path"
+                          value={pricingResearch.suggestedEbayCategoryPath}
+                        />
+                        <PricingMetric
+                          label="Confidence"
+                          value={pricingResearch.suggestedEbayCategoryConfidence}
+                        />
+                      </div>
+                      <p className="mt-3 text-xs text-gray-500">
+                        {pricingResearch.categoryNotes}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border border-gray-200 bg-white p-4">
+                      <div className="text-sm font-semibold text-gray-950">
+                        AI Starting Range — not sold-comp derived.
+                      </div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                        <PricingMetric
+                          label="Low"
+                          value={formatUsd(pricingResearch.aiStartingRangeLow)}
+                        />
+                        <PricingMetric
+                          label="High"
+                          value={formatUsd(pricingResearch.aiStartingRangeHigh)}
+                        />
+                        <PricingMetric
+                          label="Confidence"
+                          value={pricingResearch.aiStartingRangeConfidence}
+                        />
+                      </div>
+                      <p className="mt-3 text-sm text-gray-700">
+                        {pricingResearch.aiStartingRangeBasis}
+                      </p>
+                      <ul className="mt-3 space-y-1 text-xs text-gray-500">
+                        {pricingResearch.pricingWarnings.map((warning) => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 bg-white p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-950">
+                          Optional Manual Comp Inputs
+                        </div>
+                        <p className="mt-1 text-xs text-gray-600">
+                          Enter only what you have. Do not enter sold data unless
+                          you manually reviewed it.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setManualPricingForm(DEFAULT_MANUAL_PRICING_FORM)
+                        }
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700"
+                      >
+                        Clear manual comps
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 md:grid-cols-3">
+                      <ManualPricingInput
+                        label="Average sold price"
+                        name="averageSoldPrice"
+                        value={manualPricingForm.averageSoldPrice}
+                        onChange={updateManualPricingField}
+                        placeholder="$"
+                      />
+                      <ManualPricingInput
+                        label="Median sold price"
+                        name="medianSoldPrice"
+                        value={manualPricingForm.medianSoldPrice}
+                        onChange={updateManualPricingField}
+                        placeholder="$"
+                      />
+                      <ManualPricingInput
+                        label="Low relevant sold"
+                        name="lowRelevantSold"
+                        value={manualPricingForm.lowRelevantSold}
+                        onChange={updateManualPricingField}
+                        placeholder="$"
+                      />
+                      <ManualPricingInput
+                        label="High relevant sold"
+                        name="highRelevantSold"
+                        value={manualPricingForm.highRelevantSold}
+                        onChange={updateManualPricingField}
+                        placeholder="$"
+                      />
+                      <ManualPricingInput
+                        label="Sold count"
+                        name="soldCount"
+                        value={manualPricingForm.soldCount}
+                        onChange={updateManualPricingField}
+                      />
+                      <ManualPricingInput
+                        label="Active listing count"
+                        name="activeCount"
+                        value={manualPricingForm.activeCount}
+                        onChange={updateManualPricingField}
+                      />
+                      <ManualPricingInput
+                        label="Sell-through %"
+                        name="sellThroughPercent"
+                        value={manualPricingForm.sellThroughPercent}
+                        onChange={updateManualPricingField}
+                        placeholder="%"
+                      />
+
+                      <div>
+                        <FieldLabel htmlFor="manual-lookbackWindow">
+                          Lookback window
+                        </FieldLabel>
+                        <select
+                          id="manual-lookbackWindow"
+                          value={manualPricingForm.lookbackWindow}
+                          onChange={(event) =>
+                            updateManualPricingField(
+                              "lookbackWindow",
+                              event.target.value as LookbackWindow
+                            )
+                          }
+                          className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
+                        >
+                          <option value="90d">90d</option>
+                          <option value="6mo">6mo</option>
+                          <option value="1y">1y</option>
+                          <option value="2y">2y</option>
+                          <option value="3y">3y</option>
+                          <option value="custom">custom</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="manual-shippingIncluded">
+                          Shipping included
+                        </FieldLabel>
+                        <select
+                          id="manual-shippingIncluded"
+                          value={manualPricingForm.shippingIncluded}
+                          onChange={(event) =>
+                            updateManualPricingField(
+                              "shippingIncluded",
+                              event.target.value as ShippingIncluded
+                            )
+                          }
+                          className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
+                        >
+                          <option value="unknown">unknown</option>
+                          <option value="yes">yes</option>
+                          <option value="no">no</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="manual-conditionMatch">
+                          Condition match
+                        </FieldLabel>
+                        <select
+                          id="manual-conditionMatch"
+                          value={manualPricingForm.conditionMatch}
+                          onChange={(event) =>
+                            updateManualPricingField(
+                              "conditionMatch",
+                              event.target.value as ConditionMatch
+                            )
+                          }
+                          className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
+                        >
+                          <option value="unknown">unknown</option>
+                          <option value="lower">lower</option>
+                          <option value="similar">similar</option>
+                          <option value="better">better</option>
+                        </select>
+                      </div>
+
+                      <div className="md:col-span-3">
+                        <FieldLabel htmlFor="manual-compNotes">Notes</FieldLabel>
+                        <textarea
+                          id="manual-compNotes"
+                          value={manualPricingForm.compNotes}
+                          onChange={(event) =>
+                            updateManualPricingField(
+                              "compNotes",
+                              event.target.value
+                            )
+                          }
+                          placeholder="Manual comp source notes, outliers excluded, shipping context, or custom lookback details."
+                          className="mt-2 min-h-[90px] w-full rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                    <div className="text-sm font-semibold text-gray-950">
+                      {manualDataEntered
+                        ? "Calculated Pricing Recommendation"
+                        : "AI Fallback Pricing"}
+                    </div>
+                    <p className="mt-1 text-xs text-gray-600">
+                      {manualDataEntered
+                        ? "Manual comp data is being used where available."
+                        : "No manual comp data entered; this uses AI Starting Range midpoint fallback."}
+                    </p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <PricingMetric
+                        label="Suggested List Price"
+                        value={formatUsd(pricingRecommendation.suggestedListPrice)}
+                      />
+                      <PricingMetric
+                        label="Fast-Sale Price"
+                        value={formatUsd(pricingRecommendation.fastSalePrice)}
+                      />
+                      <PricingMetric
+                        label="Best Offer Floor"
+                        value={formatUsd(pricingRecommendation.bestOfferFloor)}
+                      />
+                      <PricingMetric
+                        label="Pricing Confidence"
+                        value={pricingRecommendation.pricingConfidence}
+                      />
+                    </div>
+                    <p className="mt-3 text-sm text-gray-700">
+                      {pricingRecommendation.pricingExplanation}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </SectionShell>
+
             <SectionShell title="Generate Final LP-U">
               <div className="flex flex-wrap items-center gap-3">
                 <button
@@ -521,32 +1011,6 @@ export default function LpuV2Page() {
           </div>
 
           <aside className="space-y-5">
-            <SectionShell title="Research / Comps">
-              <p className="text-sm text-gray-600">
-                Reserved for universal research notes, comp links, and evidence
-                quality checks.
-              </p>
-            </SectionShell>
-
-            <SectionShell title="Pricing">
-              <div className="grid gap-3">
-                <input
-                  type="text"
-                  placeholder="Target price"
-                  className="rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
-                />
-                <input
-                  type="text"
-                  placeholder="Floor price"
-                  className="rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
-                />
-                <textarea
-                  placeholder="Pricing notes"
-                  className="min-h-[90px] rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
-                />
-              </div>
-            </SectionShell>
-
             <SectionShell title="Vendoo Handoff">
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                 V2 handoff is intentionally disconnected in this pass. The
