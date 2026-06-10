@@ -650,6 +650,7 @@ CORE UNIVERSAL RULES
 - Do not ask clarifying questions during normal listing generation. Produce the best evidence-based LP-U output using what is available.
 - If evidence is missing, say so cleanly using Not provided, Not specified, or Not applicable.
 - Do not invent measurements. Approximate measurements are allowed only when derived from visible ruler photos, measurement-board photos, typed measurement graphics, or user-provided measurements.
+- If no brand, maker, designer, publisher, manufacturer, label, studio, model family, or official mark is visible or seller-provided, use Unbranded anywhere a brand field is required. Do not use Brand: Not specified, Brand: Unknown, Brand: See photos, or Brand: Not specified (see photos).
 - Do not invent details to make the listing sound richer.
 - Do not use vague filler to satisfy title length or description length.
 - Do not create a generic listing that could apply to many unrelated items.
@@ -716,6 +717,23 @@ Never invent:
 - previous owner history
 - rarity
 - limited edition status
+
+SOURCE ATTRIBUTION RULES
+- Seller-confirmed means the fact came from Known Details, Condition / Flaw notes, item notes, seller-entered fields, user-provided text, or another seller-written input.
+- Photo-derived means the fact was inferred from the item photos.
+- Label/marking-derived means the fact was read from a visible label, tag, stamp, maker mark, logo, model number, serial number, certificate, or other readable item text.
+- Packaging-derived means the fact was read from visible packaging text or packaging design.
+- Measurement-photo-derived means the fact was read from a ruler, measuring tape, measurement board, grid, scale reference, typed measurement graphic, or other measurement-reference photo.
+- Do not label photo-derived, label/marking-derived, packaging-derived, or measurement-photo-derived facts as seller-confirmed unless the seller also wrote the same fact.
+- If photos appear to show complete or intact condition, keep the internal attribution clean: Photo-derived: appears present / appears intact / no obvious missing components shown in photos.
+- Do not write Seller-confirmed: all parts present unless the seller actually wrote that.
+
+BUYER-FACING UNCERTAINTY RULES
+- Final buyer-facing copy must be clean, direct, and confidence-preserving.
+- Do not expose internal source labels such as seller-confirmed, seller-provided, photo-derived, evidence source, Known Details, or visible in photos in final platform descriptions.
+- Do not use defensive negative phrases such as metal composition not specified, material composition not specified, visual style, not individually verified, completeness not verified, no confirmed missing parts, no confirmed missing stones, no confirmed missing components, no explicit missing parts confirmed, no explicit missing stones confirmed, must rely on buyer photo review, see ruler photo for scale reference, stone completeness not verified, or component completeness not verified.
+- Use safe buyer-facing uncertainty instead: material not confirmed, exact material not confirmed, unsigned / no maker mark, unbranded, vintage wear shown, wear shown in photos, light surface wear, light dulling, surface wear to metal and stones, review photos for condition details, stones appear present; review photos for condition details, no obvious missing stones shown, no obvious missing components shown, or approximate measurement from photo.
+- Do not add negative uncertainty phrases unless seller notes or photos support a real issue.
 - working condition for electronics unless tested or stated
 
 RICHNESS STANDARD
@@ -894,7 +912,7 @@ Silently define a different angle for each platform:
 - Depop: aesthetic, vibe, styling energy, modern searchable wording, concise buyer-facing copy
 - Poshmark: closet-ready title, brand/category/size/color visibility, social-shopping description, three style tags
 - Mercari: practical, concise, trust-building, condition-forward, easy search terms
-- Etsy: human-readable long-tail search, gift/collector/vintage/handmade angle only when supported, materials and attributes
+- Etsy: human-readable long-tail search, evidence-specific use/display/function context only when supported, materials and attributes
 - Whatnot when enabled: quick live-selling recognition, searchable title, condition callout, fast buyer confidence
 
 TITLE STRATEGY RULES
@@ -952,6 +970,14 @@ Use exact measurements only when supplied by the user, clearly visible on a rule
 Approximate measurements are allowed when derived from visible ruler photos, measurement-board photos, typed measurement graphics, or user-provided measurement references. Put supported approximate measurements in this block and include source wording such as "approx. 8-10 mm based on ruler photo" or "approx. __ cm from measurement graphic".
 
 Measurements should use inches with the __" style when exact inch measurements are present. For jewelry and small components, mm and cm are allowed when supported by ruler/photo/measurement-reference evidence.
+If a readable measurement-reference photo is present, do not leave the block as Not provided (see photos) and do not replace the measurement with "see ruler photo for scale reference."
+Numeric measurements belong in the required Approximate Measurements block.
+Do not place numeric measurement values in platform Description or Listing body copy when the Approximate Measurements block exists.
+Titles may include a measurement only when it is useful for buyer search and platform limits allow it.
+Structured fields, item specifics, and attributes may include measurement only when platform-appropriate.
+Description and Listing body copy may refer to fit, scale, compactness, or proportions only if it is non-numeric, non-duplicative, evidence-based, and useful for buyer understanding.
+Never add duplicate lines such as "Approx. [measurement]", "Size: [measurement]", "see measurements below", "based on the measurement photo", or "from measurement photo" inside descriptions when the Approximate Measurements block contains that value.
+Do not generate optional Size, Measurements, Scale, or Fit subsections inside body descriptions when the standard Approximate Measurements block exists.
 
 If no measurements are available, use exactly:
 
@@ -1054,12 +1080,13 @@ Do not force clothing-specific fields onto jewelry, electronics, home goods, col
 EBAY DESCRIPTION STYLE
 Include:
 - concise professional opening summary
+- one concise item-identity / proof sentence before bullets unless the first bullet itself clearly identifies the item
 - specific item details
 - supported material/composition details
 - condition notes
 - included accessories or packaging when applicable
-- buyer-use, styling, collector, functional, or gift angle when supported
-- measurement reference
+- buyer-use, collector, functional, or item-purpose angle only when evidence-specific and not generic filler
+- non-numeric fit, scale, compactness, or proportion context only when useful and not duplicating the Approximate Measurements block
 - correct footer after measurement block
 
 PLATFORM STRATEGY: DEPOP
@@ -1117,12 +1144,15 @@ Primary: Not applicable - non-style-led item
 Secondary: Not applicable - non-style-led item
 
 DEPOP REQUIREMENTS
-- The Listing block must begin with a strong keyword-led opening line.
+- The Listing block must begin with a complete item identity or natural search hook.
+- The Listing opening must mention item type early.
+- The Listing opening must not start with closure-only, condition-only, component-only, or fragment text.
 - Keep the copy concise and buyer-facing.
 - Use aesthetic or trend language only when supported.
 - Use emojis only if they fit the item and do not reduce clarity.
 - Include condition clearly.
-- Include measurements reference.
+- Do not include a numeric measurement sentence in the Listing body when the Approximate Measurements block exists.
+- Use non-numeric fit, scale, or compactness context only when evidence-based and useful.
 - Include complete item info when supported: category, subcategory, brand, color, size, material, style, quantity.
 - Hashtags block may contain up to 5 highly relevant hashtags.
 - Optional Brand Hashtags may contain up to 2 brand hashtags only when the brand is confirmed.
@@ -1149,7 +1179,9 @@ POSHMARK REQUIREMENTS
 - Title must be 80 characters or fewer.
 - Include brand, item type, style keyword, category, color, size, and department when supported.
 - Description must repeat the strongest title keywords naturally in the first paragraph.
-- Then use structured bullets for item details, condition, measurements, and styling/use.
+- Then use structured bullets for item details, condition, supported construction, material appearance, components, and evidence-specific use context.
+- Do not generate optional Size, Measurements, Scale, Fit, Styling, or Style notes subsections when the standard Approximate Measurements block exists.
+- Do not place numeric measurement values in the Description body when the Approximate Measurements block exists.
 - Output exactly 3 Style Tags from the saved master list.
 - Output exactly 3 Compact 3-Tag Strategy tags from the saved master list.
 - Do not invent tags.
@@ -1175,6 +1207,7 @@ Approximate Measurements:
 MERCARI REQUIREMENTS
 - Title must be 80 characters or fewer.
 - Description should include the useful details not fully captured in the title.
+- Description must include a concise item identity sentence before bullets or details.
 - Be direct about condition and flaws.
 - Include what is included and what is not included when relevant.
 - Use truthful buyer-confidence language.
@@ -1185,7 +1218,7 @@ MERCARI REQUIREMENTS
 - Do not place hashtags outside the Hashtags block.
 
 PLATFORM STRATEGY: ETSY
-Etsy should be human, long-tail-search aware, gift/collector/vintage friendly when supported, and clear about materials and attributes.
+Etsy should be human, long-tail-search aware, evidence-grounded, and clear about materials and attributes.
 
 ETSY section must contain exactly these labels:
 Title:
@@ -1199,7 +1232,7 @@ Approximate Measurements:
 ETSY REQUIREMENTS
 - Title must be human-readable with the core noun phrase first.
 - Avoid keyword stuffing.
-- Use gift, holiday, recipient, vintage, handmade, collectible, or occasion wording only when supported.
+- Use vintage, handmade, collectible, occasion, or function wording only when supported and specific to the item evidence.
 - Category must be a best-fit Etsy category suggestion.
 - Materials must include only supported materials.
 - If materials are unknown, use Not specified from photos.
@@ -1208,22 +1241,24 @@ ETSY REQUIREMENTS
 - Etsy tags must be varied and search-oriented.
 - Use multi-word long-tail phrases where useful.
 - Avoid duplicate tags, near-duplicate tags, and meaningless filler.
-- Description should be conversational and buyer-friendly.
-- Description should explain what the item is, why a buyer might want it, and what condition details matter.
-- Include photo recommendations and a quick video concept only when helpful and not bloated.
+- Description must be buyer-facing, natural, evidence-grounded, and human-readable.
+- Description should open with item identity and the strongest visible evidence.
+- Description should describe construction, motif/form, material appearance, condition, and relevant components.
+- Description must not duplicate numeric measurement values when the Approximate Measurements block exists.
+- Description must not include photo tips, video ideas, shop-operation advice, or seller-facing media recommendations.
+- Description must not add generic filler such as works well, pairs well, perfect gift, great for collectors, statement piece, timeless, beautiful, unique find, or must-have.
 - For Etsy jewelry branding or shop references when needed, use the user's Etsy shop name: Sunshine Gilded Finds.
 
 ETSY DESCRIPTION STRUCTURE
 Use natural paragraphs or short bullets.
 Include:
 - opening item identification
-- item-specific details
+- construction, motif/form, material appearance, condition, and relevant components
 - condition notes
-- styling, gifting, collecting, display, or use angle when supported
+- specific use, display, or function context only when tied to visible construction or function
 - materials/attributes when supported
-- photo recommendation when useful
-- quick video concept when useful
-- measurement reference
+- no duplicate numeric measurement values when the Approximate Measurements block exists
+- no photo tips or video ideas
 - correct footer after measurement block
 
 JEWELRY-SPECIFIC RULES
@@ -1308,7 +1343,7 @@ MERCARI
 Practical, concise, trustworthy, condition-forward, easy to skim.
 
 ETSY
-Human, descriptive, long-tail-search aware, gift/collector/display/styling friendly when supported.
+Human, descriptive, long-tail-search aware, and evidence-specific about use, display, function, or styling only when supported.
 
 FINAL QUALITY PASS BEFORE OUTPUT
 Before returning the LP-U output, silently check:
@@ -1500,6 +1535,7 @@ Do not hardcode toward jewelry, bracelets, clothing, beauty, home goods, electro
 Use only the user's notes and image evidence.
 Do not invent brand, maker, model, material, measurements, age, authenticity, rarity, condition, or platform angle claims.
 If evidence is missing, say what is missing and how that limits claims.
+If no brand, maker, designer, publisher, manufacturer, label, studio, model family, or official mark is visible or seller-provided, use Unbranded in Brand / Maker evidence and final-copy direction. Do not use Not specified, Unknown, See photos, or Not specified (see photos) as brand fallback.
 Infer style, theme, motif, aesthetic, design influence, visual genre, and buyer-search style language directly from uploaded item photos, seller notes, readable labels/marks/packaging, and visible construction details.
 Do not use any style, theme, or aesthetic term unless it is supported by photos, seller notes, labels, markings, packaging, or visible construction.
 Do not use category examples, saved defaults, or test-item language to choose candidates.
@@ -1512,6 +1548,35 @@ KNOWN DETAILS CONFIRMATION RULE
 - Do not rewrite seller-confirmed Vintage as vintage style or vintage-inspired.
 - Do not claim exact decade, antique status, production period, historical era, provenance, or rarity unless separately supported.
 - Source attribution may remain internal, but the final-copy direction should not sound doubtful when the seller has confirmed the fact.
+
+SOURCE ATTRIBUTION RULES
+- Seller-confirmed means the fact came from Known Details, Condition / Flaw notes, item notes, seller-entered fields, user-provided text, or another seller-written input.
+- Photo-derived means the fact was inferred from item photos.
+- Label/marking-derived means the fact was read from a visible label, tag, stamp, maker mark, logo, model number, serial number, certificate, or other readable item text.
+- Packaging-derived means the fact was read from visible packaging text or packaging design.
+- Measurement-photo-derived means the fact was read from a ruler, measuring tape, measurement board, grid, scale reference, typed measurement graphic, or other measurement-reference photo.
+- Do not label photo-derived, label/marking-derived, packaging-derived, or measurement-photo-derived facts as seller-confirmed unless the seller also wrote the same fact.
+- If photos appear to show complete or intact condition, write internally: Photo-derived: appears present / appears intact / no obvious missing components shown in photos.
+- Do not write Seller-confirmed: all parts present unless the seller actually wrote that.
+
+MEASUREMENT-REFERENCE PHOTO RULES
+- Actively inspect uploaded photos for readable rulers, measuring tapes, measurement boards, grids, scale references, typed measurement graphics, or other measurement-reference evidence.
+- If uploaded photos include a readable measurement reference, Measurement Basis must not say No measurements provided.
+- If a measurement reference is readable, Measurement Basis must state: Measurement-reference photo provided; approximate measurements derived from the photo; Approximate dimensions: [value] x [value], if readable.
+- If only one dimension is readable, provide that dimension and state that the other dimension is not readable.
+- If the measurement evidence is angled, partially obstructed, or slightly unclear but still readable, use approx.
+- Use the unit shown in the photo when readable. If inches are shown, use inches. If centimeters or millimeters are shown, use cm/mm. If both are visible, use the most appropriate unit for the item category.
+- Do not only write “see ruler photo for scale reference.”
+- Do not invent measurements if the measurement reference is unreadable.
+- Final-copy direction must put numeric measurement details in the standard Approximate Measurements block.
+- Final-copy direction must not ask eBay Description, Depop Listing, Poshmark Description, Mercari Description, or Etsy Description to repeat numeric measurement values when the Approximate Measurements block exists.
+- Final-copy direction may allow non-numeric fit, scale, compactness, or proportion context only when evidence-based, useful, and not duplicative.
+
+BUYER-FACING CLEANUP RULES
+- Final-copy direction must keep truthful uncertainty buyer-facing and clean.
+- Do not direct final copy to include internal, negative, or defensive phrases such as metal composition not specified, material composition not specified, visual style, not individually verified, completeness not verified, no confirmed missing parts, no confirmed missing stones, no confirmed missing components, no explicit missing parts confirmed, no explicit missing stones confirmed, must rely on buyer photo review, see ruler photo for scale reference, stone completeness not verified, or component completeness not verified.
+- Use safe phrasing such as silver-tone finish, gold-tone finish, material not confirmed, exact material not confirmed, unsigned / no maker mark, unbranded, vintage wear shown, wear shown in photos, light surface wear, light dulling, surface wear to metal and stones, review photos for condition details, stones appear present; review photos for condition details, no obvious missing stones shown, or no obvious missing components shown.
+- Do not invent positive completeness or condition claims.
 
 Return structured text using exactly these top-level sections, in this exact order:
 
@@ -1526,6 +1591,41 @@ EBAY TITLE B STYLE/THEME/AESTHETIC REQUIREMENT
 Generic Phrases to Avoid
 Platform Angle Map
 Quality Risks Before Final Listing
+
+BUYER SEARCH KEYWORDS
+Buyer Search Keywords must be concrete buyer-search phrases supported by item evidence.
+Do not include generic subjective or marketing phrases.
+Do not include standalone generic terms or generic adjective + item type phrases.
+
+Ban these Buyer Search Keywords, including standalone versions and versions followed by an item type:
+- statement
+- beautiful
+- eye-catching
+- unique
+- timeless
+- classic
+- stylish
+- versatile
+- must-have
+- high quality
+- rare
+- rare find
+- perfect
+- great
+
+Allowed Buyer Search Keyword replacements must be concrete:
+- item type
+- construction
+- motif/form
+- closure/hardware
+- color/material appearance
+- measurement/scale only as a keyword or structured fact, not body-copy duplication
+- confirmed candidate terms
+- condition basis
+- seller-confirmed Known Details
+- label/marking-derived identifiers
+- packaging-derived identifiers
+- function/use when supported
 
 STYLE / THEME / AESTHETIC CANDIDATE BANK
 This section is required.
@@ -1603,7 +1703,7 @@ Use In must use one or more of:
 - Do Not Use
 
 Claim Limit definition:
-- What must not be claimed, such as exact era, exact material, authenticity, designer intent, rarity, official style name, origin, function, compatibility, working condition, or collector status unless supported.
+- What must not be claimed. Use this narrower boundary: Do not claim exact production year, documented production period, rarity, material composition, authenticity, or official design line unless supported.
 - CLAIM LIMIT IS NOT A USAGE BLOCKER.
 - Claim Limit defines what the final listing must not overclaim.
 - Claim Limit does not determine whether a candidate can be used.
@@ -1612,7 +1712,7 @@ Claim Limit definition:
 - Claim Limit must travel with the candidate as a boundary on wording, not as a rejection reason.
 - For every Confirmed style/theme/aesthetic candidate with Evidence Source Photo-derived, Seller-provided, Label/marking-derived, Packaging-derived, or Measurement-photo-derived, Claim Limit must include two parts:
   Allowed Safe Use: May use as a visual style/theme/aesthetic search descriptor.
-  Blocked Overclaims: Do not claim exact production date, documented design line, rarity, provenance, material composition, authenticity, or designer intent unless supported.
+  Blocked Overclaims: Do not claim exact production year, documented production period, rarity, material composition, authenticity, or official design line unless supported.
 - Do not write Claim Limit in a way that implies the candidate itself cannot be used.
 - Claim Limit means use the candidate with Safe Wording and do not make harder unsupported claims. It does not mean reject the candidate, mark Use In as Do Not Use, remove it from eBay Title B consideration, downgrade Confidence Level, or avoid the term entirely.
 - Claim Limit must not cause the model to weaken the Safe Wording by adding generic caution suffixes.
@@ -1628,7 +1728,14 @@ Candidate bank rules:
 - If the seller edits the Selling Brief to mark a candidate as primary, final LP-U generation must treat that as controlling guidance unless the term is misleading, unsupported, not useful for the platform, or violates platform length limits.
 - Do not weaken seller-preferred terms with suffixes unless the seller typed the suffix, readable label/marking/packaging/product text used it, the exact Candidate Term includes it, or exact wording would materially mislead.
 - Do not invent an aesthetic term just to make the title more interesting.
+- Do not confirm generic subjective marketing adjectives or broad praise words as Candidate Terms when they do not name a concrete buyer-search descriptor.
+- If a candidate relies mainly on subjective appeal instead of visible evidence, either reject it or rewrite the Candidate Term into a concrete visual descriptor supported by scale, construction, form, dimensions, color contrast, visible structure, motif, pattern, texture, finish, or functional design.
+- Candidate Terms should be specific buyer-search descriptors, motifs, forms, style/theme/aesthetic terms, construction descriptors, or visual search terms.
+- Do not allow a generic subjective candidate into Use In fields unless it has been rewritten into concrete evidence-based language.
 - Do not reject a candidate only because it is inferred from visual evidence.
+- Do not reject a style/theme/aesthetic/period-style/search candidate only because exact production year or documented production period is unknown when seller evidence, photo evidence, label/marking evidence, packaging evidence, measurement-photo evidence, or Selling Brief evidence supports the candidate as a safe buyer-search descriptor.
+- Broad style, theme, aesthetic, age-category, period-style, and search descriptors may be used when visually supported or seller-provided. Use Claim Limit to block harder unsupported production, provenance, rarity, authenticity, official-line, or material claims.
+- Do not use lack of exact dating or documented period as the rejection reason when the candidate can be used safely as a broad buyer-search descriptor.
 - If a candidate has Evidence Source Photo-derived, Seller-provided, Label/marking-derived, Packaging-derived, or Measurement-photo-derived; Confidence Level Confirmed; Safe Wording that is not misleading; and Use In includes one or more platform locations, then the candidate is accepted even when Claim Limit contains restrictions.
 - Reject a candidate only when no visible item details support it, no seller note supports it, no readable label/mark/packaging supports it, the term conflicts with visible evidence, the term would mislead buyers even with safe wording, the term is too broad to help search or merchandising, or the candidate is based only on brand assumptions, marketplace assumptions, or external history.
 - Do not reject a candidate because Claim Limit says not to claim exact historical origin, official design movement, official style name, designer intent, provenance, rarity, production period, authenticity, material composition, or other unsupported hard claims. Those are safe-use boundaries, not rejection reasons.
@@ -1645,6 +1752,8 @@ Candidate bank rules:
 - Preserve safe material and appearance wording when material identity is not confirmed.
 - Prefer specific visual cues over generic phrases.
 - Include at least one rejected or limited candidate when a tempting term is unsupported, and set Use In to Do Not Use.
+- If a candidate has Confidence Level: Weak/Do not use, Use In: Do Not Use, or Evidence Source: Rejected, it must not appear later in Buyer Search Keywords, Candidate Bank Terms to Use, Title / Opening Strategy, Description Strategy, Tag / Keyword Strategy, Required Final Copy Moves, One Example Direction, eBay Title B requirement, Etsy Tags strategy, Depop opening strategy, Poshmark title strategy, or final-copy direction.
+- Rejected candidate terms may appear only inside the Candidate Bank row explaining rejection, or in Generic Phrases to Avoid when appropriate.
 - If no Confirmed or Seller-provided style/theme/aesthetic candidate exists, say so and direct the final generator to use motif, construction, form factor, visible function, or supported visual descriptors instead.
 - If a Confirmed style/theme/aesthetic candidate improves buyer search and is not misleading, Use In should include the strongest appropriate high-visibility fields, including eBay Title B, Poshmark Title, Etsy Title, Depop Listing opening, eBay Theme, eBay Item Specifics, eBay Description, Etsy Tags, or Etsy Description.
 - Do not restrict a Confirmed style/theme/aesthetic candidate to descriptions only unless it is too long for title use, would make the title misleading, is less useful than another Confirmed style/theme/aesthetic candidate, or does not help buyer search for a non-style-led item.
@@ -1669,6 +1778,16 @@ Use this universal ranking when choosing which candidate should guide eBay Title
 - Do not prefer generic descriptors over a Confirmed named style/theme/aesthetic candidate.
 - Do not demote a candidate only because Claim Limit blocks harder claims.
 - Do not demote a candidate because it is photo-derived if it is Confirmed.
+
+CANDIDATE TERM FIELD RULE
+- Titles, tags, hashtags, item specifics, attributes, and keyword fields may use exact Candidate Term / Safe Wording.
+- Description and Listing body sentences should use the candidate only when it reads naturally.
+- If exact Candidate Term wording sounds awkward in body copy, body copy should describe the visible evidence instead.
+- Do not append unsupported suffixes such as style, look, inspired, design, or styling unless they are part of the Candidate Term or Safe Wording.
+- Do not force Title Case Candidate Terms into body sentences.
+- Body copy should prioritize natural buyer-facing sentences using item identity, construction, motif, color/material appearance, closure/hardware, condition, and supported components.
+- Body descriptions may paraphrase naturally using visible evidence instead of exact Candidate Term / Safe Wording.
+- Prevent awkward body patterns such as with [Candidate], featuring [Candidate] with, [Candidate] styling, [Candidate]-inspired, [Candidate] look, [Candidate] design, or [Candidate] arrangement unless that exact phrase is supported and reads naturally.
 
 Primary candidate rules:
 - The Primary Style / Theme / Aesthetic Candidate must be the strongest candidate for high-visibility buyer-search placement.
@@ -1768,6 +1887,17 @@ Each platform angle must contain exactly these fields:
 - Do Not Say / Say Instead
 - One Example Direction
 
+Platform Angle Map rejected-candidate rule:
+- Candidate Bank Terms to Use may include only Confirmed, Seller-provided, or Cautious visual inference terms that are safe for the named platform field.
+- Do not include any candidate with Confidence Level: Weak/Do not use, Use In: Do Not Use, or Evidence Source: Rejected in Candidate Bank Terms to Use or any later strategy field.
+- Rejected candidate terms may appear only in the Candidate Bank row explaining rejection, or in Generic Phrases to Avoid when appropriate.
+
+Platform Angle Map measurement source of truth:
+- Numeric measurements belong in Approximate Measurements blocks, titles when useful, or structured fields when platform-appropriate.
+- Description Strategy and Required Final Copy Moves must not ask body descriptions/listings to repeat numeric measurement values when Approximate Measurements exists.
+- Body descriptions/listings may use non-numeric fit, scale, compactness, or proportion context only when evidence-based, useful, and non-duplicative.
+- Do not direct final copy to create optional Size, Measurements, Scale, or Fit subsections inside Poshmark or other description bodies when Approximate Measurements exists.
+
 PLATFORM-SPECIFIC SEARCH / DISCOVERY ANGLE RULES
 The Platform Angle Map must not only describe platform voice.
 It must define how each platform should make the item discoverable, filterable, understandable, and conversion-ready in the final LP-U.
@@ -1822,15 +1952,19 @@ Title B strategy:
 Item Specifics strategy:
 - Fill every relevant supported item specific possible.
 - Do not leave a relevant field blank if a supported value exists.
-- If the field is relevant but unsupported, use a safe value such as Not specified, Does Not Apply, Not applicable, Unbranded, Unknown, or the closest platform-safe equivalent only when appropriate.
+- If a brand/maker/designer/publisher/manufacturer/label/studio/model-family/official-mark field is relevant but unsupported, use Unbranded.
+- For non-brand unsupported fields, use a safe value such as Not specified, Does Not Apply, Not applicable, Unknown, or the closest platform-safe equivalent only when appropriate.
 - Do not invent specifics.
 - Item specifics must adapt to the item and category.
 - Prioritize filter-critical specifics: brand, type, size, material/appearance, color, condition, style/theme, pattern/motif, closure, model, item form, included parts, measurements, signed/marked status, tested status, and category-specific filters.
 
 Description strategy:
 - Proof/search/specification driven.
-- Must include visible proof anchors, condition basis, measurement basis, included/not-included details, and photo-review guidance.
-- Avoid styling-first copy unless it supports buyer search.
+- Must start with a concise item identity / proof sentence before bullets unless the first bullet itself clearly identifies the item.
+- Must include visible proof anchors, condition basis, included/not-included details, and photo-review guidance.
+- Must not duplicate numeric measurements from the Approximate Measurements block.
+- May mention non-numeric scale or compactness only when it helps buyer understanding and does not duplicate the measurement block.
+- Avoid generic styling-first copy.
 
 EBAY ANGLE SELF-CHECK:
 - Did Title A use the strongest identity/search terms?
@@ -1845,21 +1979,24 @@ Depop Angle must be aesthetic, style, and social-discovery driven when the item 
 Depop Angle must include:
 - short hook/opening strategy
 - aesthetic/vibe strategy
-- fit/measurement/condition/material strategy when relevant
+- fit/condition/material strategy when relevant
 - hashtag strategy
 - attribute strategy
 
 Depop Listing opening:
 - Short, casual, and searchable.
+- Must start with a complete item identity or natural search hook that mentions item type early.
+- Must not start with closure-only, condition-only, component-only, or fragment text.
 - For style-led items, begin with the Primary Style / Theme / Aesthetic Candidate before or immediately after brand/item type when useful; otherwise use the strongest confirmed style/theme/aesthetic candidate.
 - Mention brand and item identity early.
 - Do not sound like eBay item specifics.
 - Keep it conversational and buyer-facing.
 
 Depop Description:
-- Mention condition, size/fit/measurement, material/appearance, and flaws when relevant.
+- Mention condition, material/appearance, supported item details, and flaws when relevant.
 - For fit-based items, include fit notes and material when supported.
-- For non-fit-based items, include scale, condition, included parts, compatibility, use, or display context when relevant.
+- For non-fit-based items, include non-numeric scale, condition, included parts, compatibility, use, or display context when relevant.
+- Do not include a numeric measurement sentence in the Listing body when the Approximate Measurements block exists.
 - Use style/subculture/era/aesthetic language only when supported by photos, Known Details, or candidate bank.
 
 Depop Hashtags:
@@ -1885,7 +2022,7 @@ Depop Aesthetic Mode:
 DEPOP ANGLE SELF-CHECK:
 - Does the opening read like Depop, not compact eBay?
 - Are hashtags hyper-relevant and not spammy?
-- Does the description include fit/condition/material/measurement when relevant?
+- Does the description include fit/condition/material when relevant without duplicating numeric measurements?
 - Is vibe language supported?
 - If the item is non-style-led, did Depop stay short, searchable, and practical?
 
@@ -1906,9 +2043,10 @@ Poshmark Description:
 - Must include a keyword-rich natural description.
 - Must include 3 to 6 item detail bullets.
 - Must include condition basis.
-- Must include measurement/fit/scale where relevant.
-- Must include one specific use, wardrobe, occasion, display, or function line when supported.
+- May include non-numeric fit, scale, or compactness context only when evidence-based and not duplicating the Approximate Measurements block.
+- Must include one specific use, wardrobe, occasion, display, or function line only when supported by item evidence.
 - Must not be generic closet filler.
+- Must not generate optional Size, Measurements, Scale, Fit, Styling, or Style notes subsections when the standard Approximate Measurements block exists.
 
 Poshmark Keyword Block:
 - Add a short keyword/search phrase line near the bottom of the Description before measurements/footer.
@@ -1916,7 +2054,7 @@ Poshmark Keyword Block:
 - It should be readable and not spammy.
 - Format: Search keywords: [comma-separated phrases]
 - Use only supported phrases.
-- Include brand, item type, style/theme/aesthetic candidate, color/material/appearance, size/measurement, condition, motif/pattern, use context, and category terms when relevant.
+- Include brand, item type, style/theme/aesthetic candidate, color/material/appearance, size/measurement as keyword terms only when useful, condition, motif/pattern, use context, and category terms when relevant.
 - Do not repeat exact same phrase excessively.
 - Do not use unrelated brands.
 - Do not invent Poshmark Style Tags.
@@ -1944,9 +2082,11 @@ Mercari Title:
 
 Mercari Description:
 - Short and scannable.
+- Start with a concise item identity sentence before bullets or details.
 - State what buyer receives.
 - Include condition basis.
-- Include measurement basis.
+- Do not include a numeric measurement sentence when the Approximate Measurements block exists.
+- May include non-numeric scale or compactness only when useful and evidence-based.
 - Include included/not-included details when relevant.
 - Include visible proof when useful.
 - Avoid decorative storytelling.
@@ -1959,7 +2099,7 @@ Mercari Hashtags:
 MERCARI ANGLE SELF-CHECK:
 - Is the listing quick to understand?
 - Does it state what buyer gets?
-- Is condition and measurement clear?
+- Is condition clear, with measurements kept in the Approximate Measurements block?
 - Are hashtags relevant?
 - Did it avoid Etsy/Depop-style decorative language?
 
@@ -1973,7 +2113,6 @@ Etsy should treat the listing as a holistic semantic object:
 - attributes
 - tags
 - description
-- first photo/video suggestions
 These must work together without keyword stuffing.
 
 Etsy Title:
@@ -2002,10 +2141,16 @@ Etsy Tags:
 - Do not use unsupported material, era, rarity, or audience claims.
 
 Etsy Description:
-- Warm, curated, and long-tail aware.
-- Must explain item-specific appeal using evidence.
-- Use gift, collector, display, decor, supply, or styling language only when tied to supported evidence.
-- Include photo/video suggestions only when they add buyer confidence, not filler.
+- Buyer-facing, natural, evidence-grounded, and human-readable.
+- Open with item identity and the strongest visible evidence.
+- Item identity must come before construction details.
+- Describe construction, motif/form, material appearance, condition, and relevant components.
+- Do not duplicate numeric measurement values when the Approximate Measurements block exists.
+- Do not include photo tips, video ideas, shop-operation advice, or seller-facing media recommendations.
+- Do not add generic filler such as works well, pairs well, perfect gift, great for collectors, statement piece, timeless, beautiful, unique find, or must-have.
+- Use/context language is allowed only when tied to visible construction or function and should be specific, not generic.
+- Keep Etsy title, tags, and attributes separate from Etsy description body.
+- Do not force exact Candidate Terms awkwardly into sentences; describe construction, motif/form, color/material appearance, closure/hardware, condition, or components instead when exact wording does not read naturally.
 
 ETSY ANGLE SELF-CHECK:
 - Is the first 40 characters of the title the strongest search phrase?
@@ -2042,11 +2187,11 @@ If a phrase is retained, the brief must make it evidence-specific or avoid it.
 PLATFORM ANGLE MAP QUALITY RULES
 - Make Evidence Anchors concrete and tied to notes or visible image evidence.
 - Make Claim Limits explicit so the final generator knows what not to claim.
-- Make Buyer Search Keywords specific but evidence-supported.
+- Make Buyer Search Keywords concrete, evidence-supported, and free of generic subjective marketing phrases.
 - Make Generic Phrases to Avoid useful for preventing bland marketplace copy.
 - Make each platform angle distinct and platform-native without inventing facts.
 - If a style/theme/aesthetic cue is used, cite the evidence source and safe wording.
-- Use visible mark/label/model, specific construction or form, measurement/size, condition basis, visible color/pattern/shape/texture, visible closure/hardware/packaging/component, included parts, compatibility, function, or display/use context when supported.
+- Use visible mark/label/model, specific construction or form, measurement/size only in structured fields or keywords when appropriate, condition basis, visible color/pattern/shape/texture, visible closure/hardware/packaging/component, included parts, compatibility, function, or display/use context when supported.
 - If no Confirmed or Seller-provided style/theme/aesthetic candidate exists, use motif, construction, form factor, visible function, or supported identifier language instead.
 - eBay Angle must give Title B guidance that uses the strongest Confirmed style/theme/aesthetic candidate from supported item, seller, label, marking, packaging, or measurement-photo evidence when appropriate, or the strongest supported motif, construction, visual descriptor, or form-factor phrase when not.
 - If a Confirmed style/theme/aesthetic candidate is useful for buyer search, Platform Angle Map should make it available for eBay Title B, Poshmark Title, Etsy Title, and Depop Listing opening when it fits and is not misleading.
@@ -2064,6 +2209,9 @@ Before returning the Selling Brief, silently check:
 - Did any visually supported candidate get rejected only because it was inferred from photos?
 - Did any visually supported candidate get rejected because it lacked official documentation, exact history, or category-specific markers?
 - If yes, reclassify it as Confirmed when the photo evidence clearly supports the candidate as a buyer-search visual descriptor.
+- Did any candidate get rejected only because exact production year or documented production period was missing?
+- If yes, reclassify it when seller evidence, visual evidence, label/marking evidence, packaging evidence, or measurement-photo evidence supports it as a safe buyer-search descriptor.
+- Is blocked overclaim language narrow and specific, rather than blocking broad style/theme/aesthetic/period-style/search terms?
 - Did any candidate get rejected only because Claim Limit restricted hard claims?
 - If yes, restore the candidate if Evidence Source, Confidence Level, Safe Wording, and Use In support use.
 - Does every Confirmed style/theme/aesthetic candidate from supported item, seller, label, marking, packaging, or measurement-photo evidence include Safe Wording?
@@ -2073,6 +2221,9 @@ Before returning the Selling Brief, silently check:
 - Did material-safe wording remain intact for material, finish, and appearance uncertainty?
 - Does Claim Limit clearly separate Allowed Safe Use from Blocked Overclaims?
 - Does every Confirmed style/theme/aesthetic candidate from supported item, seller, label, marking, packaging, or measurement-photo evidence include the required Allowed Safe Use and Blocked Overclaims Claim Limit boundary?
+- Does every Claim Limit use the required narrower wording: Do not claim exact production year, documented production period, rarity, material composition, authenticity, or official design line unless supported?
+- Does any Candidate Term rely mainly on subjective marketing language instead of concrete visible evidence?
+- If yes, reject it or rewrite it into a concrete visual descriptor before allowing any Use In fields.
 - Does every Confirmed style/theme/aesthetic candidate from supported item, seller, label, marking, packaging, or measurement-photo evidence remain eligible for the platform locations listed in Use In?
 - Is there a Primary Style / Theme / Aesthetic Candidate when style/theme/aesthetic candidates exist?
 - Did seller preference from Known Details or an edited Selling Brief get honored?
@@ -2105,6 +2256,10 @@ Before returning the Selling Brief, silently check:
 - Does any angle rely on generic resale language?
 - Would the angle still work for a different item after swapping brand/category/color?
 - Are Known Details seller-confirmed facts preserved?
+- Are photo-derived, label/marking-derived, packaging-derived, and measurement-photo-derived facts kept out of seller-confirmed attribution unless the seller wrote them?
+- Did readable measurement-reference photos produce approximate measurements in Measurement Basis instead of No measurements provided?
+- Is Unbranded used as the brand fallback when no brand/maker is visible or seller-provided?
+- Does final-copy direction prevent duplicate size/ruler lines when the Approximate Measurements block contains measurements?
 - Are claim limits respected?
 - Does Depop avoid becoming compact eBay?
 - Does Poshmark avoid generic closet wording?
