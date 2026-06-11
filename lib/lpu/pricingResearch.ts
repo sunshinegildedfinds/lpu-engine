@@ -14,6 +14,43 @@ export type ShippingIncluded = "yes" | "no" | "unknown";
 export type ConditionMatch = "lower" | "similar" | "better" | "unknown";
 
 export type PricingConfidence = "Low" | "Low-medium" | "Medium" | "Medium-high" | "High";
+export type PublicWebCompPricingConfidence = "High" | "Medium" | "Low" | "Very Low";
+export type PricingSource = "manual" | "public_web_comps" | "ai_fallback";
+
+export type SelectedWebCompPricingSource = {
+  visiblePrice: number | null;
+  status: "sold" | "completed" | "best_offer_uncertain" | "active_or_unclear" | "excluded";
+  eligibleForPricing: boolean;
+  selectableForUserPricing: boolean;
+  hardDisabled: boolean;
+  userOverrideRisk: "none" | "low" | "medium" | "high";
+  usedInPricing: boolean;
+  similarity: "strong" | "medium" | "weak" | "not_comparable";
+  matchType:
+    | "full_item"
+    | "same_item_type"
+    | "component_only"
+    | "style_only"
+    | "brand_only"
+    | "material_only"
+    | "unclear";
+};
+
+export type PublicWebCompPricingSummary = {
+  suggestedPrice?: number | null;
+  confidence?: PublicWebCompPricingConfidence;
+  selectedSoldResultsUsed?: number;
+  bestOfferCaveatUsed?: boolean;
+};
+
+export type DerivedPricingResult = {
+  suggestedListPrice: number | null;
+  fastSalePrice: number | null;
+  bestOfferFloor: number | null;
+  pricingConfidence: PublicWebCompPricingConfidence;
+  pricingSource: PricingSource;
+  pricingExplanation: string;
+};
 
 export type PricingResearchGenerated = {
   researchKeywords: string;
@@ -61,10 +98,11 @@ export type PricingRecommendation = {
   suggestedListPrice: number;
   fastSalePrice: number;
   bestOfferFloor: number;
-  pricingConfidence: PricingConfidence;
+  pricingConfidence: PricingConfidence | PublicWebCompPricingConfidence;
   pricingExplanation: string;
   basePriceSource: string;
   usedAiFallback: boolean;
+  pricingSource: PricingSource;
 };
 
 const EBAY_SOLD_SEARCH_BASE_URL = "https://www.ebay.com/sch/i.html";
@@ -1783,6 +1821,396 @@ function roundToPricingConvention(value: number): number {
   return Math.round(value / increment) * increment;
 }
 
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+
+  if (sorted.length % 2) return sorted[middle];
+
+  return (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function weightedMedian(
+  values: Array<{ value: number; weight: number }>
+): number | null {
+  const usableValues = values
+    .filter(
+      (item) =>
+        Number.isFinite(item.value) &&
+        item.value > 0 &&
+        Number.isFinite(item.weight) &&
+        item.weight > 0
+    )
+    .sort((a, b) => a.value - b.value);
+
+  if (!usableValues.length) return null;
+
+  const totalWeight = usableValues.reduce((sum, item) => sum + item.weight, 0);
+  let runningWeight = 0;
+
+  for (const item of usableValues) {
+    runningWeight += item.weight;
+    if (runningWeight >= totalWeight / 2) return item.value;
+  }
+
+  return usableValues[usableValues.length - 1].value;
+}
+
+function confidenceRankForPublicWebComps(
+  confidence: PublicWebCompPricingConfidence
+): number {
+  switch (confidence) {
+    case "Very Low":
+      return 0;
+    case "Low":
+      return 1;
+    case "Medium":
+      return 2;
+    case "High":
+      return 3;
+  }
+}
+
+function confidenceFromPublicWebCompRank(
+  rank: number
+): PublicWebCompPricingConfidence {
+  if (rank >= 3) return "High";
+  if (rank === 2) return "Medium";
+  if (rank === 1) return "Low";
+  return "Very Low";
+}
+
+function capPublicWebCompConfidence(
+  confidence: PublicWebCompPricingConfidence,
+  maxConfidence: PublicWebCompPricingConfidence
+): PublicWebCompPricingConfidence {
+  return confidenceFromPublicWebCompRank(
+    Math.min(
+      confidenceRankForPublicWebComps(confidence),
+      confidenceRankForPublicWebComps(maxConfidence)
+    )
+  );
+}
+
+function publicWebCompSourceWeight(source: SelectedWebCompPricingSource): number {
+  let weight = 0;
+
+  switch (source.similarity) {
+    case "strong":
+      weight = 1;
+      break;
+    case "medium":
+      weight = 0.85;
+      break;
+    case "weak":
+      weight = 0.55;
+      break;
+    case "not_comparable":
+      weight = 0.25;
+      break;
+  }
+
+  if (source.matchType === "component_only") weight = Math.min(weight, 0.45);
+  if (source.status === "active_or_unclear") weight = Math.min(weight, 0.35);
+  if (!source.eligibleForPricing) weight = Math.min(weight, 0.35);
+  if (source.userOverrideRisk === "high") weight = Math.min(weight, 0.25);
+  if (source.status === "best_offer_uncertain") weight *= 0.85;
+
+  return Math.max(0.1, weight);
+}
+
+function adjustedPublicWebCompPrice(
+  source: SelectedWebCompPricingSource
+): number {
+  const visiblePrice = source.visiblePrice ?? 0;
+  return source.status === "best_offer_uncertain"
+    ? visiblePrice * 0.9
+    : visiblePrice;
+}
+
+function removeExtremePublicWebCompOutliers(
+  comps: Array<{
+    source: SelectedWebCompPricingSource;
+    value: number;
+    weight: number;
+  }>
+): Array<{
+  source: SelectedWebCompPricingSource;
+  value: number;
+  weight: number;
+}> {
+  if (comps.length < 5) return comps;
+
+  const sortedValues = comps.map((comp) => comp.value).sort((a, b) => a - b);
+  const lowerHalf = sortedValues.slice(0, Math.floor(sortedValues.length / 2));
+  const upperHalf = sortedValues.slice(Math.ceil(sortedValues.length / 2));
+  const q1 = median(lowerHalf);
+  const q3 = median(upperHalf);
+
+  if (q1 === null || q3 === null) return comps;
+
+  const iqr = q3 - q1;
+  if (iqr <= 0) return comps;
+
+  const lowerFence = q1 - iqr * 1.5;
+  const upperFence = q3 + iqr * 1.5;
+  const filtered = comps.filter(
+    (comp) => comp.value >= lowerFence && comp.value <= upperFence
+  );
+
+  return filtered.length ? filtered : comps;
+}
+
+function getPublicWebCompCountConfidence(
+  count: number
+): PublicWebCompPricingConfidence {
+  if (count >= 10) return "High";
+  if (count >= 4) return "Medium";
+  if (count >= 1) return "Low";
+  return "Very Low";
+}
+
+function getPublicWebCompQualityConfidence(
+  sources: SelectedWebCompPricingSource[]
+): PublicWebCompPricingConfidence {
+  if (!sources.length) return "Very Low";
+
+  const strongOrMediumCount = sources.filter(
+    (source) => source.similarity === "strong" || source.similarity === "medium"
+  ).length;
+  const weakOrComponentCount = sources.filter(
+    (source) =>
+      source.similarity === "weak" || source.matchType === "component_only"
+  ).length;
+  const activeOrUnclearCount = sources.filter(
+    (source) => source.status === "active_or_unclear"
+  ).length;
+  const highRiskOverrideCount = sources.filter(
+    (source) => !source.eligibleForPricing && source.userOverrideRisk === "high"
+  ).length;
+
+  if (sources.length <= 2 && weakOrComponentCount === sources.length) {
+    return "Very Low";
+  }
+  if (activeOrUnclearCount >= sources.length / 2) return "Very Low";
+  if (highRiskOverrideCount > 0 && strongOrMediumCount < 3) return "Very Low";
+  if (weakOrComponentCount === sources.length) return "Low";
+  if (strongOrMediumCount >= 10) return "High";
+  if (strongOrMediumCount >= 4) return "Medium";
+  return "Low";
+}
+
+export function hasManualCompPriceData(manual: ManualCompInputs): boolean {
+  return Boolean(
+    (manual.medianSoldPrice && manual.medianSoldPrice > 0) ||
+      (manual.averageSoldPrice && manual.averageSoldPrice > 0) ||
+      (manual.lowRelevantSold &&
+        manual.lowRelevantSold > 0 &&
+        manual.highRelevantSold &&
+        manual.highRelevantSold > 0)
+  );
+}
+
+export function derivePricingFromSelectedWebComps(
+  selectedSources: SelectedWebCompPricingSource[],
+  summary?: PublicWebCompPricingSummary | null,
+  _generated?: Partial<PricingResearchGenerated> | null,
+  conditionMatch: ConditionMatch = "unknown"
+): DerivedPricingResult {
+  const usableSources = selectedSources.filter(
+    (source) =>
+      source.usedInPricing &&
+      !source.hardDisabled &&
+      source.visiblePrice !== null &&
+      source.visiblePrice > 0
+  );
+
+  if (!usableSources.length) {
+    if (
+      summary?.selectedSoldResultsUsed &&
+      summary.selectedSoldResultsUsed > 0 &&
+      summary.suggestedPrice &&
+      summary.suggestedPrice > 0
+    ) {
+      const fallbackConfidence = capPublicWebCompConfidence(
+        summary.confidence ?? "Very Low",
+        "Low"
+      );
+      const conditionAdjustment =
+        PRICING_RESEARCH_CONSTANTS.conditionAdjustment[conditionMatch];
+      const suggestedListPrice = roundToPricingConvention(
+        summary.suggestedPrice * conditionAdjustment
+      );
+      const fastSalePrice = roundToPricingConvention(
+        suggestedListPrice * (fallbackConfidence === "Low" ? 0.84 : 0.78)
+      );
+      const bestOfferFloor = roundToPricingConvention(
+        suggestedListPrice * (fallbackConfidence === "Low" ? 0.7 : 0.65)
+      );
+
+      return {
+        suggestedListPrice,
+        fastSalePrice,
+        bestOfferFloor,
+        pricingConfidence: fallbackConfidence,
+        pricingSource: "public_web_comps",
+        pricingExplanation:
+          "Public Web Comp source-level visible prices were unavailable, so the Public Web Comp summary price was used as limited fallback context. Manual comp price data will override this recommendation if entered.",
+      };
+    }
+
+    return {
+      suggestedListPrice: null,
+      fastSalePrice: null,
+      bestOfferFloor: null,
+      pricingConfidence: "Very Low",
+      pricingSource: "ai_fallback",
+      pricingExplanation:
+        "No selected Public Web Comp sources with visible prices are available.",
+    };
+  }
+
+  const weightedComps = removeExtremePublicWebCompOutliers(
+    usableSources.map((source) => ({
+      source,
+      value: adjustedPublicWebCompPrice(source),
+      weight: publicWebCompSourceWeight(source),
+    }))
+  );
+  const basePrice = weightedMedian(weightedComps);
+
+  if (basePrice === null) {
+    return {
+      suggestedListPrice: null,
+      fastSalePrice: null,
+      bestOfferFloor: null,
+      pricingConfidence: "Very Low",
+      pricingSource: "ai_fallback",
+      pricingExplanation:
+        "Selected Public Web Comp sources did not expose usable visible prices.",
+    };
+  }
+
+  const sourceCount = usableSources.length;
+  const selectedCount = summary?.selectedSoldResultsUsed ?? sourceCount;
+  const bestOfferUncertainCount = usableSources.filter(
+    (source) => source.status === "best_offer_uncertain"
+  ).length;
+  const overriddenCount = usableSources.filter(
+    (source) => !source.eligibleForPricing
+  ).length;
+  const activeOrUnclearCount = usableSources.filter(
+    (source) => source.status === "active_or_unclear"
+  ).length;
+  const notComparableCount = usableSources.filter(
+    (source) => source.similarity === "not_comparable"
+  ).length;
+  const weakOrComponentCount = usableSources.filter(
+    (source) =>
+      source.similarity === "weak" || source.matchType === "component_only"
+  ).length;
+
+  let pricingConfidence = capPublicWebCompConfidence(
+    getPublicWebCompCountConfidence(sourceCount),
+    getPublicWebCompQualityConfidence(usableSources)
+  );
+
+  if (summary?.confidence) {
+    pricingConfidence = capPublicWebCompConfidence(
+      pricingConfidence,
+      summary.confidence
+    );
+  }
+
+  if (bestOfferUncertainCount > 0 || summary?.bestOfferCaveatUsed) {
+    pricingConfidence = capPublicWebCompConfidence(pricingConfidence, "Medium");
+  }
+  if (bestOfferUncertainCount > sourceCount / 2 && sourceCount < 5) {
+    pricingConfidence = capPublicWebCompConfidence(pricingConfidence, "Low");
+  }
+  if (overriddenCount > 0) {
+    pricingConfidence = capPublicWebCompConfidence(pricingConfidence, "Low");
+  }
+  if (activeOrUnclearCount > 0) {
+    pricingConfidence = capPublicWebCompConfidence(
+      pricingConfidence,
+      activeOrUnclearCount >= sourceCount / 2 ? "Very Low" : "Low"
+    );
+  }
+  if (notComparableCount > 0 && sourceCount < 4) {
+    pricingConfidence = capPublicWebCompConfidence(pricingConfidence, "Very Low");
+  }
+  if (sourceCount === 1) {
+    pricingConfidence = capPublicWebCompConfidence(
+      pricingConfidence,
+      weakOrComponentCount === 1 || overriddenCount > 0 ? "Very Low" : "Low"
+    );
+  }
+
+  const conditionAdjustment =
+    PRICING_RESEARCH_CONSTANTS.conditionAdjustment[conditionMatch];
+  const confidenceListMultiplier =
+    pricingConfidence === "High"
+      ? 1.04
+      : pricingConfidence === "Medium"
+        ? 1.02
+        : pricingConfidence === "Low"
+          ? 0.98
+          : 0.95;
+  const suggestedListPrice = roundToPricingConvention(
+    basePrice * conditionAdjustment * confidenceListMultiplier
+  );
+  const fastSaleMultiplier =
+    pricingConfidence === "High" || pricingConfidence === "Medium"
+      ? 0.88
+      : pricingConfidence === "Low"
+        ? 0.84
+        : 0.78;
+  const bestOfferFloorMultiplier =
+    pricingConfidence === "High" || pricingConfidence === "Medium"
+      ? 0.75
+      : pricingConfidence === "Low"
+        ? 0.7
+        : 0.65;
+  const uncertaintyFloorMultiplier =
+    bestOfferUncertainCount > 0 ? bestOfferFloorMultiplier - 0.03 : bestOfferFloorMultiplier;
+  const fastSalePrice = roundToPricingConvention(
+    suggestedListPrice * fastSaleMultiplier
+  );
+  const bestOfferFloor = roundToPricingConvention(
+    suggestedListPrice * Math.max(0.55, uncertaintyFloorMultiplier)
+  );
+
+  const caveats = [];
+  if (bestOfferUncertainCount > 0) {
+    caveats.push(
+      "Best Offer uncertain prices were treated as visible upper-bound evidence."
+    );
+  }
+  if (overriddenCount > 0) {
+    caveats.push("User-selected override sources capped confidence.");
+  }
+  if (weightedComps.length < usableSources.length) {
+    caveats.push("Statistically extreme selected prices were excluded.");
+  }
+
+  return {
+    suggestedListPrice,
+    fastSalePrice,
+    bestOfferFloor,
+    pricingConfidence,
+    pricingSource: "public_web_comps",
+    pricingExplanation: [
+      `Selected Public Web Comp sources were analyzed directly (${sourceCount} usable visible-price source${sourceCount === 1 ? "" : "s"} selected; ${selectedCount} total selected).`,
+      "Confidence is based on selected source count, similarity, match type, user overrides, and Best Offer uncertainty.",
+      "Manual comp price data will override this recommendation if entered.",
+      ...caveats,
+    ].join(" "),
+  };
+}
+
 function getBasePrice(
   manual: ManualCompInputs,
   generated: PricingResearchGenerated
@@ -1858,8 +2286,39 @@ function scorePricingConfidence(
 
 export function calculatePricingRecommendation(
   manual: ManualCompInputs,
-  generated: PricingResearchGenerated
+  generated: PricingResearchGenerated,
+  publicWebComps?: {
+    summary?: PublicWebCompPricingSummary | null;
+    sources?: SelectedWebCompPricingSource[];
+  } | null
 ): PricingRecommendation {
+  if (!hasManualCompPriceData(manual)) {
+    const publicWebCompPricing = derivePricingFromSelectedWebComps(
+      publicWebComps?.sources ?? [],
+      publicWebComps?.summary,
+      generated,
+      manual.conditionMatch ?? "unknown"
+    );
+
+    if (
+      publicWebCompPricing.pricingSource === "public_web_comps" &&
+      publicWebCompPricing.suggestedListPrice !== null &&
+      publicWebCompPricing.fastSalePrice !== null &&
+      publicWebCompPricing.bestOfferFloor !== null
+    ) {
+      return {
+        suggestedListPrice: publicWebCompPricing.suggestedListPrice,
+        fastSalePrice: publicWebCompPricing.fastSalePrice,
+        bestOfferFloor: publicWebCompPricing.bestOfferFloor,
+        pricingConfidence: publicWebCompPricing.pricingConfidence,
+        pricingExplanation: publicWebCompPricing.pricingExplanation,
+        basePriceSource: "selected Public Web Comp source prices",
+        usedAiFallback: false,
+        pricingSource: "public_web_comps",
+      };
+    }
+  }
+
   const basePrice = getBasePrice(manual, generated);
   const conditionMatch = manual.conditionMatch ?? "unknown";
   const conditionAdjustment =
@@ -1901,5 +2360,6 @@ export function calculatePricingRecommendation(
     pricingExplanation: explanationParts.join(" "),
     basePriceSource: basePrice.source,
     usedAiFallback: basePrice.usedAiFallback,
+    pricingSource: basePrice.usedAiFallback ? "ai_fallback" : "manual",
   };
 }

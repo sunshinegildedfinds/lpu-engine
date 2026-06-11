@@ -417,6 +417,18 @@ assert(
   "V2 page should expose a local source toggle handler."
 );
 assert(
+  pageSource.includes("sources: webCompsResult?.sourceUrls ?? []"),
+  "Lower pricing recommendation should receive selected Public Web Comp source objects."
+);
+assert(
+  pageSource.includes("webCompsResult]"),
+  "Lower pricing recommendation should recalculate when local web comp source toggles change."
+);
+assert(
+  pageSource.includes('"Public-Web Comp Pricing"'),
+  "Lower pricing panel should label selected-source web comp recommendations."
+);
+assert(
   pageSource.includes("disabled={!source.selectableForUserPricing}"),
   "Only non-selectable sources should be disabled in the UI."
 );

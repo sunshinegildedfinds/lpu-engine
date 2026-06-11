@@ -324,18 +324,6 @@ function buildManualCompInputs(
   };
 }
 
-function hasManualCompData(inputs: ManualCompInputs): boolean {
-  return Boolean(
-    inputs.averageSoldPrice ||
-      inputs.medianSoldPrice ||
-      (inputs.lowRelevantSold && inputs.highRelevantSold) ||
-      inputs.soldCount ||
-      inputs.activeCount ||
-      inputs.sellThroughPercent ||
-      inputs.compNotes?.trim()
-  );
-}
-
 function PricingMetric({
   label,
   value,
@@ -471,11 +459,13 @@ export default function LpuV2Page() {
   );
 
   const pricingRecommendation = useMemo(
-    () => calculatePricingRecommendation(manualCompInputs, pricingResearch),
-    [manualCompInputs, pricingResearch]
+    () =>
+      calculatePricingRecommendation(manualCompInputs, pricingResearch, {
+        summary: webCompsResult,
+        sources: webCompsResult?.sourceUrls ?? [],
+      }),
+    [manualCompInputs, pricingResearch, webCompsResult]
   );
-
-  const manualDataEntered = hasManualCompData(manualCompInputs);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setFiles(Array.from(event.target.files ?? []));
@@ -1261,14 +1251,18 @@ export default function LpuV2Page() {
 
                   <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
                     <div className="text-sm font-semibold text-gray-950">
-                      {manualDataEntered
+                      {pricingRecommendation.pricingSource === "manual"
                         ? "Calculated Pricing Recommendation"
-                        : "AI Fallback Pricing"}
+                        : pricingRecommendation.pricingSource === "public_web_comps"
+                          ? "Public-Web Comp Pricing"
+                          : "AI Fallback Pricing"}
                     </div>
                     <p className="mt-1 text-xs text-gray-600">
-                      {manualDataEntered
+                      {pricingRecommendation.pricingSource === "manual"
                         ? "Manual comp data is being used where available."
-                        : "No manual comp data entered; this uses AI Starting Range midpoint fallback."}
+                        : pricingRecommendation.pricingSource === "public_web_comps"
+                          ? "No manual comp price data entered; selected Public Web Comp sources are being analyzed."
+                          : "No manual comp price data or selected Public Web Comp source prices are available; this uses AI Starting Range midpoint fallback."}
                     </p>
                     <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                       <PricingMetric

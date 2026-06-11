@@ -36,6 +36,7 @@ function loadPricingResearch() {
 const {
   buildPricingResearchFromBrief,
   calculatePricingRecommendation,
+  derivePricingFromSelectedWebComps,
 } = loadPricingResearch();
 
 function buildInput(overrides = {}) {
@@ -325,6 +326,7 @@ assert.match(lowHighOnly.basePriceSource, /low\/high/i);
 
 const aiFallback = calculatePricingRecommendation({}, pricingBase);
 assert.equal(aiFallback.usedAiFallback, true);
+assert.equal(aiFallback.pricingSource, "ai_fallback");
 assert.match(aiFallback.pricingExplanation, /AI-range fallback/i);
 assert.match(aiFallback.pricingExplanation, /No sell-through adjustment/i);
 
@@ -341,5 +343,157 @@ const withoutSellThrough = calculatePricingRecommendation(
 );
 assert.equal(withoutSellThrough.usedAiFallback, false);
 assert.match(withoutSellThrough.pricingExplanation, /No sell-through adjustment/i);
+
+function webSource(overrides = {}) {
+  return {
+    visiblePrice: 40,
+    status: "sold",
+    eligibleForPricing: true,
+    defaultIncludedInPricing: true,
+    selectableForUserPricing: true,
+    hardDisabled: false,
+    userOverrideRisk: "none",
+    usedInPricing: true,
+    ineligibilityReason: null,
+    similarity: "strong",
+    matchType: "full_item",
+    matchReasons: [],
+    mismatchReasons: [],
+    ...overrides,
+  };
+}
+
+function webSummary(overrides = {}) {
+  return {
+    suggestedPrice: 999,
+    confidence: "High",
+    selectedSoldResultsUsed: 3,
+    bestOfferCaveatUsed: false,
+    ...overrides,
+  };
+}
+
+const publicWebSources = [
+  webSource({ visiblePrice: 30 }),
+  webSource({ visiblePrice: 40 }),
+  webSource({ visiblePrice: 50 }),
+];
+
+const publicWebPricing = calculatePricingRecommendation({}, pricingBase, {
+  summary: webSummary({ suggestedPrice: 999 }),
+  sources: publicWebSources,
+});
+assert.equal(publicWebPricing.usedAiFallback, false);
+assert.equal(publicWebPricing.pricingSource, "public_web_comps");
+assert.match(publicWebPricing.basePriceSource, /Public Web Comp/i);
+assert.notEqual(publicWebPricing.suggestedListPrice, 29.99, "Selected web comps should override AI Starting Range.");
+assert.notEqual(publicWebPricing.suggestedListPrice, 999, "Lower recommendation must not blindly copy Public Web Comp suggestedPrice.");
+assert.match(publicWebPricing.pricingExplanation, /Selected Public Web Comp sources were analyzed directly/);
+
+const manualOverridesPublicWeb = calculatePricingRecommendation(
+  { medianSoldPrice: 80 },
+  pricingBase,
+  {
+    summary: webSummary(),
+    sources: publicWebSources,
+  }
+);
+assert.equal(manualOverridesPublicWeb.pricingSource, "manual");
+assert.match(manualOverridesPublicWeb.basePriceSource, /manual median/i);
+
+const clearedManualReturnsToPublicWeb = calculatePricingRecommendation(
+  {},
+  pricingBase,
+  {
+    summary: webSummary(),
+    sources: publicWebSources,
+  }
+);
+assert.equal(clearedManualReturnsToPublicWeb.pricingSource, "public_web_comps");
+
+const toggledOffPublicWeb = calculatePricingRecommendation({}, pricingBase, {
+  summary: webSummary({ selectedSoldResultsUsed: 2 }),
+  sources: publicWebSources.slice(0, 2),
+});
+assert.equal(toggledOffPublicWeb.pricingSource, "public_web_comps");
+assert.notEqual(toggledOffPublicWeb.suggestedListPrice, publicWebPricing.suggestedListPrice);
+
+const toggledOnPublicWeb = calculatePricingRecommendation({}, pricingBase, {
+  summary: webSummary({ selectedSoldResultsUsed: 4 }),
+  sources: [...publicWebSources, webSource({ visiblePrice: 90 })],
+});
+assert.equal(toggledOnPublicWeb.pricingSource, "public_web_comps");
+assert.notEqual(toggledOnPublicWeb.suggestedListPrice, toggledOffPublicWeb.suggestedListPrice);
+
+const allPublicWebDeselected = calculatePricingRecommendation({}, pricingBase, {
+  summary: webSummary({ selectedSoldResultsUsed: 0, confidence: "Very Low" }),
+  sources: publicWebSources.map((item) => ({ ...item, usedInPricing: false })),
+});
+assert.equal(allPublicWebDeselected.pricingSource, "ai_fallback");
+assert.equal(allPublicWebDeselected.usedAiFallback, true);
+
+const summaryFallbackWhenSourcePricesUnavailable = calculatePricingRecommendation(
+  {},
+  pricingBase,
+  {
+    summary: webSummary({ suggestedPrice: 52, selectedSoldResultsUsed: 1 }),
+    sources: [],
+  }
+);
+assert.equal(summaryFallbackWhenSourcePricesUnavailable.pricingSource, "public_web_comps");
+assert.notEqual(summaryFallbackWhenSourcePricesUnavailable.pricingConfidence, "High");
+
+const weakComponentPricing = calculatePricingRecommendation({}, pricingBase, {
+  summary: webSummary({ confidence: "High", selectedSoldResultsUsed: 2 }),
+  sources: [
+    webSource({ visiblePrice: 25, similarity: "weak", matchType: "component_only" }),
+    webSource({ visiblePrice: 30, similarity: "weak", matchType: "component_only" }),
+  ],
+});
+assert.equal(weakComponentPricing.pricingSource, "public_web_comps");
+assert(["Very Low", "Low"].includes(weakComponentPricing.pricingConfidence));
+
+const bestOfferUncertainPricing = calculatePricingRecommendation({}, pricingBase, {
+  summary: webSummary({ confidence: "High", bestOfferCaveatUsed: true, selectedSoldResultsUsed: 2 }),
+  sources: [
+    webSource({ visiblePrice: 80, status: "best_offer_uncertain" }),
+    webSource({ visiblePrice: 90, status: "best_offer_uncertain" }),
+  ],
+});
+assert.equal(bestOfferUncertainPricing.pricingSource, "public_web_comps");
+assert.notEqual(bestOfferUncertainPricing.pricingConfidence, "High");
+
+const activeOverridePricing = calculatePricingRecommendation({}, pricingBase, {
+  summary: webSummary({ confidence: "High", selectedSoldResultsUsed: 1 }),
+  sources: [
+    webSource({
+      visiblePrice: 55,
+      status: "active_or_unclear",
+      eligibleForPricing: false,
+      userOverrideRisk: "high",
+    }),
+  ],
+});
+assert.equal(activeOverridePricing.pricingSource, "public_web_comps");
+assert.equal(activeOverridePricing.pricingConfidence, "Very Low");
+
+const cappedPublicWebPricing = calculatePricingRecommendation({}, pricingBase, {
+  summary: webSummary({ confidence: "Low", selectedSoldResultsUsed: 10 }),
+  sources: Array.from({ length: 10 }, (_, index) =>
+    webSource({ visiblePrice: 30 + index, similarity: "strong" })
+  ),
+});
+assert.equal(cappedPublicWebPricing.pricingSource, "public_web_comps");
+assert.notEqual(cappedPublicWebPricing.pricingConfidence, "High");
+
+const hardDisabledIgnored = derivePricingFromSelectedWebComps(
+  [
+    webSource({ visiblePrice: 45, hardDisabled: true }),
+    webSource({ visiblePrice: 60, usedInPricing: false }),
+  ],
+  webSummary({ selectedSoldResultsUsed: 0, confidence: "Very Low" }),
+  pricingBase
+);
+assert.equal(hardDisabledIgnored.pricingSource, "ai_fallback");
 
 console.log("V2 pricing checks passed.");
