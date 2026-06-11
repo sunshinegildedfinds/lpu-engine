@@ -171,6 +171,7 @@ assert.equal(typeof payload, "object");
 assert.equal(payload.version, undefined);
 assert.equal(payload.photos, undefined);
 assert.equal(payload.imagePayload, undefined);
+assert.equal(payload.resolvedPrice, undefined);
 assert.equal(payload.fillReadiness.ebay.photosReady, false);
 assert.equal(payload.marketplaces.ebay.title, "Universal Object Title A");
 assert.equal(payload.marketplaces.ebay.titleA, "Universal Object Title A");
@@ -257,6 +258,111 @@ assert.doesNotThrow(() => JSON.stringify(preview.debug));
 assert(
   warningCodes(preview).includes("ebay_item_specifics_fillability"),
   "extra eBay item-specific fillability warning was not produced"
+);
+
+function assertV1CompatibleResolvedPrice(value, label) {
+  assert.equal(typeof value, "string", `${label} resolvedPrice must be a string`);
+  assert.match(
+    value,
+    /^[$]?\d{1,6}([.,]\d{1,2})?$/,
+    `${label} resolvedPrice is not V1-compatible`
+  );
+  assert.equal(
+    /[A-Za-z\s]/.test(value),
+    false,
+    `${label} resolvedPrice includes invalid currency text`
+  );
+}
+
+function buildPricePreview(finalListPriceInput) {
+  return buildLpuPayloadPreview({
+    finalOutput: fullOutput,
+    hasSellingBrief: true,
+    generatedAt: "2026-06-11T00:00:00.000Z",
+    finalListPriceInput,
+  });
+}
+
+const resolvedPricePreview = buildPricePreview("129.99");
+assert.equal(resolvedPricePreview.payload.resolvedPrice, "129.99");
+assertV1CompatibleResolvedPrice(
+  resolvedPricePreview.payload.resolvedPrice,
+  "decimal final list price"
+);
+
+const currencyResolvedPricePreview = buildPricePreview("$129.99");
+assert.equal(currencyResolvedPricePreview.payload.resolvedPrice, "129.99");
+assertV1CompatibleResolvedPrice(
+  currencyResolvedPricePreview.payload.resolvedPrice,
+  "currency final list price"
+);
+
+const wholeNumberResolvedPricePreview = buildPricePreview("130");
+assert.equal(wholeNumberResolvedPricePreview.payload.resolvedPrice, "130");
+assertV1CompatibleResolvedPrice(
+  wholeNumberResolvedPricePreview.payload.resolvedPrice,
+  "whole-number final list price"
+);
+
+for (const invalidFinalListPriceInput of ["", "abc", "0", "-5", "NaN"]) {
+  const invalidPricePreview = buildPricePreview(invalidFinalListPriceInput);
+  assert.equal(
+    invalidPricePreview.payload.resolvedPrice,
+    undefined,
+    `invalid final list price ${invalidFinalListPriceInput} should omit resolvedPrice`
+  );
+  assert.equal(
+    warningCodes(invalidPricePreview).includes("invalid_final_list_price"),
+    invalidFinalListPriceInput.trim().length > 0,
+    `invalid final list price ${invalidFinalListPriceInput} warning behavior was incorrect`
+  );
+}
+
+const otherPricingFieldsPreview = buildLpuPayloadPreview({
+  finalOutput: fullOutput,
+  hasSellingBrief: true,
+  generatedAt: "2026-06-11T00:00:00.000Z",
+  finalListPriceInput: "129.99",
+  suggestedListPrice: "201.25",
+  fastSalePrice: "75.50",
+  bestOfferFloor: "61.00",
+});
+assert.equal(
+  otherPricingFieldsPreview.payload.resolvedPrice,
+  "129.99",
+  "resolvedPrice must use editable Final List Price instead of other pricing fields"
+);
+
+const missingFinalPriceWithOtherPricingFieldsPreview = buildLpuPayloadPreview({
+  finalOutput: fullOutput,
+  hasSellingBrief: true,
+  generatedAt: "2026-06-11T00:00:00.000Z",
+  suggestedListPrice: "201.25",
+  fastSalePrice: "75.50",
+  bestOfferFloor: "61.00",
+});
+assert.equal(
+  missingFinalPriceWithOtherPricingFieldsPreview.payload.resolvedPrice,
+  undefined,
+  "resolvedPrice must not fall back to suggestedListPrice, fastSalePrice, or bestOfferFloor"
+);
+
+assert.doesNotThrow(() => JSON.stringify(resolvedPricePreview.payload));
+assert.equal(
+  resolvedPricePreview.payload.marketplaces.ebay.itemSpecifics.Type,
+  "Example Type"
+);
+assert.equal(
+  resolvedPricePreview.payload.marketplaces.ebay.itemSpecifics.Metal,
+  "Silver-tone"
+);
+assertNoBoundaryText(
+  resolvedPricePreview.payload.marketplaces.poshmark.styleTags,
+  "resolved price preview Poshmark styleTags"
+);
+assertNoBoundaryText(
+  resolvedPricePreview.payload.marketplaces.depop.optionalBrandHashtags,
+  "resolved price preview Depop optionalBrandHashtags"
 );
 
 const universalPhotos = [
@@ -664,6 +770,14 @@ assert(
 assert(
   /photos:\s*vendooPhotos/.test(lpuV2PageSource),
   "V2 payload preview does not pass prepared Vendoo photos into buildLpuPayloadPreview"
+);
+assert(
+  /finalListPriceInput\s*,/.test(lpuV2PageSource),
+  "V2 payload preview does not pass finalListPriceInput into buildLpuPayloadPreview"
+);
+assert(
+  /\[\s*[\s\S]*finalListPriceInput[\s\S]*\]\s*\)\s*;/.test(lpuV2PageSource),
+  "V2 payload preview memo does not update when finalListPriceInput changes"
 );
 assert(
   /sendVendooPayloadToExtension\(\s*payloadPreview\.payload\s*\)/.test(

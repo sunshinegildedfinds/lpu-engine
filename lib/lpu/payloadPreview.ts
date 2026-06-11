@@ -504,6 +504,38 @@ function addMissingWarning(
   addWarning(warnings, "missing_field", `Missing ${label}`, platform, field);
 }
 
+function normalizeFinalListPriceInput(value?: string | null): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "";
+
+  const withoutCurrency = raw.replace(/^\$/, "").trim();
+  if (!withoutCurrency || /[^\d.,]/.test(withoutCurrency)) return "";
+
+  let normalized = withoutCurrency;
+  const hasDot = normalized.includes(".");
+  const commaCount = (normalized.match(/,/g) ?? []).length;
+  const commaDecimalMatch = normalized.match(/^(\d+),(\d{1,2})$/);
+
+  if (hasDot) {
+    normalized = normalized.replace(/,/g, "");
+  } else if (commaDecimalMatch && commaCount === 1) {
+    normalized = `${commaDecimalMatch[1]}.${commaDecimalMatch[2]}`;
+  } else {
+    normalized = normalized.replace(/,/g, "");
+  }
+
+  const match = normalized.match(/^(\d+)(?:\.(\d{1,2}))?$/);
+  if (!match) return "";
+
+  const integerPart = match[1].replace(/^0+(\d)/, "$1");
+  const decimalPart = match[2];
+  const resolvedPrice = decimalPart ? `${integerPart}.${decimalPart}` : integerPart;
+  const numericPrice = Number(resolvedPrice);
+
+  if (!Number.isFinite(numericPrice) || numericPrice <= 0) return "";
+  return resolvedPrice;
+}
+
 function addWarningsForPayloadMap(
   payloadMap: StructuredPayloadMap,
   sections: Partial<Record<PlatformKey, string>>,
@@ -809,7 +841,10 @@ function mergeCleanPoshmarkStyleTags(
 function buildExtensionPayloadFromPayloadMap(
   payloadMap: StructuredPayloadMap,
   completeItemSpecifics: EbayItemSpecifics & Record<string, string>,
-  photos?: VendooPhotoPayload[]
+  photos?: VendooPhotoPayload[],
+  options?: {
+    resolvedPrice?: string;
+  }
 ): VendooExtensionPayload {
   const ebaySection = payloadMap.platforms.ebay.section;
   const itemSpecifics = completeItemSpecifics;
@@ -845,6 +880,7 @@ function buildExtensionPayloadFromPayloadMap(
     canonicalVendooCategoryPath,
     itemSpecifics,
     photos,
+    resolvedPrice: options?.resolvedPrice,
     depop: {
       listing: payloadMap.platforms.depop.listing,
       description: payloadMap.platforms.depop.listing,
@@ -887,6 +923,7 @@ export function buildLpuPayloadPreview(input: {
   finalOutput: string;
   hasSellingBrief: boolean;
   generatedAt?: string;
+  finalListPriceInput?: string;
   photos?: VendooPhotoPayload[];
   photoWarnings?: PayloadWarning[];
 }): LpuPayloadPreview {
@@ -904,6 +941,20 @@ export function buildLpuPayloadPreview(input: {
   addItemSpecificFillabilityWarning(completeItemSpecifics, warnings);
   if (Array.isArray(input.photoWarnings)) {
     warnings.push(...input.photoWarnings);
+  }
+  const resolvedPrice = normalizeFinalListPriceInput(input.finalListPriceInput);
+  if (
+    typeof input.finalListPriceInput === "string" &&
+    input.finalListPriceInput.trim().length > 0 &&
+    !resolvedPrice
+  ) {
+    addWarning(
+      warnings,
+      "invalid_final_list_price",
+      "Final List Price is not a valid positive listing price, so no resolvedPrice will be sent.",
+      undefined,
+      "resolvedPrice"
+    );
   }
 
   const validPhotoCount = Array.isArray(input.photos)
@@ -934,7 +985,8 @@ export function buildLpuPayloadPreview(input: {
     payload: buildExtensionPayloadFromPayloadMap(
       payloadMap,
       completeItemSpecifics,
-      input.photos
+      input.photos,
+      { resolvedPrice }
     ),
     warnings,
     debug: {

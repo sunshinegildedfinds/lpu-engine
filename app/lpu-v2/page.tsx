@@ -759,11 +759,19 @@ export default function LpuV2Page() {
       return buildLpuPayloadPreview({
         finalOutput: output,
         hasSellingBrief: sellingBrief.trim().length > 0,
+        finalListPriceInput,
         photos: vendooPhotos,
         photoWarnings,
       });
     },
-    [files.length, output, sellingBrief, vendooPhotoWarnings, vendooPhotos]
+    [
+      files.length,
+      finalListPriceInput,
+      output,
+      sellingBrief,
+      vendooPhotoWarnings,
+      vendooPhotos,
+    ]
   );
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
