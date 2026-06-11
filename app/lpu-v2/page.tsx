@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   buildPricingResearchFromBrief,
@@ -333,6 +333,10 @@ function parseOptionalNumber(value: string): number | undefined {
 
   const parsed = Number(cleaned);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function formatFinalListPriceInput(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
 function buildManualCompInputs(
@@ -684,6 +688,9 @@ export default function LpuV2Page() {
     "idle" | "sent" | "failed"
   >("idle");
   const [vendooSendMessage, setVendooSendMessage] = useState("");
+  const [finalListPriceInput, setFinalListPriceInput] = useState("");
+  const [finalListPriceManuallyEdited, setFinalListPriceManuallyEdited] =
+    useState(false);
 
   const compiledNotes = useMemo(
     () =>
@@ -725,6 +732,16 @@ export default function LpuV2Page() {
     [manualCompInputs, pricingResearch, webCompsResult]
   );
 
+  const suggestedListPriceInputValue = useMemo(
+    () => formatFinalListPriceInput(pricingRecommendation.suggestedListPrice),
+    [pricingRecommendation.suggestedListPrice]
+  );
+
+  useEffect(() => {
+    if (finalListPriceManuallyEdited) return;
+    setFinalListPriceInput(suggestedListPriceInputValue);
+  }, [finalListPriceManuallyEdited, suggestedListPriceInputValue]);
+
   const payloadPreview = useMemo(
     () => {
       if (!output.trim()) return null;
@@ -764,6 +781,16 @@ export default function LpuV2Page() {
       ...current,
       [name]: value,
     }));
+  }
+
+  function updateFinalListPriceInput(value: string) {
+    setFinalListPriceInput(value);
+    setFinalListPriceManuallyEdited(value.trim().length > 0);
+  }
+
+  function resetFinalListPriceInput() {
+    setFinalListPriceInput(suggestedListPriceInputValue);
+    setFinalListPriceManuallyEdited(false);
   }
 
   async function findPublicWebComps() {
@@ -1673,6 +1700,48 @@ export default function LpuV2Page() {
                         label="Pricing Confidence"
                         value={pricingRecommendation.pricingConfidence}
                       />
+                    </div>
+                    <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <FieldLabel htmlFor="final-list-price">
+                            Final List Price
+                          </FieldLabel>
+                          <p className="mt-1 text-xs text-gray-600">
+                            Auto-filled from Suggested List Price. You can edit this before sending to Vendoo.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={resetFinalListPriceInput}
+                          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:border-gray-500"
+                        >
+                          Reset to Suggested List Price
+                        </button>
+                      </div>
+                      <input
+                        id="final-list-price"
+                        type="text"
+                        inputMode="decimal"
+                        value={finalListPriceInput}
+                        onChange={(event) =>
+                          updateFinalListPriceInput(event.target.value)
+                        }
+                        placeholder={suggestedListPriceInputValue || "129.99"}
+                        className="mt-3 w-full rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
+                      />
+                      {finalListPriceManuallyEdited ? (
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-800">
+                            Manual override
+                          </span>
+                          {finalListPriceInput.trim() !== suggestedListPriceInputValue ? (
+                            <span className="text-gray-600">
+                              Using manually edited Final List Price.
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                     <p className="mt-3 text-sm text-gray-700">
                       {pricingRecommendation.pricingExplanation}

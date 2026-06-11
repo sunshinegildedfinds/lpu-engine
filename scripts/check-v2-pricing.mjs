@@ -6,6 +6,7 @@ import ts from "typescript";
 
 const rootDir = process.cwd();
 const pricingPath = path.join(rootDir, "lib/lpu/pricingResearch.ts");
+const lpuV2PagePath = path.join(rootDir, "app/lpu-v2/page.tsx");
 
 function loadPricingResearch() {
   const source = fs.readFileSync(pricingPath, "utf8");
@@ -495,5 +496,36 @@ const hardDisabledIgnored = derivePricingFromSelectedWebComps(
   pricingBase
 );
 assert.equal(hardDisabledIgnored.pricingSource, "ai_fallback");
+
+const lpuV2PageSource = fs.readFileSync(lpuV2PagePath, "utf8");
+assert(
+  lpuV2PageSource.includes("Final List Price"),
+  "V2 page should render a Final List Price input"
+);
+assert(
+  /finalListPriceInput/.test(lpuV2PageSource) &&
+    /finalListPriceManuallyEdited/.test(lpuV2PageSource),
+  "V2 Final List Price should have local editable value and manual override state"
+);
+assert(
+  /suggestedListPriceInputValue/.test(lpuV2PageSource) &&
+    /pricingRecommendation\.suggestedListPrice/.test(lpuV2PageSource),
+  "V2 Final List Price should derive its default from active Suggested List Price"
+);
+assert(
+  /Reset to Suggested List Price/.test(lpuV2PageSource),
+  "V2 Final List Price should expose reset-to-suggested behavior"
+);
+assert.equal(
+  /resolvedPrice/.test(lpuV2PageSource),
+  false,
+  "V2 Final List Price UI pass must not wire resolvedPrice into payload or send"
+);
+assert(
+  /sendVendooPayloadToExtension\(\s*payloadPreview\.payload\s*\)/.test(
+    lpuV2PageSource
+  ),
+  "V2 page should continue sending the existing payloadPreview.payload unchanged"
+);
 
 console.log("V2 pricing checks passed.");
