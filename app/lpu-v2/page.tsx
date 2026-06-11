@@ -17,8 +17,11 @@ import {
 import {
   buildLpuPayloadPreview,
   type LpuPayloadPreview,
+  type PayloadWarning,
   type PayloadPlatformKey,
 } from "@/lib/lpu/payloadPreview";
+import { sendVendooPayloadToExtension } from "@/lib/sendVendooPayloadToExtension";
+import type { VendooPhotoPayload } from "@/lib/vendoo/extensionPayload";
 
 const INTERFACE_VERSION = "v2";
 const PROMPT_VERSION = "v2";
@@ -48,6 +51,27 @@ type GeneratorImageReference = {
 };
 
 type GenerationMode = "sellingBrief" | "finalFromBrief";
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Could not read file."));
+        return;
+      }
+
+      resolve(reader.result);
+    };
+
+    reader.onerror = () => {
+      reject(reader.error ?? new Error("Failed to read file."));
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
 
 type ManualPricingFormState = {
   averageSoldPrice: string;
@@ -439,10 +463,14 @@ function PayloadPreviewPanel({
         </summary>
 
         <div className="mt-4 space-y-5">
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-4">
             <PricingMetric
               label="Platforms Parsed"
               value={`${parsedPlatforms.length} / ${PAYLOAD_PLATFORM_ORDER.length}`}
+            />
+            <PricingMetric
+              label="Photos Ready"
+              value={String(preview.payload.photos?.length ?? 0)}
             />
             <PricingMetric
               label="Warnings"
@@ -634,6 +662,10 @@ export default function LpuV2Page() {
   const [uploadedImageReferences, setUploadedImageReferences] = useState<
     GeneratorImageReference[]
   >([]);
+  const [vendooPhotos, setVendooPhotos] = useState<VendooPhotoPayload[]>([]);
+  const [vendooPhotoWarnings, setVendooPhotoWarnings] = useState<PayloadWarning[]>(
+    []
+  );
   const [sellingBrief, setSellingBrief] = useState("");
   const [output, setOutput] = useState("");
   const [error, setError] = useState("");
@@ -648,6 +680,10 @@ export default function LpuV2Page() {
   const [webCompsError, setWebCompsError] = useState("");
   const [isWebCompsLoading, setIsWebCompsLoading] = useState(false);
   const [payloadCopyStatus, setPayloadCopyStatus] = useState("");
+  const [vendooSendStatus, setVendooSendStatus] = useState<
+    "idle" | "sent" | "failed"
+  >("idle");
+  const [vendooSendMessage, setVendooSendMessage] = useState("");
 
   const compiledNotes = useMemo(
     () =>
@@ -690,19 +726,34 @@ export default function LpuV2Page() {
   );
 
   const payloadPreview = useMemo(
-    () =>
-      output.trim()
-        ? buildLpuPayloadPreview({
-            finalOutput: output,
-            hasSellingBrief: sellingBrief.trim().length > 0,
-          })
-        : null,
-    [output, sellingBrief]
+    () => {
+      if (!output.trim()) return null;
+
+      const photoWarnings = [...vendooPhotoWarnings];
+      if (files.length > 0 && vendooPhotos.length === 0) {
+        photoWarnings.push({
+          code: "missing_photo_payload",
+          message:
+            "Selected images exist, but no valid Vendoo photo payload entries were prepared.",
+          field: "photos",
+        });
+      }
+
+      return buildLpuPayloadPreview({
+        finalOutput: output,
+        hasSellingBrief: sellingBrief.trim().length > 0,
+        photos: vendooPhotos,
+        photoWarnings,
+      });
+    },
+    [files.length, output, sellingBrief, vendooPhotoWarnings, vendooPhotos]
   );
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setFiles(Array.from(event.target.files ?? []));
     setUploadedImageReferences([]);
+    setVendooPhotos([]);
+    setVendooPhotoWarnings([]);
   }
 
   function updateManualPricingField(
@@ -810,6 +861,9 @@ export default function LpuV2Page() {
 
   async function getGeneratorImageReferences() {
     if (uploadedImageReferences.length) {
+      if (!vendooPhotos.length) {
+        await prepareVendooPhotos(uploadedImageReferences);
+      }
       return uploadedImageReferences;
     }
 
@@ -819,8 +873,70 @@ export default function LpuV2Page() {
 
     const generatorImageReferences = await uploadFilesToSupabaseStorage(files);
     setUploadedImageReferences(generatorImageReferences);
+    await prepareVendooPhotos(generatorImageReferences);
 
     return generatorImageReferences;
+  }
+
+  async function prepareVendooPhotos(imageReferences: GeneratorImageReference[]) {
+    const warnings: PayloadWarning[] = [];
+    const photos = await Promise.all(
+      files.map(async (file, index): Promise<VendooPhotoPayload | null> => {
+        const reference = imageReferences[index];
+        let dataUrl = "";
+
+        try {
+          dataUrl = await fileToDataUrl(file);
+        } catch {
+          warnings.push({
+            code: "photo_data_url_conversion_failed",
+            message: `Could not prepare image data for ${file.name}; uploaded image references will be used if available.`,
+            field: "photos",
+          });
+        }
+
+        const photo: VendooPhotoPayload = {
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          ...(dataUrl ? { dataUrl } : {}),
+          ...(reference?.storagePath ? { storagePath: reference.storagePath } : {}),
+          ...(reference?.imageUrl ? { imageUrl: reference.imageUrl } : {}),
+        };
+
+        if (
+          !photo.dataUrl &&
+          !photo.storagePath &&
+          !photo.imageUrl &&
+          !photo.signedUrl
+        ) {
+          warnings.push({
+            code: "invalid_photo_payload",
+            message: `${file.name} was omitted because no dataUrl, storagePath, imageUrl, or signedUrl was available.`,
+            field: "photos",
+          });
+          return null;
+        }
+
+        return photo;
+      })
+    );
+
+    const validPhotos = photos.filter(
+      (photo): photo is VendooPhotoPayload => photo !== null
+    );
+    if (files.length > 0 && validPhotos.length < files.length) {
+      warnings.push({
+        code: "partial_photo_payload",
+        message: `${files.length - validPhotos.length} selected image${
+          files.length - validPhotos.length === 1 ? "" : "s"
+        } could not be prepared for Vendoo photo upload.`,
+        field: "photos",
+      });
+    }
+
+    setVendooPhotos(validPhotos);
+    setVendooPhotoWarnings(warnings);
   }
 
   async function runV2Generation(mode: GenerationMode) {
@@ -924,6 +1040,38 @@ export default function LpuV2Page() {
       setPayloadCopyStatus(`${label} copied.`);
     } catch {
       setPayloadCopyStatus(`Could not copy ${label}.`);
+    }
+  }
+
+  function handleSendPayloadToVendooExtension() {
+    setVendooSendStatus("idle");
+    setVendooSendMessage("");
+
+    try {
+      if (!payloadPreview?.payload) {
+        setVendooSendStatus("failed");
+        setVendooSendMessage("Generate Final LP-U to create payload.");
+        return;
+      }
+
+      const sent = sendVendooPayloadToExtension(payloadPreview.payload);
+      if (!sent) {
+        setVendooSendStatus("failed");
+        setVendooSendMessage("Payload could not be posted from this browser page.");
+        return;
+      }
+
+      setVendooSendStatus("sent");
+      setVendooSendMessage(
+        "Payload send message posted. If the extension is installed, it should receive it."
+      );
+    } catch (err) {
+      setVendooSendStatus("failed");
+      setVendooSendMessage(
+        err instanceof Error
+          ? err.message
+          : "Payload could not be posted to the extension bridge."
+      );
     }
   }
 
@@ -1584,7 +1732,11 @@ export default function LpuV2Page() {
             <SectionShell title="Platform Review">
               <textarea
                 value={output}
-                onChange={(event) => setOutput(event.target.value)}
+                onChange={(event) => {
+                  setOutput(event.target.value);
+                  setVendooSendStatus("idle");
+                  setVendooSendMessage("");
+                }}
                 placeholder="Generated LP-U output will appear here."
                 className="min-h-[360px] w-full rounded-lg border border-gray-300 bg-white p-3 font-mono text-xs outline-none focus:border-black"
               />
@@ -1601,9 +1753,42 @@ export default function LpuV2Page() {
 
           <aside className="space-y-5">
             <SectionShell title="Vendoo Handoff">
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                V2 handoff is intentionally disconnected in this pass. The
-                existing V1 extension payload flow remains unchanged.
+              <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
+                <div className="space-y-2 text-sm text-gray-700">
+                  <p>
+                    Sends the extension-compatible payload preview to the
+                    installed Vendoo extension.
+                  </p>
+                  <p>Preview remains editable; sending does not regenerate the listing.</p>
+                  <p>Make sure the extension is installed and active on this app origin.</p>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={!payloadPreview}
+                  onClick={handleSendPayloadToVendooExtension}
+                  className="w-full rounded-lg bg-black px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Send Payload to Vendoo Extension
+                </button>
+
+                {!payloadPreview ? (
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
+                    Generate Final LP-U to create payload.
+                  </div>
+                ) : null}
+
+                {vendooSendMessage ? (
+                  <div
+                    className={`rounded-lg border p-3 text-sm ${
+                      vendooSendStatus === "sent"
+                        ? "border-green-200 bg-green-50 text-green-900"
+                        : "border-red-200 bg-red-50 text-red-900"
+                    }`}
+                  >
+                    {vendooSendMessage}
+                  </div>
+                ) : null}
               </div>
             </SectionShell>
           </aside>

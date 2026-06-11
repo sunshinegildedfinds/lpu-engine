@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -168,6 +169,9 @@ assert.equal(preview.debug.payloadMap.platforms.mercari.section.includes("Mercar
 const payload = preview.payload;
 assert.equal(typeof payload, "object");
 assert.equal(payload.version, undefined);
+assert.equal(payload.photos, undefined);
+assert.equal(payload.imagePayload, undefined);
+assert.equal(payload.fillReadiness.ebay.photosReady, false);
 assert.equal(payload.marketplaces.ebay.title, "Universal Object Title A");
 assert.equal(payload.marketplaces.ebay.titleA, "Universal Object Title A");
 assert.equal(payload.marketplaces.ebay.titleB, "Universal Object Title B");
@@ -253,6 +257,80 @@ assert.doesNotThrow(() => JSON.stringify(preview.debug));
 assert(
   warningCodes(preview).includes("ebay_item_specifics_fillability"),
   "extra eBay item-specific fillability warning was not produced"
+);
+
+const universalPhotos = [
+  {
+    name: "photo-one.jpg",
+    type: "image/jpeg",
+    size: 12345,
+    dataUrl: "data:image/jpeg;base64,AAAA",
+  },
+  {
+    name: "photo-two.png",
+    type: "image/png",
+    size: 23456,
+    dataUrl: "data:image/png;base64,BBBB",
+    storagePath: "example/path/photo-two.png",
+    imageUrl: "https://example.invalid/photo-two.png",
+    signedUrl: "https://example.invalid/signed/photo-two.png",
+  },
+];
+
+const photoPreview = buildLpuPayloadPreview({
+  finalOutput: fullOutput,
+  hasSellingBrief: true,
+  generatedAt: "2026-06-11T00:00:00.000Z",
+  photos: universalPhotos,
+});
+
+assert.equal(typeof photoPreview.payload, "object");
+assert.equal(photoPreview.payload.marketplaces.ebay.title, "Universal Object Title A");
+assert(Array.isArray(photoPreview.payload.photos), "payload.photos was not produced");
+assert.equal(photoPreview.payload.photos.length, universalPhotos.length);
+assert.deepEqual(
+  photoPreview.payload.photos.map((photo) => photo.name),
+  universalPhotos.map((photo) => photo.name),
+  "photo order was not preserved"
+);
+for (const [index, expectedPhoto] of universalPhotos.entries()) {
+  const actualPhoto = photoPreview.payload.photos[index];
+  assert.equal(actualPhoto.name, expectedPhoto.name);
+  assert.equal(actualPhoto.type, expectedPhoto.type);
+  assert.equal(actualPhoto.size, expectedPhoto.size);
+  assert.equal(actualPhoto.dataUrl, expectedPhoto.dataUrl);
+  assert.equal(actualPhoto.storagePath ?? "", expectedPhoto.storagePath ?? "");
+  assert.equal(actualPhoto.imageUrl ?? "", expectedPhoto.imageUrl ?? "");
+  assert.equal(actualPhoto.signedUrl ?? "", expectedPhoto.signedUrl ?? "");
+}
+assert(Array.isArray(photoPreview.payload.imagePayload?.photos));
+assert.equal(photoPreview.payload.imagePayload.count, universalPhotos.length);
+assert.equal(photoPreview.payload.imagePayload.photos.length, universalPhotos.length);
+assert.equal(photoPreview.payload.fillReadiness.ebay.photosReady, true);
+assert.doesNotThrow(() => JSON.stringify(photoPreview.payload));
+
+const invalidPhotoPreview = buildLpuPayloadPreview({
+  finalOutput: fullOutput,
+  hasSellingBrief: true,
+  generatedAt: "2026-06-11T00:00:00.000Z",
+  photos: [
+    ...universalPhotos,
+    {
+      name: "metadata-only.jpg",
+      type: "image/jpeg",
+      size: 34567,
+    },
+  ],
+});
+assert.equal(invalidPhotoPreview.payload.photos.length, universalPhotos.length);
+assert.equal(
+  invalidPhotoPreview.payload.photos.some((photo) => photo.name === "metadata-only.jpg"),
+  false,
+  "invalid photo entry without data or references was not omitted"
+);
+assert(
+  invalidPhotoPreview.warnings.some((warning) => warning.code === "invalid_photo_payload"),
+  "invalid photo payload warning was not produced"
 );
 
 const partialPreview = buildLpuPayloadPreview({
@@ -561,6 +639,57 @@ assert(
     ["field_boundary_contamination", "unparsed_item_specific"].includes(warning.code)
   ),
   "contaminated fixture did not produce contamination warnings"
+);
+
+const lpuV2PageSource = fs.readFileSync(
+  path.join(rootDir, "app/lpu-v2/page.tsx"),
+  "utf8"
+);
+assert(
+  lpuV2PageSource.includes(
+    'import { sendVendooPayloadToExtension } from "@/lib/sendVendooPayloadToExtension";'
+  ),
+  "V2 page does not import sendVendooPayloadToExtension"
+);
+assert(
+  lpuV2PageSource.includes(
+    'import type { VendooPhotoPayload } from "@/lib/vendoo/extensionPayload";'
+  ),
+  "V2 page does not use the existing VendooPhotoPayload type"
+);
+assert(
+  /function\s+fileToDataUrl\s*\(\s*file:\s*File\s*\)/.test(lpuV2PageSource),
+  "V2 page does not prepare selected File objects as data URLs"
+);
+assert(
+  /photos:\s*vendooPhotos/.test(lpuV2PageSource),
+  "V2 payload preview does not pass prepared Vendoo photos into buildLpuPayloadPreview"
+);
+assert(
+  /sendVendooPayloadToExtension\(\s*payloadPreview\.payload\s*\)/.test(
+    lpuV2PageSource
+  ),
+  "V2 page does not send payloadPreview.payload through sendVendooPayloadToExtension"
+);
+assert.equal(
+  /chrome\.runtime/.test(lpuV2PageSource),
+  false,
+  "V2 page must not call chrome.runtime directly"
+);
+
+const changedFiles = execFileSync("git", ["diff", "--name-only"], {
+  cwd: rootDir,
+  encoding: "utf8",
+})
+  .split("\n")
+  .map((line) => line.trim())
+  .filter(Boolean);
+assert.equal(
+  changedFiles.some((filePath) =>
+    filePath.startsWith("listing-writer-app/extension/vendoo-fill/")
+  ),
+  false,
+  "V2 payload preview work must not modify extension files"
 );
 
 console.log("V2 payload preview compatibility checks passed.");

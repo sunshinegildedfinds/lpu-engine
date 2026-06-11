@@ -7,6 +7,7 @@ import {
   buildVendooExtensionPayload,
   type EbayItemSpecifics,
   type VendooExtensionPayload,
+  type VendooPhotoPayload,
 } from "@/lib/vendoo/extensionPayload";
 
 export type PayloadWarning = {
@@ -807,7 +808,8 @@ function mergeCleanPoshmarkStyleTags(
 
 function buildExtensionPayloadFromPayloadMap(
   payloadMap: StructuredPayloadMap,
-  completeItemSpecifics: EbayItemSpecifics & Record<string, string>
+  completeItemSpecifics: EbayItemSpecifics & Record<string, string>,
+  photos?: VendooPhotoPayload[]
 ): VendooExtensionPayload {
   const ebaySection = payloadMap.platforms.ebay.section;
   const itemSpecifics = completeItemSpecifics;
@@ -842,6 +844,7 @@ function buildExtensionPayloadFromPayloadMap(
     category,
     canonicalVendooCategoryPath,
     itemSpecifics,
+    photos,
     depop: {
       listing: payloadMap.platforms.depop.listing,
       description: payloadMap.platforms.depop.listing,
@@ -884,6 +887,8 @@ export function buildLpuPayloadPreview(input: {
   finalOutput: string;
   hasSellingBrief: boolean;
   generatedAt?: string;
+  photos?: VendooPhotoPayload[];
+  photoWarnings?: PayloadWarning[];
 }): LpuPayloadPreview {
   const rawText = normalizeLineBreaks(input.finalOutput);
   const { sections, order } = parsePlatformSections(rawText);
@@ -897,9 +902,40 @@ export function buildLpuPayloadPreview(input: {
 
   addWarningsForPayloadMap(payloadMap, sections, warnings);
   addItemSpecificFillabilityWarning(completeItemSpecifics, warnings);
+  if (Array.isArray(input.photoWarnings)) {
+    warnings.push(...input.photoWarnings);
+  }
+
+  const validPhotoCount = Array.isArray(input.photos)
+    ? input.photos.filter(
+        (photo) =>
+          Boolean(photo?.dataUrl?.trim()) ||
+          Boolean(photo?.storagePath?.trim()) ||
+          Boolean(photo?.imageUrl?.trim()) ||
+          Boolean(photo?.signedUrl?.trim())
+      ).length
+    : 0;
+  const invalidPhotoCount = Array.isArray(input.photos)
+    ? input.photos.length - validPhotoCount
+    : 0;
+  if (invalidPhotoCount > 0) {
+    addWarning(
+      warnings,
+      "invalid_photo_payload",
+      `${invalidPhotoCount} photo payload entr${
+        invalidPhotoCount === 1 ? "y was" : "ies were"
+      } omitted because no dataUrl, storagePath, imageUrl, or signedUrl was present.`,
+      undefined,
+      "photos"
+    );
+  }
 
   return {
-    payload: buildExtensionPayloadFromPayloadMap(payloadMap, completeItemSpecifics),
+    payload: buildExtensionPayloadFromPayloadMap(
+      payloadMap,
+      completeItemSpecifics,
+      input.photos
+    ),
     warnings,
     debug: {
       version: "v2",
