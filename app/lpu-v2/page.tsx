@@ -10,6 +10,10 @@ import {
   type ManualCompInputs,
   type ShippingIncluded,
 } from "@/lib/lpu/pricingResearch";
+import {
+  formatWebCompsSourceCountLabel,
+  recalculateWebCompsSummary,
+} from "@/lib/lpu/webComps";
 
 const INTERFACE_VERSION = "v2";
 const PROMPT_VERSION = "v2";
@@ -53,6 +57,113 @@ type ManualPricingFormState = {
   conditionMatch: ConditionMatch;
   compNotes: string;
 };
+
+type WebCompsSourceStatus =
+  | "sold"
+  | "completed"
+  | "best_offer_uncertain"
+  | "active_or_unclear"
+  | "excluded";
+
+type WebCompsSimilarity =
+  | "strong"
+  | "medium"
+  | "weak"
+  | "not_comparable";
+
+type WebCompsMatchType =
+  | "full_item"
+  | "same_item_type"
+  | "component_only"
+  | "style_only"
+  | "brand_only"
+  | "material_only"
+  | "unclear";
+
+type WebCompsUserOverrideRisk = "none" | "low" | "medium" | "high";
+
+type WebCompsResultState = {
+  suggestedPrice: number | null;
+  suggestedPriceLabel: string;
+  confidence: "High" | "Medium" | "Low" | "Very Low";
+  usableSoldResultsUsed: number;
+  targetSoldResultsRequested: 10;
+  minimumTargetSoldResults: 10;
+  candidateSourcesReturned: number;
+  eligibleSoldResultsFound: number;
+  selectedSoldResultsUsed: number;
+  basis: string;
+  bestOfferCaveatUsed: boolean;
+  sourceUrls: Array<{
+    id: string;
+    url: string;
+    title: string;
+    visiblePrice: number | null;
+    status: WebCompsSourceStatus;
+    eligibleForPricing: boolean;
+    defaultIncludedInPricing: boolean;
+    selectableForUserPricing: boolean;
+    hardDisabled: boolean;
+    userOverrideRisk: WebCompsUserOverrideRisk;
+    usedInPricing: boolean;
+    ineligibilityReason: string | null;
+    similarity: WebCompsSimilarity;
+    matchType: WebCompsMatchType;
+    matchReasons: string[];
+    mismatchReasons: string[];
+  }>;
+};
+
+function isWebCompsResultState(value: unknown): value is WebCompsResultState {
+  if (!value || typeof value !== "object") return false;
+
+  const source = value as Record<string, unknown>;
+  const suggestedPrice = source.suggestedPrice;
+  const confidence = source.confidence;
+
+  return (
+    (suggestedPrice === null ||
+      (typeof suggestedPrice === "number" &&
+        Number.isFinite(suggestedPrice) &&
+        suggestedPrice > 0)) &&
+    typeof source.suggestedPriceLabel === "string" &&
+    (confidence === "High" ||
+      confidence === "Medium" ||
+      confidence === "Low" ||
+      confidence === "Very Low") &&
+    typeof source.usableSoldResultsUsed === "number" &&
+    Number.isInteger(source.usableSoldResultsUsed) &&
+    source.usableSoldResultsUsed >= 0 &&
+    source.targetSoldResultsRequested === 10 &&
+    source.minimumTargetSoldResults === 10 &&
+    typeof source.candidateSourcesReturned === "number" &&
+    Number.isInteger(source.candidateSourcesReturned) &&
+    source.candidateSourcesReturned >= 0 &&
+    typeof source.eligibleSoldResultsFound === "number" &&
+    Number.isInteger(source.eligibleSoldResultsFound) &&
+    source.eligibleSoldResultsFound >= 0 &&
+    typeof source.selectedSoldResultsUsed === "number" &&
+    Number.isInteger(source.selectedSoldResultsUsed) &&
+    source.selectedSoldResultsUsed >= 0 &&
+    typeof source.bestOfferCaveatUsed === "boolean" &&
+    Array.isArray(source.sourceUrls)
+  );
+}
+
+function getWebCompSourceSelectionLabel(
+  source: WebCompsResultState["sourceUrls"][number]
+): string {
+  if (source.hardDisabled) {
+    return source.ineligibilityReason || "source cannot be priced";
+  }
+
+  if (!source.eligibleForPricing) {
+    return `${source.ineligibilityReason || "uncertain source"} - user override allowed`;
+  }
+
+  if (source.defaultIncludedInPricing) return "auto-selected";
+  return "eligible override";
+}
 
 const DEFAULT_MANUAL_PRICING_FORM: ManualPricingFormState = {
   averageSoldPrice: "",
@@ -323,6 +434,10 @@ export default function LpuV2Page() {
   const [imageUploadStatus, setImageUploadStatus] = useState("");
   const [manualPricingForm, setManualPricingForm] =
     useState<ManualPricingFormState>(DEFAULT_MANUAL_PRICING_FORM);
+  const [webCompsResult, setWebCompsResult] =
+    useState<WebCompsResultState | null>(null);
+  const [webCompsError, setWebCompsError] = useState("");
+  const [isWebCompsLoading, setIsWebCompsLoading] = useState(false);
 
   const compiledNotes = useMemo(
     () =>
@@ -375,6 +490,99 @@ export default function LpuV2Page() {
       ...current,
       [name]: value,
     }));
+  }
+
+  async function findPublicWebComps() {
+    setWebCompsError("");
+    setWebCompsResult(null);
+    setIsWebCompsLoading(true);
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 65000);
+
+    try {
+      const response = await fetch("/api/lpu/web-comps", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          pricingQuery: pricingResearch.terapeakResearchQuery,
+          narrowerQuery: pricingResearch.narrowerResearchQuery,
+          broaderQuery: pricingResearch.broaderResearchQuery,
+          ebaySoldCompsUrl: pricingResearch.ebaySoldCompsUrl,
+          sellingBriefSummary: sellingBrief,
+          itemIntake: {
+            notes,
+            knownDetails,
+            conditionFlaws: conditionNotes,
+            measurements,
+            markingsLabels: markings,
+          },
+        }),
+      });
+      const responseContentType = response.headers.get("content-type") || "";
+      const rawBody = await response.text();
+      const data = responseContentType.includes("application/json")
+        ? JSON.parse(rawBody)
+        : null;
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            rawBody?.trim() ||
+            `Public web comps request failed with status ${response.status}.`
+        );
+      }
+
+      if (!data) {
+        throw new Error("Server returned a non-JSON public web comps response.");
+      }
+
+      if (!isWebCompsResultState(data)) {
+        throw new Error("Server returned an invalid public web comps response.");
+      }
+
+      setWebCompsResult(data);
+    } catch (err) {
+      setWebCompsError(
+        err instanceof Error && err.name === "AbortError"
+          ? "Public web comps search timed out."
+          : err instanceof Error
+            ? err.message
+            : "Failed to find public web comps."
+      );
+    } finally {
+      window.clearTimeout(timeoutId);
+      setIsWebCompsLoading(false);
+    }
+  }
+
+  function toggleWebCompSource(sourceId: string, checked: boolean) {
+    setWebCompsResult((current) => {
+      if (!current) return current;
+
+      const sourceUrls = current.sourceUrls.map((source) =>
+        source.id === sourceId && source.selectableForUserPricing
+          ? { ...source, usedInPricing: checked }
+          : source
+      );
+      const selectedSourceIds = sourceUrls
+        .filter((source) => source.usedInPricing && source.selectableForUserPricing)
+        .map((source) => source.id);
+      const summary = recalculateWebCompsSummary(
+        { ...current, sourceUrls },
+        selectedSourceIds
+      );
+
+      return {
+        ...current,
+        ...summary,
+        usableSoldResultsUsed: summary.usableSoldResultsUsed,
+        sourceUrls,
+      };
+    });
   }
 
   async function getGeneratorImageReferences() {
@@ -758,6 +966,141 @@ export default function LpuV2Page() {
                         ))}
                       </ul>
                     </div>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 bg-white p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-950">
+                          Public Web Comps
+                        </div>
+                        <p className="mt-1 text-xs text-gray-600">
+                          Uses public eBay pages surfaced by web search. Best Offer
+                          results are treated conservatively.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={
+                          isWebCompsLoading ||
+                          !pricingResearch.terapeakResearchQuery.trim()
+                        }
+                        onClick={() => void findPublicWebComps()}
+                        className="rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isWebCompsLoading
+                          ? "Searching public eBay sold results..."
+                          : "Find Public Web Comps"}
+                      </button>
+                    </div>
+
+                    {webCompsError ? (
+                      <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                        {webCompsError}
+                      </div>
+                    ) : null}
+
+                    {webCompsResult ? (
+                      <div className="mt-4">
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <PricingMetric
+                            label="Suggested Public-Web Comp Price"
+                            value={
+                              webCompsResult.suggestedPrice === null
+                                ? "Not enough public sold evidence"
+                                : formatUsd(webCompsResult.suggestedPrice)
+                            }
+                          />
+                          <PricingMetric
+                            label="Confidence"
+                            value={webCompsResult.confidence}
+                          />
+                          <PricingMetric
+                            label="Sources Used"
+                            value={formatWebCompsSourceCountLabel(
+                              webCompsResult.selectedSoldResultsUsed,
+                              webCompsResult.minimumTargetSoldResults
+                            )}
+                          />
+                        </div>
+
+                        {webCompsResult.sourceUrls.length ? (
+                          <details className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
+                            <summary className="cursor-pointer font-semibold text-gray-800">
+                              Sources used/details
+                            </summary>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                              <PricingMetric
+                                label="Candidate Sources"
+                                value={String(webCompsResult.candidateSourcesReturned)}
+                              />
+                              <PricingMetric
+                                label="Auto-selected comps"
+                                value={String(
+                                  webCompsResult.sourceUrls.filter(
+                                    (source) => source.defaultIncludedInPricing
+                                  ).length
+                                )}
+                              />
+                              <PricingMetric
+                                label="Selected sources"
+                                value={String(webCompsResult.selectedSoldResultsUsed)}
+                              />
+                              <PricingMetric
+                                label="Target"
+                                value={`${webCompsResult.minimumTargetSoldResults}+ usable comps`}
+                              />
+                            </div>
+                            <ul className="mt-3 space-y-2">
+                              {webCompsResult.sourceUrls.map((source) => (
+                                <li
+                                  key={source.id}
+                                  className="rounded-md border border-gray-200 bg-white p-3"
+                                >
+                                  <label className="flex items-start gap-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={source.usedInPricing}
+                                      disabled={!source.selectableForUserPricing}
+                                      onChange={(event) =>
+                                        toggleWebCompSource(
+                                          source.id,
+                                          event.target.checked
+                                        )
+                                      }
+                                      className="mt-1 h-4 w-4 rounded border-gray-300 text-black disabled:cursor-not-allowed disabled:opacity-50"
+                                    />
+                                    <span className="min-w-0 flex-1">
+                                      <a
+                                        href={source.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="break-words font-medium text-gray-950 underline"
+                                      >
+                                        {source.title || source.url}
+                                      </a>
+                                      <span className="mt-1 block text-gray-500">
+                                        {source.status}
+                                        {source.visiblePrice !== null
+                                          ? ` · ${formatUsd(source.visiblePrice)}`
+                                          : " · no visible price"}
+                                        {source.usedInPricing
+                                          ? " · selected"
+                                          : " · not selected"}
+                                      </span>
+                                      <span className="mt-1 block text-gray-500">
+                                        {source.similarity} · {source.matchType}
+                                        {` · ${getWebCompSourceSelectionLabel(source)}`}
+                                      </span>
+                                    </span>
+                                  </label>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="rounded-lg border border-gray-200 bg-white p-4">

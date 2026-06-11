@@ -8,6 +8,7 @@
     "start": "next start",
     "check:v2-sanitizers": "node scripts/check-v2-sanitizers.mjs",
     "check:v2-pricing": "node scripts/check-v2-pricing.mjs",
+    "check:v2-web-comps": "node scripts/check-v2-web-comps.mjs",
     "lint": "eslint"
   },
   "dependencies": {
