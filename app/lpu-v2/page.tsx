@@ -14,6 +14,11 @@ import {
   formatWebCompsSourceCountLabel,
   recalculateWebCompsSummary,
 } from "@/lib/lpu/webComps";
+import {
+  buildLpuPayloadPreview,
+  type LpuPayloadPreview,
+  type PayloadPlatformKey,
+} from "@/lib/lpu/payloadPreview";
 
 const INTERFACE_VERSION = "v2";
 const PROMPT_VERSION = "v2";
@@ -370,6 +375,222 @@ function ManualPricingInput({
   );
 }
 
+const PAYLOAD_PLATFORM_LABELS: Record<PayloadPlatformKey, string> = {
+  ebay: "eBay",
+  depop: "Depop",
+  poshmark: "Poshmark",
+  mercari: "Mercari",
+  etsy: "Etsy",
+};
+
+const PAYLOAD_PLATFORM_ORDER: PayloadPlatformKey[] = [
+  "ebay",
+  "depop",
+  "poshmark",
+  "mercari",
+  "etsy",
+];
+
+function PayloadCopyButton({
+  children,
+  onCopy,
+}: {
+  children: ReactNode;
+  onCopy: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:border-gray-500"
+    >
+      {children}
+    </button>
+  );
+}
+
+function PayloadPreviewPanel({
+  copyStatus,
+  onCopy,
+  preview,
+}: {
+  copyStatus: string;
+  onCopy: (label: string, value: unknown) => void;
+  preview: LpuPayloadPreview;
+}) {
+  const parsedPlatforms = PAYLOAD_PLATFORM_ORDER.filter(
+    (platform) => preview.debug.rawSections[platform]
+  );
+  const missingPlatforms = PAYLOAD_PLATFORM_ORDER.filter(
+    (platform) => !preview.debug.rawSections[platform]
+  );
+  const extensionPlatformPayloads: Partial<Record<PayloadPlatformKey, unknown>> = {
+    ebay: preview.payload.marketplaces.ebay,
+    depop: preview.payload.marketplaces.depop,
+    poshmark: preview.payload.marketplaces.poshmark,
+    etsy: preview.payload.etsy,
+  };
+
+  return (
+    <SectionShell title="Payload Preview">
+      <details>
+        <summary className="cursor-pointer text-sm font-semibold text-gray-950">
+          Extension readiness payload preview
+        </summary>
+
+        <div className="mt-4 space-y-5">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <PricingMetric
+              label="Platforms Parsed"
+              value={`${parsedPlatforms.length} / ${PAYLOAD_PLATFORM_ORDER.length}`}
+            />
+            <PricingMetric
+              label="Warnings"
+              value={String(preview.warnings.length)}
+            />
+            <PricingMetric
+              label="Payload Shape"
+              value="VendooExtensionPayload"
+            />
+          </div>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Preview only. This shows the V1-compatible extension payload shape but
+            does not send data to the extension or trigger generation.
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <PayloadCopyButton
+              onCopy={() => onCopy("Full payload JSON", preview.payload)}
+            >
+              Copy Full Payload JSON
+            </PayloadCopyButton>
+            {PAYLOAD_PLATFORM_ORDER.map((platform) => {
+              const platformPayload = extensionPlatformPayloads[platform];
+              if (!platformPayload) return null;
+
+              return (
+                <PayloadCopyButton
+                  key={platform}
+                  onCopy={() =>
+                    onCopy(
+                      `${PAYLOAD_PLATFORM_LABELS[platform]} payload JSON`,
+                      platformPayload
+                    )
+                  }
+                >
+                  Copy {PAYLOAD_PLATFORM_LABELS[platform]} Payload
+                </PayloadCopyButton>
+              );
+            })}
+          </div>
+
+          {copyStatus ? (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+              {copyStatus}
+            </div>
+          ) : null}
+
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+            <div className="text-sm font-semibold text-gray-950">
+              Platform parse status
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-5">
+              {PAYLOAD_PLATFORM_ORDER.map((platform) => (
+                <div
+                  key={platform}
+                  className="rounded-md border border-gray-200 bg-white p-3"
+                >
+                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    {PAYLOAD_PLATFORM_LABELS[platform]}
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-gray-950">
+                    {preview.debug.rawSections[platform] ? "Parsed" : "Missing"}
+                  </div>
+                  {platform === "mercari" && preview.debug.rawSections.mercari ? (
+                    <div className="mt-1 text-xs text-gray-500">
+                      Parsed for review; not in current V1 extension payload.
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            {missingPlatforms.length ? (
+              <p className="mt-3 text-xs text-gray-600">
+                Missing:{" "}
+                {missingPlatforms
+                  .map((platform) => PAYLOAD_PLATFORM_LABELS[platform])
+                  .join(", ")}
+              </p>
+            ) : null}
+          </div>
+
+          {preview.warnings.length ? (
+            <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4">
+              <div className="text-sm font-semibold text-yellow-950">
+                Validation warnings
+              </div>
+              <ul className="mt-3 space-y-2 text-sm text-yellow-900">
+                {preview.warnings.map((warning, index) => (
+                  <li key={`${warning.code}-${warning.platform ?? "global"}-${index}`}>
+                    {warning.platform
+                      ? `${PAYLOAD_PLATFORM_LABELS[warning.platform]}: `
+                      : ""}
+                    {warning.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+              No payload preview warnings.
+            </div>
+          )}
+
+          <details className="rounded-lg border border-gray-200 bg-white p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-gray-950">
+              Extension-compatible JSON preview
+            </summary>
+            <pre className="mt-3 max-h-[520px] overflow-auto rounded-md bg-gray-950 p-4 text-xs text-gray-50">
+              {JSON.stringify(preview.payload, null, 2)}
+            </pre>
+          </details>
+
+          <div className="space-y-3">
+            {PAYLOAD_PLATFORM_ORDER.map((platform) => {
+              const platformPayload = extensionPlatformPayloads[platform];
+              if (!platformPayload) return null;
+
+              return (
+                <details
+                  key={platform}
+                  className="rounded-lg border border-gray-200 bg-white p-4"
+                >
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-950">
+                    {PAYLOAD_PLATFORM_LABELS[platform]} parsed payload
+                  </summary>
+                  <pre className="mt-3 max-h-[360px] overflow-auto rounded-md bg-gray-50 p-4 text-xs text-gray-800">
+                    {JSON.stringify(platformPayload, null, 2)}
+                  </pre>
+                </details>
+              );
+            })}
+          </div>
+
+          <details className="rounded-lg border border-gray-200 bg-white p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-gray-950">
+              Parsed raw-section debug
+            </summary>
+            <pre className="mt-3 max-h-[420px] overflow-auto rounded-md bg-gray-50 p-4 text-xs text-gray-800">
+              {JSON.stringify(preview.debug, null, 2)}
+            </pre>
+          </details>
+        </div>
+      </details>
+    </SectionShell>
+  );
+}
+
 function buildV2Notes({
   conditionNotes,
   knownDetails,
@@ -426,6 +647,7 @@ export default function LpuV2Page() {
     useState<WebCompsResultState | null>(null);
   const [webCompsError, setWebCompsError] = useState("");
   const [isWebCompsLoading, setIsWebCompsLoading] = useState(false);
+  const [payloadCopyStatus, setPayloadCopyStatus] = useState("");
 
   const compiledNotes = useMemo(
     () =>
@@ -465,6 +687,17 @@ export default function LpuV2Page() {
         sources: webCompsResult?.sourceUrls ?? [],
       }),
     [manualCompInputs, pricingResearch, webCompsResult]
+  );
+
+  const payloadPreview = useMemo(
+    () =>
+      output.trim()
+        ? buildLpuPayloadPreview({
+            finalOutput: output,
+            hasSellingBrief: sellingBrief.trim().length > 0,
+          })
+        : null,
+    [output, sellingBrief]
   );
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -681,6 +914,17 @@ export default function LpuV2Page() {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void runV2Generation("finalFromBrief");
+  }
+
+  async function copyPayloadPreview(label: string, value: unknown) {
+    setPayloadCopyStatus("");
+
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(value, null, 2));
+      setPayloadCopyStatus(`${label} copied.`);
+    } catch {
+      setPayloadCopyStatus(`Could not copy ${label}.`);
+    }
   }
 
   return (
@@ -1340,11 +1584,19 @@ export default function LpuV2Page() {
             <SectionShell title="Platform Review">
               <textarea
                 value={output}
-                readOnly
+                onChange={(event) => setOutput(event.target.value)}
                 placeholder="Generated LP-U output will appear here."
-                className="min-h-[360px] w-full rounded-lg border border-gray-300 bg-white p-3 font-mono text-xs outline-none"
+                className="min-h-[360px] w-full rounded-lg border border-gray-300 bg-white p-3 font-mono text-xs outline-none focus:border-black"
               />
             </SectionShell>
+
+            {payloadPreview ? (
+              <PayloadPreviewPanel
+                copyStatus={payloadCopyStatus}
+                onCopy={(label, value) => void copyPayloadPreview(label, value)}
+                preview={payloadPreview}
+              />
+            ) : null}
           </div>
 
           <aside className="space-y-5">
