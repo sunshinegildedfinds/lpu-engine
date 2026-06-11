@@ -274,14 +274,94 @@ function assertV1CompatibleResolvedPrice(value, label) {
   );
 }
 
-function buildPricePreview(finalListPriceInput) {
+function assertV1CompatibleAdjustedPrice(value, expected, label) {
+  assert.equal(typeof value, "string", `${label} adjustedPrice must be a string`);
+  assert.equal(value, expected.toFixed(2), `${label} adjustedPrice mismatch`);
+  assert.match(
+    value,
+    /^\d+\.\d{2}$/,
+    `${label} adjustedPrice must use V1 cents formatting`
+  );
+  assert.equal(value.includes("$"), false, `${label} adjustedPrice must not include $`);
+}
+
+function assertAdjustedPricePaths(preview, expected, label) {
+  const payload = preview.payload;
+  assertV1CompatibleAdjustedPrice(payload.etsy?.adjustedPrice, expected, `${label} Etsy`);
+  assertV1CompatibleAdjustedPrice(
+    payload.marketplaceFields?.etsy?.adjustedPrice,
+    expected,
+    `${label} marketplaceFields Etsy`
+  );
+  assertV1CompatibleAdjustedPrice(
+    payload.marketplaces?.etsy?.adjustedPrice,
+    expected,
+    `${label} marketplaces Etsy`
+  );
+  assertV1CompatibleAdjustedPrice(
+    payload.poshmark?.adjustedPrice,
+    expected,
+    `${label} top-level Poshmark`
+  );
+  assertV1CompatibleAdjustedPrice(
+    payload.marketplaces?.poshmark?.adjustedPrice,
+    expected,
+    `${label} marketplaces Poshmark`
+  );
+  assertV1CompatibleAdjustedPrice(
+    payload.marketplaceFields?.poshmark?.adjustedPrice,
+    expected,
+    `${label} marketplaceFields Poshmark`
+  );
+}
+
+function assertAdjustedPriceOmitted(preview, label) {
+  const payload = preview.payload;
+  assert.equal(payload.etsy?.adjustedPrice, undefined, `${label} Etsy adjustedPrice`);
+  assert.equal(
+    payload.marketplaceFields?.etsy?.adjustedPrice,
+    undefined,
+    `${label} marketplaceFields Etsy adjustedPrice`
+  );
+  assert.equal(
+    payload.marketplaces?.etsy?.adjustedPrice,
+    undefined,
+    `${label} marketplaces Etsy adjustedPrice`
+  );
+  assert.equal(
+    payload.poshmark?.adjustedPrice,
+    undefined,
+    `${label} top-level Poshmark adjustedPrice`
+  );
+  assert.equal(
+    payload.marketplaces?.poshmark?.adjustedPrice,
+    undefined,
+    `${label} marketplaces Poshmark adjustedPrice`
+  );
+  assert.equal(
+    payload.marketplaceFields?.poshmark?.adjustedPrice,
+    undefined,
+    `${label} marketplaceFields Poshmark adjustedPrice`
+  );
+}
+
+function buildPricePreview(finalListPriceInput, overrides = {}) {
   return buildLpuPayloadPreview({
     finalOutput: fullOutput,
     hasSellingBrief: true,
     generatedAt: "2026-06-11T00:00:00.000Z",
     finalListPriceInput,
+    ...overrides,
   });
 }
+
+const validWholeDollarPreview = buildPricePreview("100", {
+  suggestedListPrice: "500",
+  fastSalePrice: "50",
+  bestOfferFloor: "25",
+});
+assert.equal(validWholeDollarPreview.payload.resolvedPrice, "100");
+assertAdjustedPricePaths(validWholeDollarPreview, 100 * 1.15, "valid whole-dollar final list price");
 
 const resolvedPricePreview = buildPricePreview("129.99");
 assert.equal(resolvedPricePreview.payload.resolvedPrice, "129.99");
@@ -289,11 +369,21 @@ assertV1CompatibleResolvedPrice(
   resolvedPricePreview.payload.resolvedPrice,
   "decimal final list price"
 );
+assertAdjustedPricePaths(
+  resolvedPricePreview,
+  129.99 * 1.15,
+  "decimal final list price"
+);
 
 const currencyResolvedPricePreview = buildPricePreview("$129.99");
 assert.equal(currencyResolvedPricePreview.payload.resolvedPrice, "129.99");
 assertV1CompatibleResolvedPrice(
   currencyResolvedPricePreview.payload.resolvedPrice,
+  "currency final list price"
+);
+assertAdjustedPricePaths(
+  currencyResolvedPricePreview,
+  129.99 * 1.15,
   "currency final list price"
 );
 
@@ -310,6 +400,10 @@ for (const invalidFinalListPriceInput of ["", "abc", "0", "-5", "NaN"]) {
     invalidPricePreview.payload.resolvedPrice,
     undefined,
     `invalid final list price ${invalidFinalListPriceInput} should omit resolvedPrice`
+  );
+  assertAdjustedPriceOmitted(
+    invalidPricePreview,
+    `invalid final list price ${invalidFinalListPriceInput}`
   );
   assert.equal(
     warningCodes(invalidPricePreview).includes("invalid_final_list_price"),
@@ -332,6 +426,11 @@ assert.equal(
   "129.99",
   "resolvedPrice must use editable Final List Price instead of other pricing fields"
 );
+assertAdjustedPricePaths(
+  otherPricingFieldsPreview,
+  129.99 * 1.15,
+  "other pricing fields ignored"
+);
 
 const missingFinalPriceWithOtherPricingFieldsPreview = buildLpuPayloadPreview({
   finalOutput: fullOutput,
@@ -346,8 +445,15 @@ assert.equal(
   undefined,
   "resolvedPrice must not fall back to suggestedListPrice, fastSalePrice, or bestOfferFloor"
 );
+assertAdjustedPriceOmitted(
+  missingFinalPriceWithOtherPricingFieldsPreview,
+  "missing final price with other pricing fields"
+);
 
 assert.doesNotThrow(() => JSON.stringify(resolvedPricePreview.payload));
+assert.equal(typeof resolvedPricePreview.payload.marketplaces.ebay, "object");
+assert.equal(typeof resolvedPricePreview.payload.coreFields, "object");
+assert.equal(typeof resolvedPricePreview.payload.marketplaceFields, "object");
 assert.equal(
   resolvedPricePreview.payload.marketplaces.ebay.itemSpecifics.Type,
   "Example Type"

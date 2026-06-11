@@ -536,6 +536,10 @@ function normalizeFinalListPriceInput(value?: string | null): string {
   return resolvedPrice;
 }
 
+function formatAdjustedPriceForPayload(value: number): string {
+  return value.toFixed(2);
+}
+
 function addWarningsForPayloadMap(
   payloadMap: StructuredPayloadMap,
   sections: Partial<Record<PlatformKey, string>>,
@@ -844,6 +848,7 @@ function buildExtensionPayloadFromPayloadMap(
   photos?: VendooPhotoPayload[],
   options?: {
     resolvedPrice?: string;
+    adjustedPrice?: string;
   }
 ): VendooExtensionPayload {
   const ebaySection = payloadMap.platforms.ebay.section;
@@ -895,12 +900,14 @@ function buildExtensionPayloadFromPayloadMap(
       description: payloadMap.platforms.poshmark.description,
       styleTags: cleanPoshmarkStyleTags,
       categoryPath: payloadMap.platforms.poshmark.categoryPath,
+      adjustedPrice: options?.adjustedPrice,
     },
     etsy: {
       title: payloadMap.platforms.etsy.title,
       description: payloadMap.platforms.etsy.description,
       tags: parseVendooBaseTags(payloadMap.platforms.etsy.tags),
       categoryPath: payloadMap.platforms.etsy.categoryPath,
+      adjustedPrice: options?.adjustedPrice,
       materials: extractSingleLineValue(payloadMap.platforms.etsy.section, [
         "Materials",
       ]),
@@ -914,9 +921,48 @@ function buildExtensionPayloadFromPayloadMap(
   });
 
   return mergeCleanPoshmarkStyleTags(
-    mergeCompleteEbayItemSpecifics(payload, completeItemSpecifics),
+    addAdjustedPriceCompatibilityPaths(
+      mergeCompleteEbayItemSpecifics(payload, completeItemSpecifics),
+      options?.adjustedPrice
+    ),
     cleanPoshmarkStyleTags
   );
+}
+
+function addAdjustedPriceCompatibilityPaths(
+  payload: VendooExtensionPayload,
+  adjustedPrice?: string
+): VendooExtensionPayload {
+  if (!adjustedPrice) return payload;
+
+  const etsy = payload.etsy
+    ? {
+        ...payload.etsy,
+        adjustedPrice,
+      }
+    : undefined;
+  const poshmark = payload.marketplaces.poshmark
+    ? {
+        ...payload.marketplaces.poshmark,
+        adjustedPrice,
+      }
+    : undefined;
+
+  return {
+    ...payload,
+    ...(etsy ? { etsy } : {}),
+    ...(poshmark ? { poshmark } : {}),
+    marketplaces: {
+      ...payload.marketplaces,
+      ...(etsy ? { etsy } : {}),
+      ...(poshmark ? { poshmark } : {}),
+    },
+    marketplaceFields: {
+      ...payload.marketplaceFields,
+      ...(etsy ? { etsy } : {}),
+      ...(poshmark ? { poshmark } : {}),
+    },
+  } as VendooExtensionPayload;
 }
 
 export function buildLpuPayloadPreview(input: {
@@ -943,6 +989,9 @@ export function buildLpuPayloadPreview(input: {
     warnings.push(...input.photoWarnings);
   }
   const resolvedPrice = normalizeFinalListPriceInput(input.finalListPriceInput);
+  const adjustedPrice = resolvedPrice
+    ? formatAdjustedPriceForPayload(Number(resolvedPrice) * 1.15)
+    : "";
   if (
     typeof input.finalListPriceInput === "string" &&
     input.finalListPriceInput.trim().length > 0 &&
@@ -986,7 +1035,7 @@ export function buildLpuPayloadPreview(input: {
       payloadMap,
       completeItemSpecifics,
       input.photos,
-      { resolvedPrice }
+      { resolvedPrice, adjustedPrice }
     ),
     warnings,
     debug: {
