@@ -560,6 +560,10 @@
       marketplaceOrderDiagnostics.depopStarted = true;
       await ensureDepopStageOpenForDepopFill();
       await ensureDepopOptionalFieldsOpenForDepopFill();
+      await fillDepopPriceIfPresent({
+        payload,
+        usedElements,
+      });
       await fillDepopSizeIfPresent({
         payload,
         usedElements,
@@ -569,6 +573,11 @@
         usedElements,
       });
       await fillDepopTagsIfPresent({
+        payload,
+        usedElements,
+      });
+      await ensureMercariStageOpenForMercariFill();
+      await fillMercariPriceIfPresent({
         payload,
         usedElements,
       });
@@ -597,6 +606,9 @@
       await fillEtsyTagsIfPresent({
         payload,
         usedElements,
+      });
+      await refillVisibleDepopMercariPricesIfNeeded({
+        payload,
       });
     } else {
       marketplaceOrderDiagnostics.depopBlockedReason = "ebay_stage_not_completed";
@@ -857,6 +869,77 @@
     return result;
   }
 
+  async function fillDepopPriceIfPresent(input) {
+    const { payload, usedElements } = input;
+    const resolvedPriceRaw =
+      typeof payload?.resolvedPrice === "string" ? payload.resolvedPrice.trim() : "";
+    const priceValue = normalizeMarketplacePriceInputValue(resolvedPriceRaw);
+    const diagnostic = {
+      fieldLabel: "Depop Price",
+      payloadKey: "resolvedPrice",
+      payloadValue: resolvedPriceRaw || "",
+      attemptedValue: "",
+      finalValue: "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const depopStageGate = evaluateDepopStageGate();
+    console.debug("[Vendoo][DepopStageGate]", depopStageGate);
+    if (!depopStageGate.stageDetected) {
+      diagnostic.reason = "not depop stage";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!resolvedPriceRaw) {
+      diagnostic.reason = "resolvedPrice missing";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!isValidResolvedPrice(resolvedPriceRaw) || !priceValue) {
+      diagnostic.reason = "resolvedPrice invalid";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    const field = await waitForMarketplacePriceInput({
+      findInput: findDepopPriceInput,
+      label: "Depop Price",
+    });
+    if (!(field instanceof HTMLInputElement)) {
+      diagnostic.status = "skipped_for_safety";
+      diagnostic.reason = "Depop Price field not found after bounded wait";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.finalValue = String(field.value || "").trim();
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.attemptedValue = priceValue;
+    const verifyResult = await fillAndVerifyMarketplacePriceInputWithRetry(field, priceValue);
+    diagnostic.finalValue = String(verifyResult.actualValue || field.value || "").trim();
+
+    if (!verifyResult.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = `verification failed (expected "${priceValue}", got "${diagnostic.finalValue || ""}")`;
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value persisted after blur";
+    console.debug("[Vendoo][DepopPrice]", diagnostic);
+    return diagnostic;
+  }
+
   async function fillDepopSizeIfPresent(input) {
     const { payload, usedElements } = input;
     const payloadValueRaw =
@@ -1016,6 +1099,146 @@
     diagnostic.status = "filled";
     diagnostic.reason = "value persisted after set";
     console.debug("[Vendoo][DepopDescription]", diagnostic);
+    return diagnostic;
+  }
+
+  async function fillMercariPriceIfPresent(input) {
+    const { payload, usedElements } = input;
+    const resolvedPriceRaw =
+      typeof payload?.resolvedPrice === "string" ? payload.resolvedPrice.trim() : "";
+    const priceValue = normalizeMarketplacePriceInputValue(resolvedPriceRaw);
+    const diagnostic = {
+      fieldLabel: "Mercari Listing Price",
+      payloadKey: "resolvedPrice",
+      payloadValue: resolvedPriceRaw || "",
+      attemptedValue: "",
+      finalValue: "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const mercariStageGate = evaluateMercariStageGate();
+    console.debug("[Vendoo][MercariStageGate]", mercariStageGate);
+    if (!mercariStageGate.stageDetected) {
+      diagnostic.reason = "not mercari stage";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!resolvedPriceRaw) {
+      diagnostic.reason = "resolvedPrice missing";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!isValidResolvedPrice(resolvedPriceRaw) || !priceValue) {
+      diagnostic.reason = "resolvedPrice invalid";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    const field = await waitForMarketplacePriceInput({
+      findInput: findMercariPriceInput,
+      label: "Mercari Listing Price",
+    });
+    if (!(field instanceof HTMLInputElement)) {
+      diagnostic.status = "skipped_for_safety";
+      diagnostic.reason = "Mercari Listing Price field not found after bounded wait";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.finalValue = String(field.value || "").trim();
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.attemptedValue = priceValue;
+    const verifyResult = await fillAndVerifyMarketplacePriceInputWithRetry(field, priceValue);
+    diagnostic.finalValue = String(verifyResult.actualValue || field.value || "").trim();
+
+    if (!verifyResult.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = `verification failed (expected "${priceValue}", got "${diagnostic.finalValue || ""}")`;
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value persisted after blur";
+    console.debug("[Vendoo][MercariPrice]", diagnostic);
+    return diagnostic;
+  }
+
+  async function refillVisibleDepopMercariPricesIfNeeded(input) {
+    const { payload } = input;
+    const resolvedPriceRaw =
+      typeof payload?.resolvedPrice === "string" ? payload.resolvedPrice.trim() : "";
+    const priceValue = normalizeMarketplacePriceInputValue(resolvedPriceRaw);
+
+    if (!resolvedPriceRaw || !isValidResolvedPrice(resolvedPriceRaw) || !priceValue) {
+      console.debug("[Vendoo][MarketplacePriceRefill]", {
+        status: "skipped_for_safety",
+        reason: resolvedPriceRaw ? "resolvedPrice invalid" : "resolvedPrice missing",
+      });
+      return;
+    }
+
+    await refillVisibleMarketplacePriceIfNeeded({
+      label: "Depop Price",
+      logPrefix: "[Vendoo][DepopPriceRefill]",
+      findInput: findDepopPriceInput,
+      priceValue,
+    });
+    await refillVisibleMarketplacePriceIfNeeded({
+      label: "Mercari Listing Price",
+      logPrefix: "[Vendoo][MercariPriceRefill]",
+      findInput: findMercariPriceInput,
+      priceValue,
+    });
+  }
+
+  async function refillVisibleMarketplacePriceIfNeeded(input) {
+    const { label, logPrefix, findInput, priceValue } = input;
+    const field = findInput();
+    const diagnostic = {
+      fieldLabel: label,
+      attemptedValue: "",
+      finalValue: field instanceof HTMLInputElement ? String(field.value || "").trim() : "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    if (!(field instanceof HTMLInputElement)) {
+      diagnostic.reason = "visible price field not present for passive refill";
+      console.debug(logPrefix, diagnostic);
+      return diagnostic;
+    }
+
+    if (normalizePriceForCompare(field.value) === normalizePriceForCompare(priceValue)) {
+      diagnostic.status = "filled";
+      diagnostic.reason = "value already persisted";
+      console.debug(logPrefix, diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.attemptedValue = priceValue;
+    const verifyResult = await fillAndVerifyMarketplacePriceInputWithRetry(field, priceValue);
+    diagnostic.finalValue = String(verifyResult.actualValue || field.value || "").trim();
+
+    if (!verifyResult.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = `verification failed (expected "${priceValue}", got "${diagnostic.finalValue || ""}")`;
+      console.debug(logPrefix, diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.status = "filled";
+    diagnostic.reason = "value refilled after stabilization";
+    console.debug(logPrefix, diagnostic);
     return diagnostic;
   }
 
@@ -1763,6 +1986,42 @@
     return scopedCandidates[0] ?? null;
   }
 
+  function findDepopPriceInput() {
+    const selectors = [
+      'input[name="listings.depop.overrides.price"]',
+      'input[data-testid="listings.depop.overrides.price"]',
+      'input#listings\\.depop\\.overrides\\.price',
+      'input[id="listings.depop.overrides.price"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isMarketplacePriceInputReady(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  function findMercariPriceInput() {
+    const selectors = [
+      'input[name="listings.mercari.overrides.price"]',
+      'input[data-testid="listings.mercari.overrides.price"]',
+      'input#listings\\.mercari\\.overrides\\.price',
+      'input[id="listings.mercari.overrides.price"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isMarketplacePriceInputReady(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
   function findDepopTagsControl() {
     const exactSelectors = [
       'input#listings\\.depop\\.hashtags',
@@ -1978,8 +2237,11 @@
 
   function evaluateDepopStageGate() {
     const depopStageSelectors = [
+      'input[name="listings.depop.overrides.price"]',
+      'input#listings\\.depop\\.overrides\\.price',
       'textarea[name="listings.depop.overrides.description"]',
       'input[id="listings.depop.categorySpecifics.womenswear_dresses_size"]',
+      'input[data-testid="listings.depop.overrides.price"]',
       'textarea#listings\\.depop\\.overrides\\.description',
       'input#listings\\.depop\\.categorySpecifics\\.womenswear_dresses_size',
     ];
@@ -1993,6 +2255,56 @@
       evidenceUsed: matchedSelector || "none",
       reason: stageDetected ? "depop stage evidence confirmed" : "depop stage evidence missing",
     };
+  }
+
+  async function ensureMercariStageOpenForMercariFill() {
+    const diagnostics = {
+      clickAttempted: false,
+      activeDetected: false,
+      formReadyDetected: false,
+      reason: "",
+    };
+
+    const mercariControl = findMercariSideControl();
+    if (!(mercariControl instanceof Element)) {
+      diagnostics.reason = "mercari side control not found";
+      console.debug("[Vendoo][MercariStageOpen]", diagnostics);
+      const gate = evaluateMercariStageGate();
+      console.debug("[Vendoo][MercariStageGate]", gate);
+      return diagnostics;
+    }
+
+    diagnostics.activeDetected = isMercariSideControlActive(mercariControl);
+    if (!diagnostics.activeDetected) {
+      clickElement(mercariControl);
+      diagnostics.clickAttempted = true;
+    }
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (attempt > 0) {
+        await wait(140);
+      }
+
+      const currentControl = findMercariSideControl();
+      diagnostics.activeDetected = isMercariSideControlActive(currentControl);
+      diagnostics.formReadyDetected = isMercariFormReadyInDom();
+
+      if (diagnostics.activeDetected && diagnostics.formReadyDetected) {
+        diagnostics.reason = "mercari stage active and form ready";
+        console.debug("[Vendoo][MercariStageOpen]", diagnostics);
+        const gate = evaluateMercariStageGate();
+        console.debug("[Vendoo][MercariStageGate]", gate);
+        return diagnostics;
+      }
+    }
+
+    diagnostics.reason = diagnostics.activeDetected
+      ? "mercari active but form not ready"
+      : "mercari stage not active";
+    console.debug("[Vendoo][MercariStageOpen]", diagnostics);
+    const gate = evaluateMercariStageGate();
+    console.debug("[Vendoo][MercariStageGate]", gate);
+    return diagnostics;
   }
 
   async function ensurePoshmarkStageOpenForPoshmarkFill() {
@@ -2167,6 +2479,31 @@
     };
   }
 
+  function evaluateMercariStageGate() {
+    const selectors = [
+      'input[name="listings.mercari.overrides.price"]',
+      'input#listings\\.mercari\\.overrides\\.price',
+      'input[data-testid="listings.mercari.overrides.price"]',
+    ];
+    const matchedSelector = selectors.find((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element && isVisible(node);
+    });
+    const mercariControl = findMercariSideControl();
+    const activeDetected = isMercariSideControlActive(mercariControl);
+    const formReadyDomEvidence = isMercariFormReadyInDom();
+    const stageDetected = Boolean(matchedSelector) || formReadyDomEvidence || activeDetected;
+
+    return {
+      stageDetected,
+      evidenceUsed:
+        matchedSelector ||
+        (formReadyDomEvidence ? "mercari_form_ready_dom" : "") ||
+        (activeDetected ? "mercari_side_control_active" : "none"),
+      reason: stageDetected ? "mercari stage evidence confirmed" : "mercari stage evidence missing",
+    };
+  }
+
   function isPoshmarkFormReadyInDom() {
     const selectors = [
       'textarea[name="listings.poshmark.overrides.description"]',
@@ -2184,6 +2521,56 @@
 
   function isPoshmarkTabSpecificallyActive(tabElement) {
     return detectPoshmarkActiveEvidence(tabElement).active;
+  }
+
+  function findMercariSideControl() {
+    const selectors = [
+      "button#mercari",
+      'button[role="side-control-mercari"]',
+      '#mercari',
+      '[role="side-control-mercari"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof Element && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+
+    return findMarketplaceTab("mercari");
+  }
+
+  function isMercariSideControlActive(control) {
+    if (!(control instanceof Element)) return false;
+    const controlText = normalizeText(
+      [
+        control.textContent || "",
+        control.getAttribute("aria-label") || "",
+        control.getAttribute("title") || "",
+        control.getAttribute("data-testid") || "",
+        control.getAttribute("name") || "",
+        control.getAttribute("id") || "",
+        control.getAttribute("role") || "",
+      ].join(" ")
+    );
+    if (!controlText.includes("mercari")) return false;
+
+    const selectedAttr = normalizeText(control.getAttribute("aria-selected") || "");
+    const dataState = normalizeText(control.getAttribute("data-state") || "");
+    const ariaCurrent = normalizeText(control.getAttribute("aria-current") || "");
+    const className = normalizeText(
+      typeof control.className === "string" ? control.className : ""
+    );
+
+    return (
+      selectedAttr === "true" ||
+      dataState === "active" ||
+      ariaCurrent === "true" ||
+      ariaCurrent === "page" ||
+      className.includes("active") ||
+      className.includes("selected")
+    );
   }
 
   function isEtsyTabSpecificallyActive(tabElement) {
@@ -2264,10 +2651,25 @@
 
   function isDepopFormReadyInDom() {
     const selectors = [
+      'input[name="listings.depop.overrides.price"]',
+      'input#listings\\.depop\\.overrides\\.price',
+      'input[data-testid="listings.depop.overrides.price"]',
       'textarea[name="listings.depop.overrides.description"]',
       'input[id="listings.depop.categorySpecifics.womenswear_dresses_size"]',
       'textarea#listings\\.depop\\.overrides\\.description',
       'input#listings\\.depop\\.categorySpecifics\\.womenswear_dresses_size',
+    ];
+    return selectors.some((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element && isVisible(node);
+    });
+  }
+
+  function isMercariFormReadyInDom() {
+    const selectors = [
+      'input[name="listings.mercari.overrides.price"]',
+      'input#listings\\.mercari\\.overrides\\.price',
+      'input[data-testid="listings.mercari.overrides.price"]',
     ];
     return selectors.some((selector) => {
       const node = document.querySelector(selector);
@@ -2941,6 +3343,71 @@
     };
   }
 
+  async function fillAndVerifyMarketplacePriceInputWithRetry(inputField, value) {
+    let lastResult = {
+      ok: false,
+      actualValue: inputField instanceof HTMLInputElement ? inputField.value || "" : "",
+    };
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!(inputField instanceof HTMLInputElement) || !isMarketplacePriceInputReady(inputField)) {
+        return lastResult;
+      }
+
+      lastResult = await fillAndVerifyPriceInput(inputField, value);
+      if (lastResult.ok) {
+        return lastResult;
+      }
+
+      await wait(180);
+    }
+
+    return lastResult;
+  }
+
+  async function waitForMarketplacePriceInput(input) {
+    const { findInput, label } = input;
+    const maxAttempts = 22;
+    const intervalMs = 150;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const field = findInput();
+      if (field instanceof HTMLInputElement && isMarketplacePriceInputReady(field)) {
+        if (attempt > 0) {
+          console.debug("[Vendoo][MarketplacePriceWait]", {
+            fieldLabel: label,
+            status: "ready",
+            attempts: attempt + 1,
+          });
+        }
+        return field;
+      }
+
+      await wait(intervalMs);
+    }
+
+    console.debug("[Vendoo][MarketplacePriceWait]", {
+      fieldLabel: label,
+      status: "skipped_for_safety",
+      reason: "price input not ready after bounded wait",
+      attempts: maxAttempts,
+    });
+    return null;
+  }
+
+  function isMarketplacePriceInputReady(field) {
+    if (!(field instanceof HTMLInputElement) || !isVisible(field)) {
+      return false;
+    }
+
+    return (
+      !field.disabled &&
+      !field.readOnly &&
+      field.getAttribute("disabled") === null &&
+      field.getAttribute("aria-disabled") !== "true"
+    );
+  }
+
   async function findListingPriceInputWithFallback() {
     const selectors = [
       'input[data-testid="generalDetails.price"]',
@@ -3152,6 +3619,13 @@
     return String(value ?? "")
       .replace(/[$,\s]/g, "")
       .replace(/^0+(\d)/, "$1")
+      .trim();
+  }
+
+  function normalizeMarketplacePriceInputValue(value) {
+    return String(value ?? "")
+      .trim()
+      .replace(/^\$/, "")
       .trim();
   }
 

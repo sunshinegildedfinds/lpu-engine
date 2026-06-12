@@ -8,6 +8,10 @@ import ts from "typescript";
 
 const rootDir = process.cwd();
 const nodeRequire = createRequire(import.meta.url);
+const contentVendooSource = fs.readFileSync(
+  path.join(rootDir, "listing-writer-app/extension/vendoo-fill/content-vendoo.js"),
+  "utf8"
+);
 
 function resolveTsModule(request, fromFile) {
   if (request.startsWith("@/")) {
@@ -258,6 +262,118 @@ assert.doesNotThrow(() => JSON.stringify(preview.debug));
 assert(
   warningCodes(preview).includes("ebay_item_specifics_fillability"),
   "extra eBay item-specific fillability warning was not produced"
+);
+
+function assertSourceIncludes(source, expected, label) {
+  assert.equal(
+    source.includes(expected),
+    true,
+    `${label} missing expected source fragment: ${expected}`
+  );
+}
+
+function sourceBetween(source, start, end, label) {
+  const startIndex = source.indexOf(start);
+  assert.notEqual(startIndex, -1, `${label} start marker missing`);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+  assert.notEqual(endIndex, -1, `${label} end marker missing`);
+  return source.slice(startIndex, endIndex);
+}
+
+const depopPriceFillSource = sourceBetween(
+  contentVendooSource,
+  "async function fillDepopPriceIfPresent",
+  "async function fillDepopSizeIfPresent",
+  "Depop price fill source"
+);
+const mercariPriceFillSource = sourceBetween(
+  contentVendooSource,
+  "async function fillMercariPriceIfPresent",
+  "async function ensureDepopStageOpenForDepopFill",
+  "Mercari price fill source"
+);
+
+assertSourceIncludes(
+  contentVendooSource,
+  'input[name="listings.depop.overrides.price"]',
+  "Depop price selector"
+);
+assertSourceIncludes(
+  contentVendooSource,
+  'input[name="listings.mercari.overrides.price"]',
+  "Mercari price selector"
+);
+assertSourceIncludes(
+  contentVendooSource,
+  "button#mercari",
+  "Mercari side-control selector"
+);
+assertSourceIncludes(
+  contentVendooSource,
+  'button[role="side-control-mercari"]',
+  "Mercari side-control role selector"
+);
+assertSourceIncludes(
+  depopPriceFillSource,
+  "payload?.resolvedPrice",
+  "Depop price fill"
+);
+assertSourceIncludes(
+  depopPriceFillSource,
+  "waitForMarketplacePriceInput",
+  "Depop price fill bounded wait"
+);
+assertSourceIncludes(
+  depopPriceFillSource,
+  "fillAndVerifyMarketplacePriceInputWithRetry",
+  "Depop price fill verification retry"
+);
+assertSourceIncludes(
+  mercariPriceFillSource,
+  "payload?.resolvedPrice",
+  "Mercari price fill"
+);
+assertSourceIncludes(
+  mercariPriceFillSource,
+  "waitForMarketplacePriceInput",
+  "Mercari price fill bounded wait"
+);
+assertSourceIncludes(
+  mercariPriceFillSource,
+  "fillAndVerifyMarketplacePriceInputWithRetry",
+  "Mercari price fill verification retry"
+);
+assert.equal(
+  /adjustedPrice/.test(depopPriceFillSource),
+  false,
+  "Depop price fill must not use adjustedPrice"
+);
+assert.equal(
+  /adjustedPrice/.test(mercariPriceFillSource),
+  false,
+  "Mercari price fill must not use adjustedPrice"
+);
+assert.equal(/1\.15/.test(depopPriceFillSource), false, "Depop price fill must not apply 1.15");
+assert.equal(/1\.15/.test(mercariPriceFillSource), false, "Mercari price fill must not apply 1.15");
+assertSourceIncludes(
+  contentVendooSource,
+  "async function fillResolvedListingPriceIfPresent",
+  "eBay listing price fill"
+);
+assertSourceIncludes(
+  contentVendooSource,
+  "async function tryFillEbayBuyItNowPriceIfApplicable",
+  "eBay Buy It Now price fill"
+);
+assertSourceIncludes(
+  contentVendooSource,
+  "async function fillEtsyAdjustedPriceIfPresent",
+  "Etsy adjusted price fill"
+);
+assertSourceIncludes(
+  contentVendooSource,
+  "async function fillPoshmarkAdjustedPriceIfPresent",
+  "Poshmark adjusted price fill"
 );
 
 function assertV1CompatibleResolvedPrice(value, label) {
@@ -904,12 +1020,19 @@ const changedFiles = execFileSync("git", ["diff", "--name-only"], {
   .split("\n")
   .map((line) => line.trim())
   .filter(Boolean);
-assert.equal(
-  changedFiles.some((filePath) =>
-    filePath.startsWith("listing-writer-app/extension/vendoo-fill/")
-  ),
-  false,
-  "V2 payload preview work must not modify extension files"
+const forbiddenPayloadFiles = new Set([
+  "app/lpu-v2/page.tsx",
+  "lib/lpu/payloadPreview.ts",
+  "lib/vendoo/extensionPayload.ts",
+  "lib/sendVendooPayloadToExtension.ts",
+]);
+const changedForbiddenPayloadFiles = changedFiles.filter((filePath) =>
+  forbiddenPayloadFiles.has(filePath)
+);
+assert.deepEqual(
+  changedForbiddenPayloadFiles,
+  [],
+  "Depop/Mercari extension price work must not modify V2 app payload files"
 );
 
 console.log("V2 payload preview compatibility checks passed.");
