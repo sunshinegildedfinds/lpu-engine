@@ -87,6 +87,11 @@ const CONTAMINATION_PATTERNS = [
   /\b(?:Title A|Title B|Title|Category|Item Specifics|Attributes|Materials|Tags|Hashtags|Optional Brand Hashtags|Aesthetic Mode|Listing|Description|Condition|Search keywords|Style Tags|Compact 3-Tag Strategy)\s*:/i,
 ];
 
+const BUYER_FACING_COPY_CONTAMINATION_PATTERNS = [
+  /\b(?:EBAY|DEPOP|POSHMARK|MERCARI|ETSY)\b/,
+  /\b(?:Title A|Title B|Title|Category|Item Specifics|Attributes|Materials|Tags|Hashtags|Optional Brand Hashtags|Aesthetic Mode|Listing|Description|Condition|Search keywords|Style Tags|Compact 3-Tag Strategy)\s*:/i,
+];
+
 const KNOWN_EXTENSION_ITEM_SPECIFIC_ALIASES: Array<{
   key: keyof EbayItemSpecifics;
   aliases: string[];
@@ -240,6 +245,12 @@ function valueLooksContaminated(value: string): boolean {
   return CONTAMINATION_PATTERNS.some((pattern) => pattern.test(value));
 }
 
+function buyerFacingCopyLooksContaminated(value: string): boolean {
+  return BUYER_FACING_COPY_CONTAMINATION_PATTERNS.some((pattern) =>
+    pattern.test(value)
+  );
+}
+
 function collectLabeledBlock(section: string, labels: readonly string[]): string {
   if (!section.trim()) return "";
 
@@ -261,6 +272,102 @@ function collectLabeledBlock(section: string, labels: readonly string[]): string
   }
 
   return collected.join("\n").trim();
+}
+
+function collectLabeledBlockWithLabel(section: string, labels: readonly string[]): string {
+  if (!section.trim()) return "";
+
+  const lines = normalizeLineBreaks(section).split("\n");
+  const startIndex = lines.findIndex((line) => isLabelLine(line, labels));
+  if (startIndex < 0) return "";
+
+  const collected: string[] = [lines[startIndex].trim()];
+
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const current = lines[index];
+    if (Boolean(isPlatformHeading(current)) || isFooterBoundaryLine(current)) break;
+    if (isLabelLine(current, BOUNDARY_FIELD_LABELS)) break;
+    collected.push(current);
+  }
+
+  return collected.join("\n").trim();
+}
+
+function collectFooterBlock(section: string): string {
+  if (!section.trim()) return "";
+
+  const lines = normalizeLineBreaks(section).split("\n");
+  const startIndex = lines.findIndex((line) => isFooterBoundaryLine(line));
+  if (startIndex < 0) return "";
+
+  const collected: string[] = [lines[startIndex].trim()];
+
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const current = lines[index];
+    if (Boolean(isPlatformHeading(current))) break;
+    if (
+      isLabelLine(
+        current,
+        BOUNDARY_FIELD_LABELS.filter(
+          (label) => label !== "Ships within one business day footer"
+        )
+      )
+    ) {
+      break;
+    }
+    collected.push(current);
+  }
+
+  return collected.join("\n").trim();
+}
+
+function buyerFacingCopyIncludesLabel(value: string, labels: readonly string[]): boolean {
+  return normalizeLineBreaks(value)
+    .split("\n")
+    .some((line) => isLabelLine(line, labels));
+}
+
+function appendBuyerFacingBlock(
+  parts: string[],
+  block: string,
+  labels: readonly string[]
+) {
+  if (!block.trim()) return;
+  const current = parts.filter((part) => part.trim()).join("\n\n");
+  if (buyerFacingCopyIncludesLabel(current, labels)) return;
+  parts.push(block);
+}
+
+function composeBuyerFacingCopy(
+  section: string,
+  body: string,
+  options: {
+    additionalBuyerFacingLabels?: readonly (readonly string[])[];
+  } = {}
+): string {
+  const normalizedBody = body.trim();
+  const approximateMeasurements = collectLabeledBlockWithLabel(section, [
+    "Approximate Measurements",
+  ]);
+  const footer = collectFooterBlock(section);
+  const parts = [normalizedBody];
+
+  for (const labels of options.additionalBuyerFacingLabels ?? []) {
+    appendBuyerFacingBlock(parts, collectLabeledBlockWithLabel(section, labels), labels);
+  }
+
+  if (
+    approximateMeasurements &&
+    !/\bapproximate\s+measurements\s*:/i.test(normalizedBody)
+  ) {
+    parts.push(approximateMeasurements);
+  }
+
+  if (footer && !FOOTER_BOUNDARY_PATTERNS.some((pattern) => pattern.test(normalizedBody))) {
+    parts.push(footer);
+  }
+
+  return parts.filter((part) => part.trim()).join("\n\n").trim();
 }
 
 export function parsePlatformSections(
@@ -425,6 +532,11 @@ function buildPreviewPayloadMap(
     .split("\n")
     .map((line) => normalizeValue(line))
     .find(Boolean) ?? "";
+  const ebayDescription = collectLabeledBlock(ebaySection, ["Description"]);
+  const depopListing = collectLabeledBlock(depopSection, ["Listing"]);
+  const poshmarkDescription = collectLabeledBlock(poshmarkSection, ["Description"]);
+  const mercariDescription = collectLabeledBlock(mercariSection, ["Description"]);
+  const etsyDescription = collectLabeledBlock(etsySection, ["Description"]);
 
   return {
     fullOutput: output,
@@ -433,11 +545,13 @@ function buildPreviewPayloadMap(
         section: ebaySection,
         titleA: collectLabeledBlock(ebaySection, ["Title A"]),
         titleB: collectLabeledBlock(ebaySection, ["Title B"]),
-        description: collectLabeledBlock(ebaySection, ["Description"]),
+        description: composeBuyerFacingCopy(ebaySection, ebayDescription, {
+          additionalBuyerFacingLabels: [["Condition"]],
+        }),
       },
       depop: {
         section: depopSection,
-        listing: collectLabeledBlock(depopSection, ["Listing"]),
+        listing: composeBuyerFacingCopy(depopSection, depopListing),
         hashtags: collectLabeledBlock(depopSection, ["Hashtags"]),
         optionalBrandHashtags: collectLabeledBlock(depopSection, [
           "Optional Brand Hashtags",
@@ -446,7 +560,12 @@ function buildPreviewPayloadMap(
       poshmark: {
         section: poshmarkSection,
         title: collectLabeledBlock(poshmarkSection, ["Title"]),
-        description: collectLabeledBlock(poshmarkSection, ["Description"]),
+        description: composeBuyerFacingCopy(poshmarkSection, poshmarkDescription, {
+          additionalBuyerFacingLabels: [
+            ["Condition"],
+            ["Search keywords", "Search Keywords"],
+          ],
+        }),
         styleTags: collectLabeledBlock(poshmarkSection, ["Style Tags", "Style tags"]),
         categoryPath: collectLabeledBlock(poshmarkSection, [
           "Category Path",
@@ -456,14 +575,14 @@ function buildPreviewPayloadMap(
       mercari: {
         section: mercariSection,
         title: collectLabeledBlock(mercariSection, ["Title"]),
-        description: collectLabeledBlock(mercariSection, ["Description"]),
+        description: composeBuyerFacingCopy(mercariSection, mercariDescription),
         hashtags: collectLabeledBlock(mercariSection, ["Hashtags"]),
       },
       etsy: {
         section: etsySection,
         title: collectLabeledBlock(etsySection, ["Title"]),
         tags: collectLabeledBlock(etsySection, ["Tags"]),
-        description: collectLabeledBlock(etsySection, ["Description"]),
+        description: composeBuyerFacingCopy(etsySection, etsyDescription),
         categoryPath: etsyCategory,
       },
     },
@@ -687,12 +806,23 @@ function addContaminationWarnings(
     platform: PlatformKey;
     field: string;
     value: string | string[];
+    buyerFacingCopy?: boolean;
     list?: boolean;
   }> = [
     { platform: "ebay", field: "titleA", value: payloadMap.platforms.ebay.titleA },
     { platform: "ebay", field: "titleB", value: payloadMap.platforms.ebay.titleB },
-    { platform: "ebay", field: "description", value: payloadMap.platforms.ebay.description },
-    { platform: "depop", field: "listing", value: payloadMap.platforms.depop.listing },
+    {
+      platform: "ebay",
+      field: "description",
+      value: payloadMap.platforms.ebay.description,
+      buyerFacingCopy: true,
+    },
+    {
+      platform: "depop",
+      field: "listing",
+      value: payloadMap.platforms.depop.listing,
+      buyerFacingCopy: true,
+    },
     { platform: "depop", field: "hashtags", value: payloadMap.platforms.depop.hashtags, list: true },
     {
       platform: "depop",
@@ -705,6 +835,7 @@ function addContaminationWarnings(
       platform: "poshmark",
       field: "description",
       value: payloadMap.platforms.poshmark.description,
+      buyerFacingCopy: true,
     },
     {
       platform: "poshmark",
@@ -717,6 +848,7 @@ function addContaminationWarnings(
       platform: "mercari",
       field: "description",
       value: payloadMap.platforms.mercari.description,
+      buyerFacingCopy: true,
     },
     {
       platform: "mercari",
@@ -731,12 +863,20 @@ function addContaminationWarnings(
       value: parseVendooBaseTags(payloadMap.platforms.etsy.tags),
       list: true,
     },
-    { platform: "etsy", field: "description", value: payloadMap.platforms.etsy.description },
+    {
+      platform: "etsy",
+      field: "description",
+      value: payloadMap.platforms.etsy.description,
+      buyerFacingCopy: true,
+    },
   ];
 
   for (const check of checks) {
     const values = Array.isArray(check.value) ? check.value : [check.value];
-    if (!values.some((value) => valueLooksContaminated(String(value ?? "")))) continue;
+    const looksContaminated = check.buyerFacingCopy
+      ? values.some((value) => buyerFacingCopyLooksContaminated(String(value ?? "")))
+      : values.some((value) => valueLooksContaminated(String(value ?? "")));
+    if (!looksContaminated) continue;
     addContaminationWarning(
       warnings,
       check.platform,

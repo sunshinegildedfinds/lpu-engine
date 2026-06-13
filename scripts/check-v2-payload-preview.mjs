@@ -81,6 +81,23 @@ function assertNoBoundaryText(value, label) {
   );
 }
 
+function assertIncludes(value, expected, label) {
+  assert.equal(
+    String(value ?? "").includes(expected),
+    true,
+    `${label} missing expected text: ${expected}`
+  );
+}
+
+function assertExcludes(value, forbidden, label) {
+  const text = Array.isArray(value) ? value.join("\n") : String(value ?? "");
+  assert.equal(
+    text.includes(forbidden),
+    false,
+    `${label} contains forbidden text: ${forbidden}`
+  );
+}
+
 const fullOutput = `EBAY
 Title A: Universal Object Title A
 Title B: Universal Object Title B
@@ -223,7 +240,7 @@ assert.equal(payload.marketplaces.poshmark.title, "Posh title");
 assert.equal(payload.marketplaces.poshmark.description.includes("Posh body text."), true);
 assert.equal(
   payload.marketplaces.poshmark.description.includes("Search keywords: alpha beta gamma"),
-  false
+  true
 );
 assert.deepEqual(Array.from(payload.marketplaces.poshmark.styleTags).slice(0, 3), [
   "alpha",
@@ -248,7 +265,7 @@ assert.equal(payload.marketplaces.mercari, undefined);
 assert.equal(payload.etsy.title, "Etsy title");
 assert.equal(payload.etsy.materials, "cotton, metal");
 assert.equal(payload.etsy.description.includes("Etsy body text."), true);
-assert.equal(payload.etsy.description.includes("Ships within one business day"), false);
+assert.equal(payload.etsy.description.includes("Ships within one business day"), true);
 assert.equal(payload.etsy.tags.length, 13);
 assert.deepEqual(Array.from(payload.marketplaceFields.etsy.tags).slice(0, 2), [
   "tag one",
@@ -256,12 +273,419 @@ assert.deepEqual(Array.from(payload.marketplaceFields.etsy.tags).slice(0, 2), [
 ]);
 
 assert.equal(preview.debug.rawSections.ebay.includes("Ships within one business day"), true);
-assert.equal(preview.payload.marketplaces.ebay.description.includes("Ships within"), false);
+assert.equal(preview.payload.marketplaces.ebay.description.includes("Ships within"), true);
 assert.doesNotThrow(() => JSON.stringify(preview.payload));
 assert.doesNotThrow(() => JSON.stringify(preview.debug));
 assert(
   warningCodes(preview).includes("ebay_item_specifics_fillability"),
   "extra eBay item-specific fillability warning was not produced"
+);
+
+const buyerFacingOutput = `EBAY
+Title A: Generic Item Title A
+Title B: Generic Item Title B
+Category: Generic Category > Generic Subcategory
+Item Specifics:
+- Brand: Example Brand
+- Size: Medium
+- Color: Green
+- Material: Cotton
+Description:
+Generic eBay buyer-facing body.
+Approximate Measurements:
+Width: 10 in
+Height: 20 in
+Ships within one business day footer: Ships within one business day.
+
+DEPOP
+Aesthetic Mode:
+Primary: casual
+Attributes:
+- Color: green
+Listing:
+Brand: Example Brand
+Size: Medium
+Style: Casual
+Generic Depop buyer-facing listing.
+Hashtags: #generic #item
+Optional Brand Hashtags:
+Approximate Measurements:
+Width: 11 in
+Height: 21 in
+Ships within one business day footer: Ships within one business day.
+
+POSHMARK
+Title: Generic Poshmark title
+Description:
+Generic Poshmark buyer-facing body.
+Style Tags: casual, everyday, simple
+Compact 3-Tag Strategy: casual everyday simple
+Approximate Measurements:
+Width: 12 in
+Height: 22 in
+Ships within one business day footer: Ships within one business day.
+
+MERCARI
+Title: Generic Mercari title
+Description:
+Generic Mercari buyer-facing body.
+Hashtags: #generic #mercari
+Approximate Measurements:
+Width: 13 in
+Height: 23 in
+Ships within one business day footer: Ships within one business day.
+
+ETSY
+Title: Generic Etsy title
+Category: Generic Category > Generic Subcategory
+Materials: cotton, thread
+Attributes / Key Details:
+- Color: green
+Tags: green item, generic item, simple style, everyday use, casual decor, cotton item, useful gift, home accent, soft goods, small batch, handmade look, clean design, practical find
+Description:
+Generic Etsy buyer-facing body.
+Approximate Measurements:
+Width: 14 in
+Height: 24 in
+Ships within one business day footer: Ships within one business day.`;
+
+const buyerFacingPreview = buildLpuPayloadPreview({
+  finalOutput: buyerFacingOutput,
+  hasSellingBrief: true,
+  generatedAt: "2026-06-11T00:00:00.000Z",
+});
+const buyerFacingPayload = buyerFacingPreview.payload;
+
+assertIncludes(
+  buyerFacingPayload.marketplaces.ebay.description,
+  "Generic eBay buyer-facing body.",
+  "eBay extension-compatible description"
+);
+assertIncludes(
+  buyerFacingPayload.marketplaces.ebay.description,
+  "Approximate Measurements:",
+  "eBay extension-compatible description"
+);
+assertIncludes(
+  buyerFacingPayload.marketplaces.ebay.description,
+  "Width: 10 in\nHeight: 20 in",
+  "eBay extension-compatible description"
+);
+assertIncludes(
+  buyerFacingPayload.marketplaces.ebay.description,
+  "Ships within one business day footer: Ships within one business day.",
+  "eBay extension-compatible description"
+);
+assert.equal(
+  buyerFacingPayload.marketplaceFields.ebay.description,
+  buyerFacingPayload.marketplaces.ebay.description
+);
+
+assertIncludes(
+  buyerFacingPayload.marketplaces.depop.listing,
+  "Generic Depop buyer-facing listing.",
+  "Depop extension-compatible listing"
+);
+assertIncludes(
+  buyerFacingPayload.marketplaces.depop.listing,
+  "Approximate Measurements:",
+  "Depop extension-compatible listing"
+);
+assertIncludes(
+  buyerFacingPayload.marketplaces.depop.listing,
+  "Width: 11 in\nHeight: 21 in",
+  "Depop extension-compatible listing"
+);
+assertIncludes(
+  buyerFacingPayload.marketplaces.depop.listing,
+  "Ships within one business day footer: Ships within one business day.",
+  "Depop extension-compatible listing"
+);
+assert.equal(
+  buyerFacingPayload.marketplaces.depop.description,
+  buyerFacingPayload.marketplaces.depop.listing
+);
+
+assertIncludes(
+  buyerFacingPayload.marketplaces.poshmark.description,
+  "Generic Poshmark buyer-facing body.",
+  "Poshmark extension-compatible description"
+);
+assertIncludes(
+  buyerFacingPayload.marketplaces.poshmark.description,
+  "Approximate Measurements:",
+  "Poshmark extension-compatible description"
+);
+assertIncludes(
+  buyerFacingPayload.marketplaces.poshmark.description,
+  "Width: 12 in\nHeight: 22 in",
+  "Poshmark extension-compatible description"
+);
+assertIncludes(
+  buyerFacingPayload.marketplaces.poshmark.description,
+  "Ships within one business day footer: Ships within one business day.",
+  "Poshmark extension-compatible description"
+);
+
+assertIncludes(
+  buyerFacingPayload.etsy.description,
+  "Generic Etsy buyer-facing body.",
+  "Etsy extension-compatible description"
+);
+assertIncludes(
+  buyerFacingPayload.etsy.description,
+  "Approximate Measurements:",
+  "Etsy extension-compatible description"
+);
+assertIncludes(
+  buyerFacingPayload.etsy.description,
+  "Width: 14 in\nHeight: 24 in",
+  "Etsy extension-compatible description"
+);
+assertIncludes(
+  buyerFacingPayload.etsy.description,
+  "Ships within one business day footer: Ships within one business day.",
+  "Etsy extension-compatible description"
+);
+assert.equal(
+  buyerFacingPayload.marketplaceFields.etsy.description,
+  buyerFacingPayload.etsy.description
+);
+
+assert.equal(buyerFacingPayload.marketplaces.depop.optionalBrandHashtags, "");
+assertNoBoundaryText(
+  buyerFacingPayload.marketplaces.depop.optionalBrandHashtags,
+  "buyer-facing Depop optionalBrandHashtags"
+);
+assertNoBoundaryText(
+  buyerFacingPayload.marketplaces.depop.hashtags,
+  "buyer-facing Depop hashtags"
+);
+assert.deepEqual(Array.from(buyerFacingPayload.marketplaces.poshmark.styleTags), [
+  "casual",
+  "everyday",
+  "simple",
+]);
+assertNoBoundaryText(
+  buyerFacingPayload.marketplaces.poshmark.styleTags,
+  "buyer-facing Poshmark styleTags"
+);
+assertNoBoundaryText(buyerFacingPayload.etsy.tags, "buyer-facing Etsy tags");
+assertNoBoundaryText(
+  Object.values(buyerFacingPayload.marketplaces.ebay.itemSpecifics),
+  "buyer-facing eBay itemSpecifics"
+);
+assertNoBoundaryText(
+  buyerFacingPayload.etsy.materials,
+  "buyer-facing Etsy materials"
+);
+assert.equal(buyerFacingPayload.marketplaces.ebay.title, "Generic Item Title A");
+assert.equal(
+  buyerFacingPayload.marketplaces.ebay.category,
+  "Generic Category > Generic Subcategory"
+);
+assert.equal(buyerFacingPayload.marketplaces.poshmark.title, "Generic Poshmark title");
+assert.equal(buyerFacingPayload.etsy.title, "Generic Etsy title");
+
+const ebayConditionDescriptionPreview = buildLpuPayloadPreview({
+  finalOutput: `EBAY
+
+Title A:
+Example eBay title
+
+Title B:
+Example eBay title B
+
+Category:
+Example Category
+
+Item Specifics:
+Brand: Example Brand
+Type: Example Type
+
+Description:
+Main eBay buyer-facing description.
+- Detail bullet one
+- Detail bullet two
+
+Condition:
+- Condition detail one
+- Condition detail two
+
+Additional eBay buyer-facing sentence after condition.
+
+Approximate Measurements:
+Width: approx. 1 inch
+
+Ships within one business day after purchase. Displays & boxes shown are not included.`,
+  hasSellingBrief: true,
+  generatedAt: "2026-06-11T00:00:00.000Z",
+});
+
+const ebayConditionDescriptionPayload = ebayConditionDescriptionPreview.payload;
+const ebayConditionDescription =
+  ebayConditionDescriptionPayload.marketplaces.ebay.description;
+assertIncludes(
+  ebayConditionDescription,
+  "Main eBay buyer-facing description.",
+  "eBay condition buyer-facing description"
+);
+assertIncludes(
+  ebayConditionDescription,
+  "Condition:",
+  "eBay condition buyer-facing description"
+);
+assertIncludes(
+  ebayConditionDescription,
+  "Condition detail one",
+  "eBay condition buyer-facing description"
+);
+assertIncludes(
+  ebayConditionDescription,
+  "Additional eBay buyer-facing sentence after condition.",
+  "eBay condition buyer-facing description"
+);
+assertIncludes(
+  ebayConditionDescription,
+  "Approximate Measurements:",
+  "eBay condition buyer-facing description"
+);
+assertIncludes(
+  ebayConditionDescription,
+  "Width: approx. 1 inch",
+  "eBay condition buyer-facing description"
+);
+assertIncludes(
+  ebayConditionDescription,
+  "Ships within one business day after purchase. Displays & boxes shown are not included.",
+  "eBay condition buyer-facing description"
+);
+if (ebayConditionDescriptionPayload.marketplaceFields?.ebay) {
+  assert.equal(
+    ebayConditionDescriptionPayload.marketplaceFields.ebay.description,
+    ebayConditionDescription
+  );
+}
+assertExcludes(
+  Object.values(ebayConditionDescriptionPayload.marketplaces.ebay.itemSpecifics),
+  "Condition detail one",
+  "eBay condition fixture itemSpecifics"
+);
+assertExcludes(
+  Object.values(ebayConditionDescriptionPayload.marketplaces.ebay.itemSpecifics),
+  "Approximate Measurements",
+  "eBay condition fixture itemSpecifics"
+);
+assertExcludes(
+  Object.values(ebayConditionDescriptionPayload.marketplaces.ebay.itemSpecifics),
+  "Ships within one business day",
+  "eBay condition fixture itemSpecifics"
+);
+
+const poshmarkConditionDescriptionPreview = buildLpuPayloadPreview({
+  finalOutput: `POSHMARK
+
+Title:
+Example Poshmark title
+
+Description:
+Main Poshmark buyer-facing description.
+- Detail bullet one
+- Detail bullet two
+
+Condition:
+- Condition detail one
+- Condition detail two
+
+Search keywords:
+example keyword one, example keyword two
+
+Style Tags:
+Vintage; Retro; Formal
+
+Compact 3-Tag Strategy (Alt Option):
+Minimalist; Classic; Party
+
+Approximate Measurements:
+Width: approx. 1 inch
+
+Ships within one business day after purchase. Displays & boxes shown are not included.`,
+  hasSellingBrief: true,
+  generatedAt: "2026-06-11T00:00:00.000Z",
+});
+
+const poshmarkConditionDescriptionPayload = poshmarkConditionDescriptionPreview.payload;
+const poshmarkConditionDescription =
+  poshmarkConditionDescriptionPayload.marketplaces.poshmark.description;
+assertIncludes(
+  poshmarkConditionDescription,
+  "Main Poshmark buyer-facing description.",
+  "Poshmark condition buyer-facing description"
+);
+assertIncludes(
+  poshmarkConditionDescription,
+  "Condition:",
+  "Poshmark condition buyer-facing description"
+);
+assertIncludes(
+  poshmarkConditionDescription,
+  "Condition detail one",
+  "Poshmark condition buyer-facing description"
+);
+assertIncludes(
+  poshmarkConditionDescription,
+  "Search keywords:",
+  "Poshmark condition buyer-facing description"
+);
+assertIncludes(
+  poshmarkConditionDescription,
+  "example keyword one",
+  "Poshmark condition buyer-facing description"
+);
+assertIncludes(
+  poshmarkConditionDescription,
+  "Approximate Measurements:",
+  "Poshmark condition buyer-facing description"
+);
+assertIncludes(
+  poshmarkConditionDescription,
+  "Width: approx. 1 inch",
+  "Poshmark condition buyer-facing description"
+);
+assertIncludes(
+  poshmarkConditionDescription,
+  "Ships within one business day after purchase. Displays & boxes shown are not included.",
+  "Poshmark condition buyer-facing description"
+);
+if (poshmarkConditionDescriptionPayload.marketplaceFields?.poshmark) {
+  assert.equal(
+    poshmarkConditionDescriptionPayload.marketplaceFields.poshmark.description,
+    poshmarkConditionDescription
+  );
+}
+assert.deepEqual(
+  Array.from(poshmarkConditionDescriptionPayload.marketplaces.poshmark.styleTags),
+  ["Vintage", "Retro", "Formal"]
+);
+assertExcludes(
+  poshmarkConditionDescriptionPayload.marketplaces.poshmark.styleTags,
+  "Minimalist",
+  "Poshmark condition fixture styleTags"
+);
+assertExcludes(
+  poshmarkConditionDescriptionPayload.marketplaces.poshmark.styleTags,
+  "example keyword one",
+  "Poshmark condition fixture styleTags"
+);
+assertExcludes(
+  poshmarkConditionDescriptionPayload.marketplaces.poshmark.styleTags,
+  "Approximate Measurements",
+  "Poshmark condition fixture styleTags"
+);
+assertExcludes(
+  poshmarkConditionDescriptionPayload.marketplaces.poshmark.styleTags,
+  "Ships within one business day",
+  "Poshmark condition fixture styleTags"
 );
 
 function assertSourceIncludes(source, expected, label) {
@@ -1022,7 +1446,6 @@ const changedFiles = execFileSync("git", ["diff", "--name-only"], {
   .filter(Boolean);
 const forbiddenPayloadFiles = new Set([
   "app/lpu-v2/page.tsx",
-  "lib/lpu/payloadPreview.ts",
   "lib/vendoo/extensionPayload.ts",
   "lib/sendVendooPayloadToExtension.ts",
 ]);
@@ -1032,7 +1455,7 @@ const changedForbiddenPayloadFiles = changedFiles.filter((filePath) =>
 assert.deepEqual(
   changedForbiddenPayloadFiles,
   [],
-  "Depop/Mercari extension price work must not modify V2 app payload files"
+  "V2 payload preview work must not modify unrelated app payload handoff files"
 );
 
 console.log("V2 payload preview compatibility checks passed.");
