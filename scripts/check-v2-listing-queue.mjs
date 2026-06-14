@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
@@ -261,6 +262,19 @@ const queueAuthLogoutRoutePath = path.join(
   "app/api/lpu/queue-auth/logout/route.ts"
 );
 const listingQueueCrudRouteDir = path.join(rootDir, "app/api/lpu/listing-queue");
+const listingQueueServerPath = path.join(rootDir, "lib/lpu/listingQueueServer.ts");
+const listingQueueCollectionRoutePath = path.join(
+  listingQueueCrudRouteDir,
+  "route.ts"
+);
+const listingQueueItemRoutePath = path.join(
+  listingQueueCrudRouteDir,
+  "[id]/route.ts"
+);
+const listingQueueRestoreRoutePath = path.join(
+  listingQueueCrudRouteDir,
+  "[id]/restore/route.ts"
+);
 
 assert.equal(fs.existsSync(queueAuthPath), true, "Queue auth helper exists.");
 assert.equal(
@@ -280,8 +294,28 @@ assert.equal(
 );
 assert.equal(
   fs.existsSync(listingQueueCrudRouteDir),
-  false,
-  "Listing queue CRUD routes have not been added yet."
+  true,
+  "Listing queue CRUD route directory exists."
+);
+assert.equal(
+  fs.existsSync(listingQueueServerPath),
+  true,
+  "Listing queue server helper exists."
+);
+assert.equal(
+  fs.existsSync(listingQueueCollectionRoutePath),
+  true,
+  "Listing queue collection route exists."
+);
+assert.equal(
+  fs.existsSync(listingQueueItemRoutePath),
+  true,
+  "Listing queue item route exists."
+);
+assert.equal(
+  fs.existsSync(listingQueueRestoreRoutePath),
+  true,
+  "Listing queue restore route exists."
 );
 
 const queueAuthSource = fs.readFileSync(queueAuthPath, "utf8");
@@ -317,5 +351,93 @@ assert.match(queueAuthRouteSources[1], /export async function GET/);
 assert.match(queueAuthRouteSources[1], /requireQueueOwnerSession/);
 assert.match(queueAuthRouteSources[2], /export async function POST/);
 assert.match(queueAuthRouteSources[2], /clearQueueOwnerSession/);
+
+const listingQueueServerSource = fs.readFileSync(listingQueueServerPath, "utf8");
+const listingQueueCollectionRouteSource = fs.readFileSync(
+  listingQueueCollectionRoutePath,
+  "utf8"
+);
+const listingQueueItemRouteSource = fs.readFileSync(
+  listingQueueItemRoutePath,
+  "utf8"
+);
+const listingQueueRestoreRouteSource = fs.readFileSync(
+  listingQueueRestoreRoutePath,
+  "utf8"
+);
+const listingQueueRouteSources = [
+  listingQueueCollectionRouteSource,
+  listingQueueItemRouteSource,
+  listingQueueRestoreRouteSource,
+];
+
+assert.match(listingQueueServerSource, /import\s+["']server-only["']/);
+assert.match(listingQueueServerSource, /SUPABASE_SERVICE_ROLE_KEY/);
+assert.match(listingQueueServerSource, /NEXT_PUBLIC_SUPABASE_URL/);
+assert.match(listingQueueServerSource, /fetch\(/);
+assert.match(listingQueueServerSource, /\/rest\/v1\/listing_queue/);
+assert.match(listingQueueServerSource, /\/rest\/v1\/listing_queue_photos/);
+assert.equal(/@supabase\/supabase-js/.test(listingQueueServerSource), false);
+assert.equal(/OpenAI|openai|responses\.create|chat\.completions/.test(listingQueueServerSource), false);
+assert.equal(/from\s+["']react["']|window\.|document\.|localStorage|sessionStorage|FileReader/.test(listingQueueServerSource), false);
+assert.equal(/extension|vendoo-fill|content-vendoo|content-app/.test(listingQueueServerSource), false);
+assert.equal(/console\.(log|info|warn|error)/.test(listingQueueServerSource), false);
+assert.match(listingQueueServerSource, /createListingQueueDraftFromSnapshot/);
+assert.match(listingQueueServerSource, /sanitizePayloadSnapshotForQueue/);
+assert.match(listingQueueServerSource, /sanitizeQueuePhotosForStorage/);
+assert.match(listingQueueServerSource, /hasQueuePhotoStorageReference/);
+assert.match(listingQueueServerSource, /Photo storagePath is required/);
+assert.equal(/signed_url|data_url/i.test(listingQueueServerSource), false);
+assert.match(listingQueueServerSource, /archiveListingQueueItem/);
+assert.match(listingQueueServerSource, /status:\s*["']archived["']/);
+assert.match(listingQueueServerSource, /archived_at/);
+assert.match(listingQueueServerSource, /restoreListingQueueItem/);
+assert.match(listingQueueServerSource, /archived_at:\s*null/);
+
+for (const routeSource of listingQueueRouteSources) {
+  assert.match(routeSource, /requireQueueOwnerSession/);
+  assert.match(routeSource, /QueueAuthError/);
+  assert.equal(/SUPABASE_SERVICE_ROLE_KEY|NEXT_PUBLIC_SUPABASE_URL/.test(routeSource), false);
+  assert.equal(/@supabase\/supabase-js|\/rest\/v1\/|fetch\(/.test(routeSource), false);
+  assert.equal(/extension|vendoo-fill|content-vendoo|content-app/.test(routeSource), false);
+  assert.equal(/OpenAI|openai|responses\.create|chat\.completions/.test(routeSource), false);
+  assert.equal(/from\s+["']react["']|window\.|document\.|localStorage|sessionStorage|FileReader/.test(routeSource), false);
+}
+
+assert.match(listingQueueCollectionRouteSource, /export async function GET/);
+assert.match(listingQueueCollectionRouteSource, /export async function POST/);
+assert.match(listingQueueCollectionRouteSource, /listListingQueueItems/);
+assert.match(listingQueueCollectionRouteSource, /createListingQueueItem/);
+assert.match(listingQueueCollectionRouteSource, /Invalid JSON body/);
+
+assert.match(listingQueueItemRouteSource, /export async function GET/);
+assert.match(listingQueueItemRouteSource, /export async function PATCH/);
+assert.match(listingQueueItemRouteSource, /export async function DELETE/);
+assert.match(listingQueueItemRouteSource, /getListingQueueItem/);
+assert.match(listingQueueItemRouteSource, /updateListingQueueItem/);
+assert.match(listingQueueItemRouteSource, /archiveListingQueueItem/);
+assert.equal(/deleteListingQueueItem|hardDelete|from\(["']listing_queue["']\)\.delete/i.test(listingQueueItemRouteSource), false);
+assert.match(listingQueueItemRouteSource, /Invalid JSON body/);
+
+assert.match(listingQueueRestoreRouteSource, /export async function POST/);
+assert.match(listingQueueRestoreRouteSource, /restoreListingQueueItem/);
+
+const changedFiles = execFileSync("git", ["diff", "--name-only"], {
+  cwd: rootDir,
+  encoding: "utf8",
+})
+  .split(/\r?\n/)
+  .filter(Boolean);
+const forbiddenChangedFiles = changedFiles.filter(
+  (file) =>
+    file === "app/lpu-v2/page.tsx" ||
+    file === "app/lpu/page.tsx" ||
+    file.startsWith("listing-writer-app/extension/") ||
+    file.startsWith("components/vendoo/") ||
+    file.startsWith("lib/vendoo/") ||
+    file === "lib/sendVendooPayloadToExtension.ts"
+);
+
+assert.deepEqual(forbiddenChangedFiles, [], "No V2 UI, V1 UI, Vendoo, or extension files changed.");
 
 console.log("V2 listing queue checks passed.");
