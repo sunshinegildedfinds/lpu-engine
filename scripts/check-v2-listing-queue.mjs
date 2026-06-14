@@ -247,4 +247,75 @@ const helperSource = fs.readFileSync(path.join(rootDir, "lib/lpu/listingQueue.ts
 assert.equal(/from\s+["']react["']|from\s+["']next\//.test(helperSource), false);
 assert.equal(/supabase|fetch\(|XMLHttpRequest|OpenAI|FileReader|window\.|document\./.test(helperSource), false);
 
+const queueAuthPath = path.join(rootDir, "lib/lpu/queueAuth.ts");
+const queueAuthLoginRoutePath = path.join(
+  rootDir,
+  "app/api/lpu/queue-auth/login/route.ts"
+);
+const queueAuthStatusRoutePath = path.join(
+  rootDir,
+  "app/api/lpu/queue-auth/status/route.ts"
+);
+const queueAuthLogoutRoutePath = path.join(
+  rootDir,
+  "app/api/lpu/queue-auth/logout/route.ts"
+);
+const listingQueueCrudRouteDir = path.join(rootDir, "app/api/lpu/listing-queue");
+
+assert.equal(fs.existsSync(queueAuthPath), true, "Queue auth helper exists.");
+assert.equal(
+  fs.existsSync(queueAuthLoginRoutePath),
+  true,
+  "Queue auth login route exists."
+);
+assert.equal(
+  fs.existsSync(queueAuthStatusRoutePath),
+  true,
+  "Queue auth status route exists."
+);
+assert.equal(
+  fs.existsSync(queueAuthLogoutRoutePath),
+  true,
+  "Queue auth logout route exists."
+);
+assert.equal(
+  fs.existsSync(listingQueueCrudRouteDir),
+  false,
+  "Listing queue CRUD routes have not been added yet."
+);
+
+const queueAuthSource = fs.readFileSync(queueAuthPath, "utf8");
+const queueAuthRouteSources = [
+  fs.readFileSync(queueAuthLoginRoutePath, "utf8"),
+  fs.readFileSync(queueAuthStatusRoutePath, "utf8"),
+  fs.readFileSync(queueAuthLogoutRoutePath, "utf8"),
+];
+
+assert.match(queueAuthSource, /LPU_QUEUE_OWNER_SECRET/);
+assert.match(queueAuthSource, /LPU_QUEUE_SESSION_SECRET/);
+assert.match(queueAuthSource, /httpOnly:\s*true/);
+assert.match(queueAuthSource, /sameSite:\s*["'](?:strict|lax)["']/i);
+assert.match(queueAuthSource, /createHmac|subtle\.sign|HMAC/i);
+assert.match(queueAuthSource, /requireQueueOwnerSession/);
+assert.match(queueAuthSource, /clearQueueOwnerSession/);
+assert.equal(/console\.(log|info|warn|error)|process\.env\[[^\]]+\][^;\n]*console/i.test(queueAuthSource), false);
+assert.equal(/NEXT_PUBLIC_|SUPABASE_SERVICE_ROLE_KEY/.test(queueAuthSource), false);
+assert.equal(/supabase|fetch\(|XMLHttpRequest|OpenAI|FileReader|window\.|document\./i.test(queueAuthSource), false);
+assert.equal(/from\s+["']react["']/.test(queueAuthSource), false);
+
+for (const routeSource of queueAuthRouteSources) {
+  assert.equal(/supabase|SUPABASE_|@supabase/i.test(routeSource), false);
+  assert.equal(/listingQueueServer|listing_queue|listing-queue/i.test(routeSource), false);
+  assert.equal(/extension|vendoo-fill|content-vendoo|content-app/i.test(routeSource), false);
+  assert.equal(/OpenAI|openai|responses\.create|chat\.completions/i.test(routeSource), false);
+  assert.equal(/from\s+["']react["']|window\.|document\.|localStorage|sessionStorage/i.test(routeSource), false);
+}
+
+assert.match(queueAuthRouteSources[0], /export async function POST/);
+assert.match(queueAuthRouteSources[0], /setQueueOwnerSessionCookie/);
+assert.match(queueAuthRouteSources[1], /export async function GET/);
+assert.match(queueAuthRouteSources[1], /requireQueueOwnerSession/);
+assert.match(queueAuthRouteSources[2], /export async function POST/);
+assert.match(queueAuthRouteSources[2], /clearQueueOwnerSession/);
+
 console.log("V2 listing queue checks passed.");
