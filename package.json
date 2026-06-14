@@ -10,6 +10,7 @@
     "check:v2-pricing": "node scripts/check-v2-pricing.mjs",
     "check:v2-web-comps": "node scripts/check-v2-web-comps.mjs",
     "check:v2-payload-preview": "node scripts/check-v2-payload-preview.mjs",
+    "check:v2-listing-queue": "node scripts/check-v2-listing-queue.mjs",
     "lint": "eslint"
   },
   "dependencies": {
