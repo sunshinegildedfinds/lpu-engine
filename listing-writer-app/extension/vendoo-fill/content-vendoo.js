@@ -582,6 +582,14 @@
         usedElements,
       });
       await ensurePoshmarkStageOpenForPoshmarkFill();
+      await fillPoshmarkTitleIfPresent({
+        payload,
+        usedElements,
+      });
+      await fillPoshmarkDescriptionIfPresent({
+        payload,
+        usedElements,
+      });
       await fillPoshmarkAdjustedPriceIfPresent({
         payload,
         usedElements,
@@ -2424,6 +2432,9 @@
 
   function evaluatePoshmarkStageGate() {
     const selectors = [
+      'input[name="listings.poshmark.overrides.title"]',
+      'input[data-testid="listings.poshmark.overrides.title"]',
+      'input#listings\\.poshmark\\.overrides\\.title',
       'textarea[name="listings.poshmark.description"]',
       'textarea#listings\\.poshmark\\.description',
       'input[name="listings.poshmark.title"]',
@@ -2506,6 +2517,9 @@
 
   function isPoshmarkFormReadyInDom() {
     const selectors = [
+      'input[name="listings.poshmark.overrides.title"]',
+      'input[data-testid="listings.poshmark.overrides.title"]',
+      'input#listings\\.poshmark\\.overrides\\.title',
       'textarea[name="listings.poshmark.overrides.description"]',
       'textarea#listings\\.poshmark\\.overrides\\.description',
       'textarea[name="listings.poshmark.description"]',
@@ -2891,6 +2905,231 @@
       }
     }
     return null;
+  }
+
+  function pickPoshmarkTitle(payload) {
+    const candidates = [
+      payload?.poshmark?.title,
+      payload?.marketplaces?.poshmark?.title,
+      payload?.marketplaceFields?.poshmark?.title,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+    return "";
+  }
+
+  function pickPoshmarkDescription(payload) {
+    const candidates = [
+      payload?.poshmark?.description,
+      payload?.marketplaces?.poshmark?.description,
+      payload?.marketplaceFields?.poshmark?.description,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+    return "";
+  }
+
+  async function fillPoshmarkTitleIfPresent(input) {
+    const { payload, usedElements } = input;
+    const payloadValue = pickPoshmarkTitle(payload);
+    const diagnostic = {
+      payloadValuePresent: Boolean(payloadValue),
+      finalValue: "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const poshmarkGate = evaluatePoshmarkStageGate();
+    if (!poshmarkGate.stageDetected) {
+      diagnostic.reason = "not poshmark stage";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!payloadValue) {
+      diagnostic.reason = "poshmark.title missing";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    const field = await waitForPoshmarkTextField({
+      findField: findPoshmarkTitleField,
+      isExpectedField: (candidate) => candidate instanceof HTMLInputElement,
+    });
+    diagnostic.finalValue = field instanceof HTMLInputElement ? String(field.value || "") : "";
+
+    if (!(field instanceof HTMLInputElement) || !isVisible(field)) {
+      diagnostic.reason = "Poshmark Title field not found";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    const result = await fillAndVerifyTextFieldWithRetry(field, payloadValue, {
+      trimForCompare: true,
+    });
+    diagnostic.finalValue = result.actualValue;
+    if (!result.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "verification failed";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value replaced";
+    console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+    return diagnostic;
+  }
+
+  async function fillPoshmarkDescriptionIfPresent(input) {
+    const { payload, usedElements } = input;
+    const payloadValue = pickPoshmarkDescription(payload);
+    const diagnostic = {
+      payloadValuePresent: Boolean(payloadValue),
+      finalValuePresent: false,
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const poshmarkGate = evaluatePoshmarkStageGate();
+    if (!poshmarkGate.stageDetected) {
+      diagnostic.reason = "not poshmark stage";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!payloadValue) {
+      diagnostic.reason = "poshmark.description missing";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    const field = await waitForPoshmarkTextField({
+      findField: findPoshmarkDescriptionField,
+      isExpectedField: (candidate) => candidate instanceof HTMLTextAreaElement,
+    });
+    diagnostic.finalValuePresent =
+      field instanceof HTMLTextAreaElement ? Boolean(String(field.value || "").trim()) : false;
+
+    if (!(field instanceof HTMLTextAreaElement) || !isVisible(field)) {
+      diagnostic.reason = "Poshmark Description field not found";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    const result = await fillAndVerifyTextFieldWithRetry(field, payloadValue, {
+      trimForCompare: true,
+    });
+    diagnostic.finalValuePresent = Boolean(String(result.actualValue || "").trim());
+    if (!result.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "verification failed";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value replaced";
+    console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+    return diagnostic;
+  }
+
+  async function waitForPoshmarkTextField(input) {
+    const { findField, isExpectedField } = input;
+    const maxAttempts = 12;
+    const intervalMs = 140;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const field = findField();
+      if (isExpectedField(field) && isTextFieldReady(field)) {
+        return field;
+      }
+      await wait(intervalMs);
+    }
+    return null;
+  }
+
+  function findPoshmarkTitleField() {
+    const selectors = [
+      'input[name="listings.poshmark.overrides.title"]',
+      'input[data-testid="listings.poshmark.overrides.title"]',
+      'input#listings\\.poshmark\\.overrides\\.title',
+    ];
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function findPoshmarkDescriptionField() {
+    const selectors = [
+      'textarea[name="listings.poshmark.overrides.description"]',
+      'textarea#listings\\.poshmark\\.overrides\\.description',
+    ];
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLTextAreaElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function isTextFieldReady(field) {
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) {
+      return false;
+    }
+    return isVisible(field) && !field.disabled && !field.readOnly;
+  }
+
+  async function fillAndVerifyTextFieldWithRetry(field, value, options = {}) {
+    const trimForCompare = options.trimForCompare !== false;
+    let lastActualValue = field instanceof Element ? String(field.value || "") : "";
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!isTextFieldReady(field)) {
+        return { ok: false, actualValue: lastActualValue };
+      }
+
+      setElementValue(field, "");
+      await wait(50);
+      setElementValue(field, value);
+      field.dispatchEvent(new Event("blur", { bubbles: true }));
+      await wait(140);
+
+      lastActualValue = String(field.value || "");
+      const actualComparable = trimForCompare ? lastActualValue.trim() : lastActualValue;
+      const expectedComparable = trimForCompare ? String(value).trim() : String(value);
+      if (actualComparable === expectedComparable) {
+        return { ok: true, actualValue: lastActualValue };
+      }
+
+      await wait(160);
+    }
+
+    return { ok: false, actualValue: lastActualValue };
   }
 
   async function fillPoshmarkAdjustedPriceIfPresent(input) {

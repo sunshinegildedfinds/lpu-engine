@@ -716,6 +716,36 @@ const mercariPriceFillSource = sourceBetween(
   "async function ensureDepopStageOpenForDepopFill",
   "Mercari price fill source"
 );
+const poshmarkTitleReaderSource = sourceBetween(
+  contentVendooSource,
+  "function pickPoshmarkTitle",
+  "function pickPoshmarkDescription",
+  "Poshmark title reader source"
+);
+const poshmarkDescriptionReaderSource = sourceBetween(
+  contentVendooSource,
+  "function pickPoshmarkDescription",
+  "async function fillPoshmarkTitleIfPresent",
+  "Poshmark description reader source"
+);
+const poshmarkTitleFillSource = sourceBetween(
+  contentVendooSource,
+  "async function fillPoshmarkTitleIfPresent",
+  "async function fillPoshmarkDescriptionIfPresent",
+  "Poshmark title fill source"
+);
+const poshmarkDescriptionFillSource = sourceBetween(
+  contentVendooSource,
+  "async function fillPoshmarkDescriptionIfPresent",
+  "async function waitForPoshmarkTextField",
+  "Poshmark description fill source"
+);
+const poshmarkPriceFillSource = sourceBetween(
+  contentVendooSource,
+  "async function fillPoshmarkAdjustedPriceIfPresent",
+  "async function setPoshmarkAdjustedPricePreservingDecimal",
+  "Poshmark adjusted price fill source"
+);
 
 assertSourceIncludes(
   contentVendooSource,
@@ -798,6 +828,105 @@ assertSourceIncludes(
   contentVendooSource,
   "async function fillPoshmarkAdjustedPriceIfPresent",
   "Poshmark adjusted price fill"
+);
+assertSourceIncludes(
+  contentVendooSource,
+  'input[name="listings.poshmark.overrides.title"]',
+  "Poshmark title override selector"
+);
+assertSourceIncludes(
+  contentVendooSource,
+  'input[data-testid="listings.poshmark.overrides.title"]',
+  "Poshmark title override data-testid selector"
+);
+assertSourceIncludes(
+  contentVendooSource,
+  'textarea[name="listings.poshmark.overrides.description"]',
+  "Poshmark description override selector"
+);
+assertSourceIncludes(
+  poshmarkTitleReaderSource,
+  "payload?.poshmark?.title",
+  "Poshmark title top-level payload path"
+);
+assertSourceIncludes(
+  poshmarkTitleReaderSource,
+  "payload?.marketplaces?.poshmark?.title",
+  "Poshmark title marketplaces payload path"
+);
+assertSourceIncludes(
+  poshmarkTitleReaderSource,
+  "payload?.marketplaceFields?.poshmark?.title",
+  "Poshmark title marketplaceFields payload path"
+);
+assertSourceIncludes(
+  poshmarkDescriptionReaderSource,
+  "payload?.poshmark?.description",
+  "Poshmark description top-level payload path"
+);
+assertSourceIncludes(
+  poshmarkDescriptionReaderSource,
+  "payload?.marketplaces?.poshmark?.description",
+  "Poshmark description marketplaces payload path"
+);
+assertSourceIncludes(
+  poshmarkDescriptionReaderSource,
+  "payload?.marketplaceFields?.poshmark?.description",
+  "Poshmark description marketplaceFields payload path"
+);
+assert.equal(
+  /coreFields\s*\.\s*title/.test(poshmarkTitleReaderSource + poshmarkTitleFillSource),
+  false,
+  "Poshmark title fill must not read coreFields.title"
+);
+assert.equal(
+  /coreFields\s*\.\s*description/.test(
+    poshmarkDescriptionReaderSource + poshmarkDescriptionFillSource
+  ),
+  false,
+  "Poshmark description fill must not read coreFields.description"
+);
+assertSourceIncludes(
+  poshmarkPriceFillSource,
+  "payload?.poshmark?.adjustedPrice",
+  "Poshmark adjusted price top-level payload path"
+);
+assertSourceIncludes(
+  poshmarkPriceFillSource,
+  "payload?.marketplaces?.poshmark?.adjustedPrice",
+  "Poshmark adjusted price marketplaces payload path"
+);
+assertSourceIncludes(
+  poshmarkPriceFillSource,
+  "setPoshmarkAdjustedPricePreservingDecimal",
+  "Poshmark adjusted price decimal-preserving setter"
+);
+
+const poshmarkGuardChangedFiles = execFileSync("git", ["diff", "--name-only"], {
+  cwd: rootDir,
+  encoding: "utf8",
+})
+  .split("\n")
+  .map((line) => line.trim())
+  .filter(Boolean);
+const allowedChangedFiles = new Set([
+  "listing-writer-app/extension/vendoo-fill/content-vendoo.js",
+  "scripts/check-v2-payload-preview.mjs",
+  "package.json",
+]);
+const disallowedV2PayloadFiles = poshmarkGuardChangedFiles.filter(
+  (file) =>
+    !allowedChangedFiles.has(file) &&
+    (/^(app\/lpu-v2|lib\/lpu|lib\/vendoo|lib\/sendVendooPayloadToExtension\.ts|components\/layer3)/.test(
+      file
+    ) ||
+      file === "app/lpu/page.tsx" ||
+      file === "app/api/lpu/generate/route.ts")
+);
+assert.deepEqual(
+  disallowedV2PayloadFiles,
+  [],
+  `V2 app/payload files changed unexpectedly: ${disallowedV2PayloadFiles.join(", ")}`
 );
 
 function assertV1CompatibleResolvedPrice(value, label) {
