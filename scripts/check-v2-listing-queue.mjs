@@ -444,8 +444,49 @@ assert.match(lpuV2PageSource, /queueSendingItemId/);
 assert.match(lpuV2PageSource, /queueSendStatus/);
 assert.match(lpuV2PageSource, /queueSendError/);
 assert.equal(/@supabase\/supabase-js|SUPABASE_SERVICE_ROLE_KEY/.test(lpuV2PageSource), false);
+assert.equal(/import[\s\S]*from\s+["']@supabase\/supabase-js["']/.test(lpuV2PageSource), false);
 assert.equal(/localStorage|sessionStorage/.test(lpuV2PageSource), false);
 assert.match(lpuV2PageSource, /Send to Vendoo/);
+
+assert.match(lpuV2PageSource, /queueThumbnailUrls,\s*setQueueThumbnailUrls/);
+assert.match(lpuV2PageSource, /queueThumbnailErrors,\s*setQueueThumbnailErrors/);
+assert.match(lpuV2PageSource, /queueThumbnailLoadingIds,\s*setQueueThumbnailLoadingIds/);
+assert.match(lpuV2PageSource, /const getQueueItemPrimaryPhoto = useCallback/);
+assert.match(lpuV2PageSource, /const getQueueThumbnailCacheKey = useCallback/);
+assert.match(lpuV2PageSource, /const getQueueItemThumbnailSrc = useCallback/);
+assert.match(lpuV2PageSource, /const shouldSignQueueThumbnail = useCallback/);
+
+const queueThumbnailSourceMatch = lpuV2PageSource.match(
+  /const getQueueItemPrimaryPhoto = useCallback[\s\S]*?\n  function buildCurrentQueueSnapshotBody/
+);
+assert(queueThumbnailSourceMatch, "V2 page has queue thumbnail helpers.");
+const queueThumbnailSource = queueThumbnailSourceMatch[0];
+assert.match(queueThumbnailSource, /storagePath/);
+assert.match(queueThumbnailSource, /imageUrl/);
+assert.match(queueThumbnailSource, /isHttpImageUrl/);
+assert.match(queueThumbnailSource, /queueThumbnailUrls\[cacheKey\]/);
+assert.match(queueThumbnailSource, /queueThumbnailErrors\[cacheKey\]/);
+assert.match(queueThumbnailSource, /queueThumbnailLoadingIds\[cacheKey\]/);
+assert.match(queueThumbnailSource, /cleanQueueString\(photo\.storagePath\)/);
+assert.equal(/localStorage|sessionStorage/.test(queueThumbnailSource), false);
+assert.equal(/createClient|@supabase\/supabase-js|SUPABASE_SERVICE_ROLE_KEY/.test(queueThumbnailSource), false);
+
+const queueThumbnailSigningEffectMatch = lpuV2PageSource.match(
+  /const thumbnailRequests = queueItems[\s\S]*?\/api\/lpu\/sign-storage-image[\s\S]*?\n  \}, \[/
+);
+assert(queueThumbnailSigningEffectMatch, "V2 page signs queue thumbnails.");
+const queueThumbnailSigningEffectSource = queueThumbnailSigningEffectMatch[0];
+assert.match(queueThumbnailSigningEffectSource, /shouldSignQueueThumbnail\(item\)/);
+assert.match(queueThumbnailSigningEffectSource, /storagePath:\s*photo \? cleanQueueString\(photo\.storagePath\) : ["']["']/);
+assert.match(queueThumbnailSigningEffectSource, /\/api\/lpu\/sign-storage-image/);
+assert.match(queueThumbnailSigningEffectSource, /method:\s*["']POST["']/);
+assert.match(queueThumbnailSigningEffectSource, /credentials:\s*["']include["']/);
+assert.match(queueThumbnailSigningEffectSource, /body:\s*JSON\.stringify\(\{\s*storagePath:\s*request\.storagePath\s*\}\)/);
+assert.match(queueThumbnailSigningEffectSource, /setQueueThumbnailUrls/);
+assert.match(queueThumbnailSigningEffectSource, /setQueueThumbnailErrors/);
+assert.match(queueThumbnailSigningEffectSource, /setQueueThumbnailLoadingIds/);
+assert.equal(/supabase|createClient|@supabase\/supabase-js|SUPABASE_SERVICE_ROLE_KEY/i.test(queueThumbnailSigningEffectSource), false);
+assert.equal(/localStorage|sessionStorage/.test(queueThumbnailSigningEffectSource), false);
 
 const queueSnapshotBuilderMatch = lpuV2PageSource.match(
   /function buildCurrentQueueSnapshotBody\(\): CurrentQueueSnapshotBody \| null \{[\s\S]*?\n  \}\n\n  function hasUnsavedWorkspaceContent/
@@ -557,6 +598,16 @@ const queueCardActionsMatch = lpuV2PageSource.match(
   /queueItems\.map\(\(item\) => \{[\s\S]*?<\/article>/
 );
 assert(queueCardActionsMatch, "V2 page renders queue cards.");
+assert.match(queueCardActionsMatch[0], /getQueueThumbnailCacheKey\(item\)/);
+assert.match(queueCardActionsMatch[0], /getQueueItemThumbnailSrc\(item\)/);
+assert.match(queueCardActionsMatch[0], /src=\{thumbnailUrl\}/);
+assert.match(queueCardActionsMatch[0], /onError=\{\(\) => \{/);
+assert.match(queueCardActionsMatch[0], /setQueueThumbnailErrors/);
+assert.match(queueCardActionsMatch[0], /setQueueThumbnailUrls/);
+assert.match(queueCardActionsMatch[0], /thumbnailLoading \? ["']Loading["'] : ["']No image["']/);
+assert.match(queueCardActionsMatch[0], /alt=\{thumbnailAlt\}/);
+assert.equal(/src=\{[^}]*storagePath/.test(queueCardActionsMatch[0]), false);
+assert.equal(/src=\{[^}]*imageUrl/.test(queueCardActionsMatch[0]), false);
 assert.match(queueCardActionsMatch[0], /Send to Vendoo/);
 assert.match(queueCardActionsMatch[0], /sendQueuedItemToVendoo\(item\.id \|\| ["']["']\)/);
 assert.match(queueCardActionsMatch[0], /queueSendingItemId === item\.id/);

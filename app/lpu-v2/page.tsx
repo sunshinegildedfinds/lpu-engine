@@ -1,6 +1,13 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  ChangeEvent,
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import {
   buildPricingResearchFromBrief,
@@ -525,6 +532,10 @@ function cleanQueueNumber(value: unknown): number {
     : 0;
 }
 
+function isHttpImageUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
 function queuePhotosToGeneratorImageReferences(
   photos: ListingQueueRecord["photos"]
 ): GeneratorImageReference[] {
@@ -953,6 +964,15 @@ export default function LpuV2Page() {
   const [queueSendFeedbackItemId, setQueueSendFeedbackItemId] = useState("");
   const [queueSendStatus, setQueueSendStatus] = useState("");
   const [queueSendError, setQueueSendError] = useState("");
+  const [queueThumbnailUrls, setQueueThumbnailUrls] = useState<
+    Record<string, string>
+  >({});
+  const [queueThumbnailErrors, setQueueThumbnailErrors] = useState<
+    Record<string, string | true>
+  >({});
+  const [queueThumbnailLoadingIds, setQueueThumbnailLoadingIds] = useState<
+    Record<string, true>
+  >({});
 
   const compiledNotes = useMemo(
     () =>
@@ -1123,6 +1143,169 @@ export default function LpuV2Page() {
     setActiveQueueItemStatus(item.status);
     setActiveQueueItemUpdatedAt(item.updatedAt || item.createdAt || "");
   }
+
+  const getQueueItemPrimaryPhoto = useCallback((item: ListingQueueRecord) => {
+    const orderedPhotos = [...item.photos].sort(
+      (left, right) =>
+        cleanQueueNumber(left.sortOrder) - cleanQueueNumber(right.sortOrder)
+    );
+
+    return (
+      orderedPhotos.find((photo) => cleanQueueString(photo.storagePath)) ??
+      orderedPhotos.find((photo) =>
+        isHttpImageUrl(cleanQueueString(photo.imageUrl))
+      ) ??
+      null
+    );
+  }, []);
+
+  const getQueueThumbnailCacheKey = useCallback(
+    (item: ListingQueueRecord): string => {
+      const photo = getQueueItemPrimaryPhoto(item);
+      if (!photo) return "";
+
+      const itemId = cleanQueueString(item.id) || "queued";
+      const storagePath = cleanQueueString(photo.storagePath);
+      if (storagePath) return `${itemId}:${storagePath}`;
+
+      const imageUrl = cleanQueueString(photo.imageUrl);
+      return isHttpImageUrl(imageUrl) ? `${itemId}:${imageUrl}` : "";
+    },
+    [getQueueItemPrimaryPhoto]
+  );
+
+  const getQueueItemThumbnailSrc = useCallback(
+    (item: ListingQueueRecord): string => {
+      const cacheKey = getQueueThumbnailCacheKey(item);
+      if (!cacheKey || queueThumbnailErrors[cacheKey]) return "";
+
+      const signedUrl = queueThumbnailUrls[cacheKey];
+      if (signedUrl) return signedUrl;
+
+      const photo = getQueueItemPrimaryPhoto(item);
+      if (!photo || cleanQueueString(photo.storagePath)) return "";
+
+      const imageUrl = cleanQueueString(photo.imageUrl);
+      return isHttpImageUrl(imageUrl) ? imageUrl : "";
+    },
+    [
+      getQueueItemPrimaryPhoto,
+      getQueueThumbnailCacheKey,
+      queueThumbnailErrors,
+      queueThumbnailUrls,
+    ]
+  );
+
+  const shouldSignQueueThumbnail = useCallback(
+    (item: ListingQueueRecord): boolean => {
+      if (item.archivedAt || item.status === "archived") return false;
+
+      const photo = getQueueItemPrimaryPhoto(item);
+      const storagePath = photo ? cleanQueueString(photo.storagePath) : "";
+      const cacheKey = getQueueThumbnailCacheKey(item);
+
+      return Boolean(
+        storagePath &&
+          cacheKey &&
+          !queueThumbnailUrls[cacheKey] &&
+          !queueThumbnailErrors[cacheKey] &&
+          !queueThumbnailLoadingIds[cacheKey]
+      );
+    },
+    [
+      getQueueItemPrimaryPhoto,
+      getQueueThumbnailCacheKey,
+      queueThumbnailErrors,
+      queueThumbnailLoadingIds,
+      queueThumbnailUrls,
+    ]
+  );
+
+  useEffect(() => {
+    if (!queueAuthenticated || !queueItems.length) return;
+
+    const thumbnailRequests = queueItems
+      .filter((item) => shouldSignQueueThumbnail(item))
+      .map((item) => {
+        const photo = getQueueItemPrimaryPhoto(item);
+
+        return {
+          cacheKey: getQueueThumbnailCacheKey(item),
+          storagePath: photo ? cleanQueueString(photo.storagePath) : "",
+        };
+      })
+      .filter(
+        (request) => request.cacheKey.length > 0 && request.storagePath.length > 0
+      );
+
+    if (!thumbnailRequests.length) return;
+
+    setQueueThumbnailLoadingIds((current) => {
+      const next = { ...current };
+      for (const request of thumbnailRequests) {
+        next[request.cacheKey] = true;
+      }
+      return next;
+    });
+
+    for (const request of thumbnailRequests) {
+      void (async () => {
+        try {
+          const response = await fetch("/api/lpu/sign-storage-image", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ storagePath: request.storagePath }),
+          });
+          const data = (await response.json().catch(() => ({}))) as {
+            signedUrl?: unknown;
+            error?: unknown;
+          };
+
+          if (!response.ok) {
+            throw new Error(cleanQueueString(data.error) || "Unable to sign image.");
+          }
+
+          const signedUrl = cleanQueueString(data.signedUrl);
+          if (!isHttpImageUrl(signedUrl)) {
+            throw new Error("Unable to sign image.");
+          }
+
+          setQueueThumbnailUrls((current) => ({
+            ...current,
+            [request.cacheKey]: signedUrl,
+          }));
+          setQueueThumbnailErrors((current) => {
+            if (!current[request.cacheKey]) return current;
+            const next = { ...current };
+            delete next[request.cacheKey];
+            return next;
+          });
+        } catch (err) {
+          setQueueThumbnailErrors((current) => ({
+            ...current,
+            [request.cacheKey]:
+              err instanceof Error ? err.message : "Unable to sign image.",
+          }));
+        } finally {
+          setQueueThumbnailLoadingIds((current) => {
+            if (!current[request.cacheKey]) return current;
+            const next = { ...current };
+            delete next[request.cacheKey];
+            return next;
+          });
+        }
+      })();
+    }
+  }, [
+    getQueueItemPrimaryPhoto,
+    getQueueThumbnailCacheKey,
+    queueAuthenticated,
+    queueItems,
+    shouldSignQueueThumbnail,
+  ]);
 
   function buildCurrentQueueSnapshotBody(): CurrentQueueSnapshotBody | null {
     if (!output.trim() || !payloadPreview?.payload || selectedPhotosNeedUpload) {
@@ -2958,9 +3141,16 @@ export default function LpuV2Page() {
 
                     <div className="space-y-3">
                       {queueItems.map((item) => {
-                        const thumbnailUrl =
-                          item.photos.find((photo) => photo.imageUrl)?.imageUrl ?? "";
+                        const thumbnailCacheKey = getQueueThumbnailCacheKey(item);
+                        const thumbnailUrl = getQueueItemThumbnailSrc(item);
+                        const thumbnailLoading = Boolean(
+                          thumbnailCacheKey &&
+                            queueThumbnailLoadingIds[thumbnailCacheKey]
+                        );
                         const timestamp = item.updatedAt || item.createdAt;
+                        const thumbnailAlt = item.title
+                          ? `${item.title} thumbnail`
+                          : "Queued listing thumbnail";
 
                         return (
                           <article
@@ -2973,12 +3163,29 @@ export default function LpuV2Page() {
                                   // eslint-disable-next-line @next/next/no-img-element
                                   <img
                                     src={thumbnailUrl}
-                                    alt=""
+                                    alt={thumbnailAlt}
                                     className="h-full w-full object-cover"
+                                    onError={() => {
+                                      if (!thumbnailCacheKey) return;
+
+                                      setQueueThumbnailErrors((current) => ({
+                                        ...current,
+                                        [thumbnailCacheKey]: true,
+                                      }));
+                                      setQueueThumbnailUrls((current) => {
+                                        if (!current[thumbnailCacheKey]) {
+                                          return current;
+                                        }
+
+                                        const next = { ...current };
+                                        delete next[thumbnailCacheKey];
+                                        return next;
+                                      });
+                                    }}
                                   />
                                 ) : (
                                   <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase text-gray-400">
-                                    No image
+                                    {thumbnailLoading ? "Loading" : "No image"}
                                   </div>
                                 )}
                               </div>
