@@ -478,6 +478,128 @@ function buildQueuePhotos(
   }));
 }
 
+function cleanQueueString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function cleanQueueNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : 0;
+}
+
+function queuePhotosToGeneratorImageReferences(
+  photos: ListingQueueRecord["photos"]
+): GeneratorImageReference[] {
+  return [...photos]
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((photo) => {
+      const source = photo as Record<string, unknown>;
+      const storagePath = cleanQueueString(source.storagePath);
+      if (!storagePath) return null;
+
+      return {
+        name: cleanQueueString(source.name ?? source.fileName),
+        type: cleanQueueString(source.type ?? source.mimeType),
+        size: cleanQueueNumber(source.size),
+        storagePath,
+        imageUrl: cleanQueueString(source.imageUrl),
+      };
+    })
+    .filter((photo): photo is GeneratorImageReference => photo !== null);
+}
+
+function queuePhotosToVendooPhotos(
+  photos: ListingQueueRecord["photos"]
+): VendooPhotoPayload[] {
+  return [...photos]
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((photo): VendooPhotoPayload | null => {
+      const source = photo as Record<string, unknown>;
+      const storagePath = cleanQueueString(source.storagePath);
+      if (!storagePath) return null;
+
+      return {
+        name: cleanQueueString(source.name ?? source.fileName),
+        type: cleanQueueString(source.type ?? source.mimeType),
+        size: cleanQueueNumber(source.size),
+        storagePath,
+        ...(cleanQueueString(source.imageUrl)
+          ? { imageUrl: cleanQueueString(source.imageUrl) }
+          : {}),
+      };
+    })
+    .filter((photo): photo is VendooPhotoPayload => photo !== null);
+}
+
+function manualPricingValueToString(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
+function restoreManualPricingForm(
+  manualCompInputs: unknown
+): ManualPricingFormState {
+  const source =
+    manualCompInputs && typeof manualCompInputs === "object" && !Array.isArray(manualCompInputs)
+      ? (manualCompInputs as Record<string, unknown>)
+      : {};
+  const lookbackWindow = source.lookbackWindow;
+  const shippingIncluded = source.shippingIncluded;
+  const conditionMatch = source.conditionMatch;
+
+  return {
+    averageSoldPrice: manualPricingValueToString(source.averageSoldPrice),
+    medianSoldPrice: manualPricingValueToString(source.medianSoldPrice),
+    lowRelevantSold: manualPricingValueToString(source.lowRelevantSold),
+    highRelevantSold: manualPricingValueToString(source.highRelevantSold),
+    soldCount: manualPricingValueToString(source.soldCount),
+    activeCount: manualPricingValueToString(source.activeCount),
+    sellThroughPercent: manualPricingValueToString(source.sellThroughPercent),
+    lookbackWindow:
+      lookbackWindow === "90d" ||
+      lookbackWindow === "6mo" ||
+      lookbackWindow === "1y" ||
+      lookbackWindow === "2y" ||
+      lookbackWindow === "3y" ||
+      lookbackWindow === "custom"
+        ? lookbackWindow
+        : DEFAULT_MANUAL_PRICING_FORM.lookbackWindow,
+    shippingIncluded:
+      shippingIncluded === "yes" ||
+      shippingIncluded === "no" ||
+      shippingIncluded === "unknown"
+        ? shippingIncluded
+        : DEFAULT_MANUAL_PRICING_FORM.shippingIncluded,
+    conditionMatch:
+      conditionMatch === "lower" ||
+      conditionMatch === "similar" ||
+      conditionMatch === "better" ||
+      conditionMatch === "unknown"
+        ? conditionMatch
+        : DEFAULT_MANUAL_PRICING_FORM.conditionMatch,
+    compNotes: cleanQueueString(source.compNotes),
+  };
+}
+
+function readQueueObjectString(source: unknown, keys: string[]): string {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return "";
+  const record = source as Record<string, unknown>;
+
+  for (const key of keys) {
+    const value = cleanQueueString(record[key]);
+    if (value) return value;
+  }
+
+  return "";
+}
+
+function readSavedFinalListPrice(item: ListingQueueRecord): string {
+  const directPrice = cleanQueueString(item.finalListPrice);
+  if (directPrice) return directPrice;
+
+  return readQueueObjectString(item.pricingSnapshot, ["finalListPriceInput"]);
+}
+
 function readQueuePayloadString(
   payload: LpuPayloadPreview["payload"] | null,
   paths: string[][]
@@ -779,6 +901,9 @@ export default function LpuV2Page() {
   const [queueError, setQueueError] = useState("");
   const [queueSaveStatus, setQueueSaveStatus] = useState("");
   const [queueSaveError, setQueueSaveError] = useState("");
+  const [queueLoadStatus, setQueueLoadStatus] = useState("");
+  const [queueLoadError, setQueueLoadError] = useState("");
+  const [queueLoadingItemId, setQueueLoadingItemId] = useState("");
 
   const compiledNotes = useMemo(
     () =>
@@ -926,6 +1051,29 @@ export default function LpuV2Page() {
       !queueLoading
   );
 
+  function hasUnsavedWorkspaceContent(): boolean {
+    const manualCompFormHasContent = Object.entries(manualPricingForm).some(
+      ([key, value]) =>
+        value !== DEFAULT_MANUAL_PRICING_FORM[key as keyof ManualPricingFormState]
+    );
+
+    return Boolean(
+      notes.trim() ||
+        knownDetails.trim() ||
+        conditionNotes.trim() ||
+        measurements.trim() ||
+        markings.trim() ||
+        files.length > 0 ||
+        uploadedImageReferences.length > 0 ||
+        vendooPhotos.length > 0 ||
+        sellingBrief.trim() ||
+        output.trim() ||
+        manualCompFormHasContent ||
+        webCompsResult ||
+        (finalListPriceManuallyEdited && finalListPriceInput.trim())
+    );
+  }
+
   async function unlockQueue() {
     const ownerSecret = queueOwnerSecretInput;
     if (!ownerSecret.trim()) {
@@ -937,6 +1085,8 @@ export default function LpuV2Page() {
     setQueueAuthError("");
     setQueueSaveStatus("");
     setQueueSaveError("");
+    setQueueLoadStatus("");
+    setQueueLoadError("");
 
     try {
       const response = await fetch("/api/lpu/queue-auth/login", {
@@ -970,6 +1120,8 @@ export default function LpuV2Page() {
     setQueueError("");
     setQueueSaveStatus("");
     setQueueSaveError("");
+    setQueueLoadStatus("");
+    setQueueLoadError("");
 
     try {
       await fetch("/api/lpu/queue-auth/logout", {
@@ -986,6 +1138,7 @@ export default function LpuV2Page() {
   async function loadQueueItems() {
     setQueueLoading(true);
     setQueueError("");
+    setQueueLoadError("");
 
     try {
       const response = await fetch("/api/lpu/listing-queue", {
@@ -1021,6 +1174,8 @@ export default function LpuV2Page() {
     setQueueError("");
     setQueueSaveStatus("");
     setQueueSaveError("");
+    setQueueLoadStatus("");
+    setQueueLoadError("");
 
     try {
       const response = await fetch(
@@ -1052,9 +1207,97 @@ export default function LpuV2Page() {
     }
   }
 
+  async function loadQueueItemToWorkspace(id: string) {
+    if (!id) return;
+
+    if (
+      hasUnsavedWorkspaceContent() &&
+      !window.confirm(
+        "Loading this queued listing will replace the current workspace. Continue?"
+      )
+    ) {
+      return;
+    }
+
+    setQueueLoadingItemId(id);
+    setQueueLoadStatus("");
+    setQueueLoadError("");
+    setQueueError("");
+    setQueueSaveStatus("");
+    setQueueSaveError("");
+
+    try {
+      const response = await fetch(
+        `/api/lpu/listing-queue/${encodeURIComponent(id)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
+      const data = (await response.json()) as QueueItemResponse;
+
+      if (response.status === 401 || response.status === 403) {
+        setQueueAuthenticated(false);
+        setQueueItems([]);
+        throw new Error("Unlock the queue before loading listings.");
+      }
+
+      if (!response.ok || !data.ok || !data.item) {
+        throw new Error("Unable to load queue item.");
+      }
+
+      const item = data.item;
+      const itemIntake = item.itemIntake ?? {};
+      const restoredFinalListPrice = readSavedFinalListPrice(item);
+      const restoredWebCompsResult = isWebCompsResultState(
+        item.publicWebCompsSnapshot
+      )
+        ? item.publicWebCompsSnapshot
+        : null;
+
+      setNotes(readQueueObjectString(itemIntake, ["notes"]));
+      setKnownDetails(readQueueObjectString(itemIntake, ["knownDetails"]));
+      setConditionNotes(
+        readQueueObjectString(itemIntake, ["conditionNotes", "conditionFlaws"])
+      );
+      setMeasurements(readQueueObjectString(itemIntake, ["measurements"]));
+      setMarkings(readQueueObjectString(itemIntake, ["markings", "markingsLabels"]));
+      setSellingBrief(cleanQueueString(item.sellingBrief));
+      setOutput(cleanQueueString(item.finalLpuOutput));
+      setManualPricingForm(restoreManualPricingForm(item.manualCompInputs));
+      setWebCompsResult(restoredWebCompsResult);
+      setFinalListPriceInput(restoredFinalListPrice);
+      setFinalListPriceManuallyEdited(Boolean(restoredFinalListPrice));
+      setFiles([]);
+      setUploadedImageReferences(queuePhotosToGeneratorImageReferences(item.photos));
+      setVendooPhotos(queuePhotosToVendooPhotos(item.photos));
+
+      setError("");
+      setIsLoading(false);
+      setActiveMode(null);
+      setMetadata(null);
+      setImageUploadStatus("");
+      setWebCompsError("");
+      setIsWebCompsLoading(false);
+      setPayloadCopyStatus("");
+      setVendooSendStatus("idle");
+      setVendooSendMessage("");
+      setVendooPhotoWarnings([]);
+      setQueueLoadStatus("Queued listing loaded into workspace.");
+    } catch (err) {
+      setQueueLoadError(
+        err instanceof Error ? err.message : "Unable to load queue item."
+      );
+    } finally {
+      setQueueLoadingItemId("");
+    }
+  }
+
   async function saveCurrentListingToQueue() {
     setQueueSaveStatus("");
     setQueueSaveError("");
+    setQueueLoadStatus("");
+    setQueueLoadError("");
 
     if (!queueAuthenticated) {
       setQueueSaveError("Unlock the queue before saving.");
@@ -2332,6 +2575,18 @@ export default function LpuV2Page() {
                       </div>
                     ) : null}
 
+                    {queueLoadStatus ? (
+                      <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+                        {queueLoadStatus}
+                      </div>
+                    ) : null}
+
+                    {queueLoadError ? (
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                        {queueLoadError}
+                      </div>
+                    ) : null}
+
                     {queueLoading && !queueItems.length ? (
                       <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
                         Loading queue...
@@ -2403,14 +2658,28 @@ export default function LpuV2Page() {
                               </div>
                             </div>
                             {item.id && item.status !== "archived" ? (
-                              <button
-                                type="button"
-                                onClick={() => void archiveQueueItem(item.id || "")}
-                                disabled={queueLoading}
-                                className="mt-3 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                Archive
-                              </button>
+                              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void loadQueueItemToWorkspace(item.id || "")
+                                  }
+                                  disabled={Boolean(queueLoadingItemId)}
+                                  className="rounded-lg bg-black px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {queueLoadingItemId === item.id
+                                    ? "Loading..."
+                                    : "Load"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void archiveQueueItem(item.id || "")}
+                                  disabled={queueLoading || Boolean(queueLoadingItemId)}
+                                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Archive
+                                </button>
+                              </div>
                             ) : null}
                           </article>
                         );

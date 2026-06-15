@@ -430,9 +430,12 @@ assert.match(lpuV2PageSource, /\/api\/lpu\/queue-auth\/login/);
 assert.match(lpuV2PageSource, /\/api\/lpu\/queue-auth\/logout/);
 assert.match(lpuV2PageSource, /\/api\/lpu\/listing-queue/);
 assert.match(lpuV2PageSource, /Save Current Listing to Queue/);
+assert.match(lpuV2PageSource, /queueLoadingItemId === item\.id[\s\S]*\?\s*["']Loading\.\.\.["'][\s\S]*:\s*["']Load["']/);
+assert.match(lpuV2PageSource, /queueLoadStatus/);
+assert.match(lpuV2PageSource, /queueLoadError/);
+assert.match(lpuV2PageSource, /queueLoadingItemId/);
 assert.equal(/@supabase\/supabase-js|SUPABASE_SERVICE_ROLE_KEY/.test(lpuV2PageSource), false);
 assert.equal(/localStorage|sessionStorage/.test(lpuV2PageSource), false);
-assert.equal(/Load from Queue|loadFromQueue|restoreQueueItem|restoreListingQueueItem/i.test(lpuV2PageSource), false);
 assert.equal(/Send queued listing|sendQueued|queued.*Vendoo/i.test(lpuV2PageSource), false);
 
 const queueSaveFunctionMatch = lpuV2PageSource.match(
@@ -441,6 +444,71 @@ const queueSaveFunctionMatch = lpuV2PageSource.match(
 assert(queueSaveFunctionMatch, "V2 page has saveCurrentListingToQueue handler.");
 assert.match(queueSaveFunctionMatch[0], /stripUnsafePhotoDataForQueue\(payloadPreview\.payload\)/);
 assert.equal(/dataUrl|signedUrl/.test(queueSaveFunctionMatch[0]), false);
+
+const queuePhotoGeneratorRestoreMatch = lpuV2PageSource.match(
+  /function queuePhotosToGeneratorImageReferences\([\s\S]*?\n\}/
+);
+assert(
+  queuePhotoGeneratorRestoreMatch,
+  "V2 page has queuePhotosToGeneratorImageReferences helper."
+);
+assert.match(queuePhotoGeneratorRestoreMatch[0], /storagePath/);
+assert.match(queuePhotoGeneratorRestoreMatch[0], /imageUrl/);
+assert.match(queuePhotoGeneratorRestoreMatch[0], /fileName/);
+assert.match(queuePhotoGeneratorRestoreMatch[0], /mimeType/);
+assert.equal(/dataUrl|signedUrl|new File|FileReader/.test(queuePhotoGeneratorRestoreMatch[0]), false);
+
+const queuePhotoVendooRestoreMatch = lpuV2PageSource.match(
+  /function queuePhotosToVendooPhotos\([\s\S]*?\n\}/
+);
+assert(queuePhotoVendooRestoreMatch, "V2 page has queuePhotosToVendooPhotos helper.");
+assert.match(queuePhotoVendooRestoreMatch[0], /storagePath/);
+assert.match(queuePhotoVendooRestoreMatch[0], /imageUrl/);
+assert.match(queuePhotoVendooRestoreMatch[0], /fileName/);
+assert.match(queuePhotoVendooRestoreMatch[0], /mimeType/);
+assert.equal(/dataUrl|signedUrl|new File|FileReader/.test(queuePhotoVendooRestoreMatch[0]), false);
+
+assert.match(lpuV2PageSource, /function restoreManualPricingForm/);
+assert.match(lpuV2PageSource, /manualPricingValueToString/);
+assert.match(lpuV2PageSource, /function hasUnsavedWorkspaceContent/);
+assert.match(lpuV2PageSource, /window\.confirm\(\s*["']Loading this queued listing will replace the current workspace\. Continue\?["']\s*\)/);
+
+const queueLoadFunctionMatch = lpuV2PageSource.match(
+  /async function loadQueueItemToWorkspace\(id: string\) \{[\s\S]*?\n  \}\n\n  async function saveCurrentListingToQueue/
+);
+assert(queueLoadFunctionMatch, "V2 page has loadQueueItemToWorkspace handler.");
+const queueLoadFunctionSource = queueLoadFunctionMatch[0];
+assert.match(queueLoadFunctionSource, /\/api\/lpu\/listing-queue\/\$\{encodeURIComponent\(id\)\}/);
+assert.match(queueLoadFunctionSource, /method:\s*["']GET["']/);
+assert.match(queueLoadFunctionSource, /cache:\s*["']no-store["']/);
+assert.match(queueLoadFunctionSource, /response\.status === 401 \|\| response\.status === 403/);
+assert.match(queueLoadFunctionSource, /setQueueAuthenticated\(false\)/);
+assert.match(queueLoadFunctionSource, /setQueueItems\(\[\]\)/);
+assert.match(queueLoadFunctionSource, /setNotes\(readQueueObjectString\(itemIntake, \["notes"\]\)\)/);
+assert.match(queueLoadFunctionSource, /setKnownDetails\(readQueueObjectString\(itemIntake, \["knownDetails"\]\)\)/);
+assert.match(queueLoadFunctionSource, /setConditionNotes\(/);
+assert.match(queueLoadFunctionSource, /"conditionNotes", "conditionFlaws"/);
+assert.match(queueLoadFunctionSource, /setMeasurements\(readQueueObjectString\(itemIntake, \["measurements"\]\)\)/);
+assert.match(queueLoadFunctionSource, /setMarkings\(/);
+assert.match(queueLoadFunctionSource, /"markings", "markingsLabels"/);
+assert.match(queueLoadFunctionSource, /setSellingBrief\(cleanQueueString\(item\.sellingBrief\)\)/);
+assert.match(queueLoadFunctionSource, /setOutput\(cleanQueueString\(item\.finalLpuOutput\)\)/);
+assert.match(queueLoadFunctionSource, /setManualPricingForm\(restoreManualPricingForm\(item\.manualCompInputs\)\)/);
+assert.match(queueLoadFunctionSource, /isWebCompsResultState\(\s*item\.publicWebCompsSnapshot\s*\)/);
+assert.match(queueLoadFunctionSource, /setWebCompsResult\(restoredWebCompsResult\)/);
+assert.match(queueLoadFunctionSource, /readSavedFinalListPrice\(item\)/);
+assert.match(queueLoadFunctionSource, /setFinalListPriceInput\(restoredFinalListPrice\)/);
+assert.match(queueLoadFunctionSource, /setFinalListPriceManuallyEdited\(Boolean\(restoredFinalListPrice\)\)/);
+assert.match(queueLoadFunctionSource, /setFiles\(\[\]\)/);
+assert.match(queueLoadFunctionSource, /setUploadedImageReferences\(queuePhotosToGeneratorImageReferences\(item\.photos\)\)/);
+assert.match(queueLoadFunctionSource, /setVendooPhotos\(queuePhotosToVendooPhotos\(item\.photos\)\)/);
+assert.match(queueLoadFunctionSource, /setPayloadCopyStatus\(["']["']\)/);
+assert.match(queueLoadFunctionSource, /setVendooSendStatus\(["']idle["']\)/);
+assert.match(queueLoadFunctionSource, /setVendooSendMessage\(["']["']\)/);
+assert.match(queueLoadFunctionSource, /setVendooPhotoWarnings\(\[\]\)/);
+assert.equal(/sendVendooPayloadToExtension/.test(queueLoadFunctionSource), false);
+assert.equal(/\/restore/.test(queueLoadFunctionSource), false);
+assert.equal(/method:\s*["'](?:POST|PATCH|DELETE)["']/.test(queueLoadFunctionSource), false);
 
 const changedFiles = execFileSync("git", ["diff", "--name-only"], {
   cwd: rootDir,
@@ -451,9 +519,6 @@ const changedFiles = execFileSync("git", ["diff", "--name-only"], {
 const allowedChangedFiles = new Set([
   "app/lpu-v2/page.tsx",
   "scripts/check-v2-listing-queue.mjs",
-  "scripts/check-v2-payload-preview.mjs",
-  "package.json",
-  "lib/lpu/listingQueue.ts",
 ]);
 const unexpectedChangedFiles = changedFiles.filter(
   (file) => !allowedChangedFiles.has(file)
