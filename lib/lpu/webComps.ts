@@ -344,6 +344,42 @@ function createStableSourceId(url: string, title: string): string {
   return `web-comp-${stableHash(hashInput)}`;
 }
 
+export function normalizeWebCompsSourceIds<
+  T extends { id: string; url: string; title: string },
+>(sourceUrls: T[]): T[] {
+  const seenBaseIds = new Map<string, number>();
+  const usedIds = new Set<string>();
+
+  return sourceUrls.map((sourceUrl, index) => {
+    const baseId =
+      sourceUrl.id.trim() || createStableSourceId(sourceUrl.url, sourceUrl.title);
+    const occurrence = seenBaseIds.get(baseId) ?? 0;
+    seenBaseIds.set(baseId, occurrence + 1);
+
+    let nextId = baseId;
+    if (occurrence > 0 || usedIds.has(nextId)) {
+      const suffixSeed = [
+        sourceUrl.url.trim().toLowerCase(),
+        sourceUrl.title.trim().toLowerCase(),
+        String(index),
+        String(occurrence + 1),
+      ].join("|");
+      let suffixAttempt = occurrence + 1;
+      nextId = `${baseId}-${suffixAttempt}-${stableHash(suffixSeed)}`;
+
+      while (usedIds.has(nextId)) {
+        suffixAttempt += 1;
+        nextId = `${baseId}-${suffixAttempt}-${stableHash(
+          `${suffixSeed}|${suffixAttempt}`
+        )}`;
+      }
+    }
+
+    usedIds.add(nextId);
+    return nextId === sourceUrl.id ? sourceUrl : { ...sourceUrl, id: nextId };
+  });
+}
+
 function readPositiveNumber(value: unknown): number | null {
   const number = readNullableNumber(value);
   return number !== null && number > 0 ? number : null;
@@ -672,8 +708,9 @@ function normalizeSourceDefaults(
   targetContext: WebCompsTargetContext
 ): WebCompsSourceUrl[] {
   const seenSourceUrls = new Set<string>();
-  const candidateSources = rawSourceUrls
-    .slice(0, WEB_COMPS_MAX_CANDIDATE_SOURCES)
+  const candidateSources = normalizeWebCompsSourceIds(
+    rawSourceUrls.slice(0, WEB_COMPS_MAX_CANDIDATE_SOURCES)
+  )
     .map((sourceUrl) => {
       const normalizedUrl = sourceUrl.url.trim().toLowerCase();
       const isDuplicate = seenSourceUrls.has(normalizedUrl);

@@ -430,19 +430,54 @@ assert.match(lpuV2PageSource, /\/api\/lpu\/queue-auth\/login/);
 assert.match(lpuV2PageSource, /\/api\/lpu\/queue-auth\/logout/);
 assert.match(lpuV2PageSource, /\/api\/lpu\/listing-queue/);
 assert.match(lpuV2PageSource, /Save Current Listing to Queue/);
+assert.match(lpuV2PageSource, /Update Loaded Queue Item/);
 assert.match(lpuV2PageSource, /queueLoadingItemId === item\.id[\s\S]*\?\s*["']Loading\.\.\.["'][\s\S]*:\s*["']Load["']/);
 assert.match(lpuV2PageSource, /queueLoadStatus/);
 assert.match(lpuV2PageSource, /queueLoadError/);
 assert.match(lpuV2PageSource, /queueLoadingItemId/);
+assert.match(lpuV2PageSource, /activeQueueItemId/);
+assert.match(lpuV2PageSource, /setActiveQueueItemId/);
+assert.match(lpuV2PageSource, /queueUpdateStatus/);
+assert.match(lpuV2PageSource, /queueUpdateError/);
+assert.match(lpuV2PageSource, /queueUpdatingItemId/);
 assert.equal(/@supabase\/supabase-js|SUPABASE_SERVICE_ROLE_KEY/.test(lpuV2PageSource), false);
 assert.equal(/localStorage|sessionStorage/.test(lpuV2PageSource), false);
 assert.equal(/Send queued listing|sendQueued|queued.*Vendoo/i.test(lpuV2PageSource), false);
 
+const queueSnapshotBuilderMatch = lpuV2PageSource.match(
+  /function buildCurrentQueueSnapshotBody\(\): CurrentQueueSnapshotBody \| null \{[\s\S]*?\n  \}\n\n  function hasUnsavedWorkspaceContent/
+);
+assert(queueSnapshotBuilderMatch, "V2 page has current queue snapshot builder.");
+assert.match(
+  queueSnapshotBuilderMatch[0],
+  /stripUnsafePhotoDataForQueue\(payloadPreview\.payload\)/
+);
+assert.match(queueSnapshotBuilderMatch[0], /status:\s*payloadSnapshot \? ["']payload_ready["'] : ["']lpu_generated["']/);
+assert.match(queueSnapshotBuilderMatch[0], /title/);
+assert.match(queueSnapshotBuilderMatch[0], /subtitle:\s*categorySummary/);
+assert.match(queueSnapshotBuilderMatch[0], /categorySummary/);
+assert.match(queueSnapshotBuilderMatch[0], /thumbnailPath:\s*queuePhotoMetadata\[0\]\?\.storagePath/);
+assert.match(queueSnapshotBuilderMatch[0], /finalListPrice:\s*finalListPriceInput\.trim\(\)/);
+assert.match(queueSnapshotBuilderMatch[0], /itemIntake:\s*\{/);
+assert.match(queueSnapshotBuilderMatch[0], /sellingBrief/);
+assert.match(queueSnapshotBuilderMatch[0], /finalLpuOutput:\s*output/);
+assert.match(queueSnapshotBuilderMatch[0], /payloadSnapshot/);
+assert.match(queueSnapshotBuilderMatch[0], /pricingSnapshot/);
+assert.match(queueSnapshotBuilderMatch[0], /publicWebCompsSnapshot/);
+assert.match(queueSnapshotBuilderMatch[0], /manualCompInputs/);
+assert.match(queueSnapshotBuilderMatch[0], /vendooSendStatus/);
+assert.match(queueSnapshotBuilderMatch[0], /photos:\s*queuePhotoMetadata/);
+assert.equal(/dataUrl|signedUrl|ownerSecret|queueOwnerSecret/i.test(queueSnapshotBuilderMatch[0]), false);
+
 const queueSaveFunctionMatch = lpuV2PageSource.match(
-  /async function saveCurrentListingToQueue\(\) \{[\s\S]*?\n  \}\n\n  function handleFileChange/
+  /async function saveCurrentListingToQueue\(\) \{[\s\S]*?\n  \}\n\n  async function updateLoadedQueueItem/
 );
 assert(queueSaveFunctionMatch, "V2 page has saveCurrentListingToQueue handler.");
-assert.match(queueSaveFunctionMatch[0], /stripUnsafePhotoDataForQueue\(payloadPreview\.payload\)/);
+assert.match(queueSaveFunctionMatch[0], /fetch\(["']\/api\/lpu\/listing-queue["']/);
+assert.match(queueSaveFunctionMatch[0], /method:\s*["']POST["']/);
+assert.match(queueSaveFunctionMatch[0], /const snapshotBody = buildCurrentQueueSnapshotBody\(\)/);
+assert.match(queueSaveFunctionMatch[0], /body:\s*JSON\.stringify\(snapshotBody\)/);
+assert.match(queueSaveFunctionMatch[0], /setActiveQueueItem\(data\.item\)/);
 assert.equal(/dataUrl|signedUrl/.test(queueSaveFunctionMatch[0]), false);
 
 const queuePhotoGeneratorRestoreMatch = lpuV2PageSource.match(
@@ -506,9 +541,36 @@ assert.match(queueLoadFunctionSource, /setPayloadCopyStatus\(["']["']\)/);
 assert.match(queueLoadFunctionSource, /setVendooSendStatus\(["']idle["']\)/);
 assert.match(queueLoadFunctionSource, /setVendooSendMessage\(["']["']\)/);
 assert.match(queueLoadFunctionSource, /setVendooPhotoWarnings\(\[\]\)/);
+assert.match(queueLoadFunctionSource, /setActiveQueueItem\(item\)/);
 assert.equal(/sendVendooPayloadToExtension/.test(queueLoadFunctionSource), false);
 assert.equal(/\/restore/.test(queueLoadFunctionSource), false);
 assert.equal(/method:\s*["'](?:POST|PATCH|DELETE)["']/.test(queueLoadFunctionSource), false);
+
+const queueUpdateFunctionMatch = lpuV2PageSource.match(
+  /async function updateLoadedQueueItem\(\) \{[\s\S]*?\n  \}\n\n  function handleFileChange/
+);
+assert(queueUpdateFunctionMatch, "V2 page has updateLoadedQueueItem handler.");
+const queueUpdateFunctionSource = queueUpdateFunctionMatch[0];
+assert.match(queueUpdateFunctionSource, /activeQueueItemId/);
+assert.match(
+  queueUpdateFunctionSource,
+  /\/api\/lpu\/listing-queue\/\$\{encodeURIComponent\(activeQueueItemId\)\}/
+);
+assert.match(queueUpdateFunctionSource, /method:\s*["']PATCH["']/);
+assert.match(queueUpdateFunctionSource, /const snapshotBody = buildCurrentQueueSnapshotBody\(\)/);
+assert.match(queueUpdateFunctionSource, /body:\s*JSON\.stringify\(snapshotBody\)/);
+assert.match(queueUpdateFunctionSource, /response\.status === 401 \|\| response\.status === 403/);
+assert.match(queueUpdateFunctionSource, /setQueueAuthenticated\(false\)/);
+assert.match(queueUpdateFunctionSource, /setQueueItems\(\[\]\)/);
+assert.match(queueUpdateFunctionSource, /clearActiveQueueItem\(\)/);
+assert.match(queueUpdateFunctionSource, /setActiveQueueItem\(data\.item\)/);
+assert.match(queueUpdateFunctionSource, /await loadQueueItems\(\)/);
+assert.equal(/fetch\(["']\/api\/lpu\/listing-queue["']/.test(queueUpdateFunctionSource), false);
+assert.equal(/method:\s*["']POST["']/.test(queueUpdateFunctionSource), false);
+assert.equal(/\/restore/.test(queueUpdateFunctionSource), false);
+assert.equal(/method:\s*["']DELETE["']/.test(queueUpdateFunctionSource), false);
+assert.equal(/sendVendooPayloadToExtension/.test(queueUpdateFunctionSource), false);
+assert.equal(/sent_to_vendoo/.test(queueUpdateFunctionSource), false);
 
 const changedFiles = execFileSync("git", ["diff", "--name-only"], {
   cwd: rootDir,
@@ -518,6 +580,8 @@ const changedFiles = execFileSync("git", ["diff", "--name-only"], {
   .filter(Boolean);
 const allowedChangedFiles = new Set([
   "app/lpu-v2/page.tsx",
+  "lib/lpu/webComps.ts",
+  "scripts/check-v2-web-comps.mjs",
   "scripts/check-v2-listing-queue.mjs",
 ]);
 const unexpectedChangedFiles = changedFiles.filter(
@@ -532,7 +596,7 @@ const forbiddenChangedFiles = changedFiles.filter(
     file === "lib/sendVendooPayloadToExtension.ts"
 );
 
-assert.deepEqual(unexpectedChangedFiles, [], "Only intended V2 queue UI/check files changed.");
+assert.deepEqual(unexpectedChangedFiles, [], "Only intended V2 queue UI/web-comps check files changed.");
 assert.deepEqual(forbiddenChangedFiles, [], "No V1 UI, Vendoo, or extension files changed.");
 
 console.log("V2 listing queue checks passed.");

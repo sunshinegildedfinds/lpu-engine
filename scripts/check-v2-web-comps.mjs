@@ -38,6 +38,7 @@ function loadWebComps() {
 const {
   WEB_COMPS_MAX_CANDIDATE_SOURCES,
   formatWebCompsSourceCountLabel,
+  normalizeWebCompsSourceIds,
   parseWebCompsModelJson,
   recalculateWebCompsSummary,
 } = loadWebComps();
@@ -244,10 +245,38 @@ const duplicateSources = parseWebCompsModelJson(
     ],
   })
 );
+assert.equal(duplicateSources.sourceUrls.length, 2);
+assert.equal(new Set(duplicateSources.sourceUrls.map((item) => item.id)).size, 2);
 assert.equal(duplicateSources.sourceUrls[0].hardDisabled, false);
 assert.equal(duplicateSources.sourceUrls[1].hardDisabled, true);
 assert.equal(duplicateSources.sourceUrls[1].selectableForUserPricing, false);
 assert.equal(duplicateSources.sourceUrls[1].ineligibilityReason, "duplicate source");
+assert.equal(selectedIds(duplicateSources).length, 1);
+
+const duplicateIdFixture = normalizeWebCompsSourceIds([
+  source({
+    id: "web-comp-duplicate-fixture",
+    url: "https://www.ebay.com/itm/manual-a",
+    title: "Manual source A",
+  }),
+  source({
+    id: "web-comp-duplicate-fixture",
+    url: "https://www.ebay.com/itm/manual-b",
+    title: "Manual source B",
+  }),
+  source({
+    id: "web-comp-duplicate-fixture",
+    url: "https://www.ebay.com/itm/manual-c",
+    title: "Manual source C",
+    usedInPricing: false,
+  }),
+]);
+assert.equal(duplicateIdFixture.length, 3);
+assert.equal(new Set(duplicateIdFixture.map((item) => item.id)).size, 3);
+assert.equal(duplicateIdFixture[0].id, "web-comp-duplicate-fixture");
+assert.equal(duplicateIdFixture[0].url, "https://www.ebay.com/itm/manual-a");
+assert.equal(duplicateIdFixture[1].url, "https://www.ebay.com/itm/manual-b");
+assert.equal(duplicateIdFixture[2].usedInPricing, false);
 
 const initialPriceUsesDefaults = parseWebCompsModelJson(
   model({
@@ -261,6 +290,27 @@ const initialPriceUsesDefaults = parseWebCompsModelJson(
 );
 assert.equal(initialPriceUsesDefaults.selectedSoldResultsUsed, 3);
 assert.equal(initialPriceUsesDefaults.suggestedPrice, 39.99);
+
+const uniqueDuplicateIdSelection = applySelection(
+  {
+    ...initialPriceUsesDefaults,
+    sourceUrls: duplicateIdFixture.map((item) => ({
+      ...item,
+      eligibleForPricing: true,
+      defaultIncludedInPricing: item.usedInPricing,
+      selectableForUserPricing: true,
+      hardDisabled: false,
+      userOverrideRisk: "none",
+      ineligibilityReason: null,
+    })),
+  },
+  [duplicateIdFixture[0].id, duplicateIdFixture[1].id]
+);
+assert.equal(uniqueDuplicateIdSelection.sourceUrls.length, 3);
+assert.equal(uniqueDuplicateIdSelection.selectedSoldResultsUsed, 2);
+assert.equal(uniqueDuplicateIdSelection.sourceUrls[0].usedInPricing, true);
+assert.equal(uniqueDuplicateIdSelection.sourceUrls[1].usedInPricing, true);
+assert.equal(uniqueDuplicateIdSelection.sourceUrls[2].usedInPricing, false);
 
 const toggledOff = applySelection(
   initialPriceUsesDefaults,

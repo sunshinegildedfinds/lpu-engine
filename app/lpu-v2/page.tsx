@@ -12,6 +12,7 @@ import {
 } from "@/lib/lpu/pricingResearch";
 import {
   formatWebCompsSourceCountLabel,
+  normalizeWebCompsSourceIds,
   recalculateWebCompsSummary,
 } from "@/lib/lpu/webComps";
 import {
@@ -73,6 +74,33 @@ type QueueItemResponse = {
   ok?: boolean;
   item?: ListingQueueRecord;
   error?: string;
+};
+
+type CurrentQueueSnapshotBody = {
+  status: ListingQueueStatus;
+  title: string;
+  subtitle: string;
+  categorySummary: string;
+  thumbnailPath?: string;
+  finalListPrice: string;
+  itemIntake: {
+    notes: string;
+    knownDetails: string;
+    conditionFlaws: string;
+    conditionNotes: string;
+    measurements: string;
+    markingsLabels: string;
+    markings: string;
+  };
+  sellingBrief: string;
+  finalLpuOutput: string;
+  payloadSnapshot?: JsonObject;
+  pricingSnapshot?: JsonObject;
+  publicWebCompsSnapshot?: JsonObject;
+  manualCompInputs?: JsonObject;
+  vendooSendStatus?: JsonObject;
+  appVersion: string;
+  photos: ListingQueueRecord["photos"];
 };
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -215,6 +243,15 @@ function getWebCompSourceSelectionLabel(
 
   if (source.defaultIncludedInPricing) return "auto-selected";
   return "eligible override";
+}
+
+function normalizeWebCompsResultSourceIds(
+  result: WebCompsResultState
+): WebCompsResultState {
+  const sourceUrls = normalizeWebCompsSourceIds(result.sourceUrls);
+  return sourceUrls.every((source, index) => source === result.sourceUrls[index])
+    ? result
+    : { ...result, sourceUrls };
 }
 
 const DEFAULT_MANUAL_PRICING_FORM: ManualPricingFormState = {
@@ -904,6 +941,14 @@ export default function LpuV2Page() {
   const [queueLoadStatus, setQueueLoadStatus] = useState("");
   const [queueLoadError, setQueueLoadError] = useState("");
   const [queueLoadingItemId, setQueueLoadingItemId] = useState("");
+  const [activeQueueItemId, setActiveQueueItemId] = useState("");
+  const [activeQueueItemTitle, setActiveQueueItemTitle] = useState("");
+  const [activeQueueItemStatus, setActiveQueueItemStatus] =
+    useState<ListingQueueStatus | null>(null);
+  const [activeQueueItemUpdatedAt, setActiveQueueItemUpdatedAt] = useState("");
+  const [queueUpdateStatus, setQueueUpdateStatus] = useState("");
+  const [queueUpdateError, setQueueUpdateError] = useState("");
+  const [queueUpdatingItemId, setQueueUpdatingItemId] = useState("");
 
   const compiledNotes = useMemo(
     () =>
@@ -975,6 +1020,7 @@ export default function LpuV2Page() {
         setQueueAuthenticated(authenticated);
         if (!authenticated) {
           setQueueItems([]);
+          clearActiveQueueItem();
           return;
         }
 
@@ -994,6 +1040,7 @@ export default function LpuV2Page() {
       } catch {
         setQueueAuthenticated(false);
         setQueueItems([]);
+        clearActiveQueueItem();
         setQueueAuthError("Unable to verify queue status.");
       } finally {
         setQueueAuthLoading(false);
@@ -1050,6 +1097,85 @@ export default function LpuV2Page() {
       !selectedPhotosNeedUpload &&
       !queueLoading
   );
+  const canUpdateLoadedQueueItem = Boolean(
+    canSaveCurrentListingToQueue &&
+      activeQueueItemId &&
+      !queueUpdatingItemId &&
+      !queueLoadingItemId
+  );
+
+  function clearActiveQueueItem() {
+    setActiveQueueItemId("");
+    setActiveQueueItemTitle("");
+    setActiveQueueItemStatus(null);
+    setActiveQueueItemUpdatedAt("");
+  }
+
+  function setActiveQueueItem(item: ListingQueueRecord) {
+    if (!item.id) return;
+
+    setActiveQueueItemId(item.id);
+    setActiveQueueItemTitle(item.title || "Untitled queued listing");
+    setActiveQueueItemStatus(item.status);
+    setActiveQueueItemUpdatedAt(item.updatedAt || item.createdAt || "");
+  }
+
+  function buildCurrentQueueSnapshotBody(): CurrentQueueSnapshotBody | null {
+    if (!output.trim() || !payloadPreview?.payload || selectedPhotosNeedUpload) {
+      return null;
+    }
+
+    const payloadSnapshot = toJsonObject(
+      stripUnsafePhotoDataForQueue(payloadPreview.payload)
+    );
+    const title =
+      readQueuePayloadString(payloadPreview.payload, [
+        ["coreFields", "title"],
+        ["marketplaces", "ebay", "title"],
+        ["marketplaces", "ebay", "titleA"],
+      ]) || "Untitled queued listing";
+    const categorySummary =
+      readQueuePayloadString(payloadPreview.payload, [
+        ["coreFields", "canonicalVendooCategoryPath"],
+        ["coreFields", "category"],
+        ["marketplaces", "ebay", "canonicalVendooCategoryPath"],
+        ["marketplaces", "ebay", "category"],
+      ]) || pricingResearch.suggestedEbayCategoryPath;
+
+    return {
+      status: payloadSnapshot ? "payload_ready" : "lpu_generated",
+      title,
+      subtitle: categorySummary,
+      categorySummary,
+      thumbnailPath: queuePhotoMetadata[0]?.storagePath,
+      finalListPrice: finalListPriceInput.trim(),
+      itemIntake: {
+        notes,
+        knownDetails,
+        conditionFlaws: conditionNotes,
+        conditionNotes,
+        measurements,
+        markingsLabels: markings,
+        markings,
+      },
+      sellingBrief,
+      finalLpuOutput: output,
+      payloadSnapshot,
+      pricingSnapshot: toJsonObject({
+        finalListPriceInput,
+        pricingRecommendation,
+        pricingResearch,
+      }),
+      publicWebCompsSnapshot: toJsonObject(webCompsResult),
+      manualCompInputs: toJsonObject(manualCompInputs),
+      vendooSendStatus: toJsonObject({
+        status: vendooSendStatus,
+        message: vendooSendMessage,
+      }),
+      appVersion: `${INTERFACE_VERSION}/${PROMPT_VERSION}`,
+      photos: queuePhotoMetadata,
+    };
+  }
 
   function hasUnsavedWorkspaceContent(): boolean {
     const manualCompFormHasContent = Object.entries(manualPricingForm).some(
@@ -1087,6 +1213,8 @@ export default function LpuV2Page() {
     setQueueSaveError("");
     setQueueLoadStatus("");
     setQueueLoadError("");
+    setQueueUpdateStatus("");
+    setQueueUpdateError("");
 
     try {
       const response = await fetch("/api/lpu/queue-auth/login", {
@@ -1108,6 +1236,7 @@ export default function LpuV2Page() {
     } catch {
       setQueueAuthenticated(false);
       setQueueItems([]);
+      clearActiveQueueItem();
       setQueueAuthError("Queue unlock failed.");
     } finally {
       setQueueAuthLoading(false);
@@ -1122,6 +1251,8 @@ export default function LpuV2Page() {
     setQueueSaveError("");
     setQueueLoadStatus("");
     setQueueLoadError("");
+    setQueueUpdateStatus("");
+    setQueueUpdateError("");
 
     try {
       await fetch("/api/lpu/queue-auth/logout", {
@@ -1131,6 +1262,7 @@ export default function LpuV2Page() {
       setQueueAuthenticated(false);
       setQueueOwnerSecretInput("");
       setQueueItems([]);
+      clearActiveQueueItem();
       setQueueAuthLoading(false);
     }
   }
@@ -1150,6 +1282,7 @@ export default function LpuV2Page() {
       if (response.status === 401 || response.status === 403) {
         setQueueAuthenticated(false);
         setQueueItems([]);
+        clearActiveQueueItem();
         throw new Error("Unlock the queue to view saved listings.");
       }
 
@@ -1176,6 +1309,8 @@ export default function LpuV2Page() {
     setQueueSaveError("");
     setQueueLoadStatus("");
     setQueueLoadError("");
+    setQueueUpdateStatus("");
+    setQueueUpdateError("");
 
     try {
       const response = await fetch(
@@ -1189,6 +1324,7 @@ export default function LpuV2Page() {
       if (response.status === 401 || response.status === 403) {
         setQueueAuthenticated(false);
         setQueueItems([]);
+        clearActiveQueueItem();
         throw new Error("Unlock the queue to archive listings.");
       }
 
@@ -1196,6 +1332,9 @@ export default function LpuV2Page() {
         throw new Error("Unable to archive queue item.");
       }
 
+      if (activeQueueItemId === id) {
+        clearActiveQueueItem();
+      }
       setQueueSaveStatus("Queue item archived.");
       await loadQueueItems();
     } catch (err) {
@@ -1225,6 +1364,8 @@ export default function LpuV2Page() {
     setQueueError("");
     setQueueSaveStatus("");
     setQueueSaveError("");
+    setQueueUpdateStatus("");
+    setQueueUpdateError("");
 
     try {
       const response = await fetch(
@@ -1239,6 +1380,7 @@ export default function LpuV2Page() {
       if (response.status === 401 || response.status === 403) {
         setQueueAuthenticated(false);
         setQueueItems([]);
+        clearActiveQueueItem();
         throw new Error("Unlock the queue before loading listings.");
       }
 
@@ -1252,7 +1394,7 @@ export default function LpuV2Page() {
       const restoredWebCompsResult = isWebCompsResultState(
         item.publicWebCompsSnapshot
       )
-        ? item.publicWebCompsSnapshot
+        ? normalizeWebCompsResultSourceIds(item.publicWebCompsSnapshot)
         : null;
 
       setNotes(readQueueObjectString(itemIntake, ["notes"]));
@@ -1283,6 +1425,7 @@ export default function LpuV2Page() {
       setVendooSendStatus("idle");
       setVendooSendMessage("");
       setVendooPhotoWarnings([]);
+      setActiveQueueItem(item);
       setQueueLoadStatus("Queued listing loaded into workspace.");
     } catch (err) {
       setQueueLoadError(
@@ -1298,6 +1441,8 @@ export default function LpuV2Page() {
     setQueueSaveError("");
     setQueueLoadStatus("");
     setQueueLoadError("");
+    setQueueUpdateStatus("");
+    setQueueUpdateError("");
 
     if (!queueAuthenticated) {
       setQueueSaveError("Unlock the queue before saving.");
@@ -1319,22 +1464,11 @@ export default function LpuV2Page() {
       return;
     }
 
-    const payloadSnapshot = toJsonObject(
-      stripUnsafePhotoDataForQueue(payloadPreview.payload)
-    );
-    const title =
-      readQueuePayloadString(payloadPreview.payload, [
-        ["coreFields", "title"],
-        ["marketplaces", "ebay", "title"],
-        ["marketplaces", "ebay", "titleA"],
-      ]) || "Untitled queued listing";
-    const categorySummary =
-      readQueuePayloadString(payloadPreview.payload, [
-        ["coreFields", "canonicalVendooCategoryPath"],
-        ["coreFields", "category"],
-        ["marketplaces", "ebay", "canonicalVendooCategoryPath"],
-        ["marketplaces", "ebay", "category"],
-      ]) || pricingResearch.suggestedEbayCategoryPath;
+    const snapshotBody = buildCurrentQueueSnapshotBody();
+    if (!snapshotBody) {
+      setQueueSaveError("Unable to build queue snapshot for saving.");
+      return;
+    }
 
     setQueueLoading(true);
 
@@ -1344,45 +1478,14 @@ export default function LpuV2Page() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          status: payloadSnapshot ? "payload_ready" : "lpu_generated",
-          title,
-          subtitle: categorySummary,
-          categorySummary,
-          thumbnailPath: queuePhotoMetadata[0]?.storagePath,
-          finalListPrice: finalListPriceInput.trim(),
-          itemIntake: {
-            notes,
-            knownDetails,
-            conditionFlaws: conditionNotes,
-            conditionNotes,
-            measurements,
-            markingsLabels: markings,
-            markings,
-          },
-          sellingBrief,
-          finalLpuOutput: output,
-          payloadSnapshot,
-          pricingSnapshot: toJsonObject({
-            finalListPriceInput,
-            pricingRecommendation,
-            pricingResearch,
-          }),
-          publicWebCompsSnapshot: toJsonObject(webCompsResult),
-          manualCompInputs: toJsonObject(manualCompInputs),
-          vendooSendStatus: toJsonObject({
-            status: vendooSendStatus,
-            message: vendooSendMessage,
-          }),
-          appVersion: `${INTERFACE_VERSION}/${PROMPT_VERSION}`,
-          photos: queuePhotoMetadata,
-        }),
+        body: JSON.stringify(snapshotBody),
       });
       const data = (await response.json()) as QueueItemResponse;
 
       if (response.status === 401 || response.status === 403) {
         setQueueAuthenticated(false);
         setQueueItems([]);
+        clearActiveQueueItem();
         throw new Error("Unlock the queue before saving.");
       }
 
@@ -1390,6 +1493,9 @@ export default function LpuV2Page() {
         throw new Error("Unable to save listing to queue.");
       }
 
+      if (data.item) {
+        setActiveQueueItem(data.item);
+      }
       setQueueSaveStatus("Current listing saved to queue.");
       await loadQueueItems();
     } catch (err) {
@@ -1398,6 +1504,86 @@ export default function LpuV2Page() {
       );
     } finally {
       setQueueLoading(false);
+    }
+  }
+
+  async function updateLoadedQueueItem() {
+    setQueueUpdateStatus("");
+    setQueueUpdateError("");
+    setQueueSaveStatus("");
+    setQueueSaveError("");
+    setQueueLoadStatus("");
+    setQueueLoadError("");
+
+    if (!queueAuthenticated) {
+      setQueueUpdateError("Unlock the queue before updating.");
+      return;
+    }
+
+    if (!activeQueueItemId) {
+      setQueueUpdateError("Load or save a queue item before updating.");
+      return;
+    }
+
+    if (!output.trim()) {
+      setQueueUpdateError("Generate or paste Final LP-U output before updating.");
+      return;
+    }
+
+    if (!payloadPreview?.payload) {
+      setQueueUpdateError("Generate Final LP-U to create a payload before updating.");
+      return;
+    }
+
+    if (selectedPhotosNeedUpload) {
+      setQueueUpdateError("Photos must be uploaded before updating queue item.");
+      return;
+    }
+
+    const snapshotBody = buildCurrentQueueSnapshotBody();
+    if (!snapshotBody) {
+      setQueueUpdateError("Unable to build queue snapshot for updating.");
+      return;
+    }
+
+    setQueueUpdatingItemId(activeQueueItemId);
+
+    try {
+      const response = await fetch(
+        `/api/lpu/listing-queue/${encodeURIComponent(activeQueueItemId)}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          cache: "no-store",
+          body: JSON.stringify(snapshotBody),
+        }
+      );
+      const data = (await response.json()) as QueueItemResponse;
+
+      if (response.status === 401 || response.status === 403) {
+        setQueueAuthenticated(false);
+        setQueueItems([]);
+        clearActiveQueueItem();
+        throw new Error("Unlock the queue before updating.");
+      }
+
+      if (!response.ok || !data.ok) {
+        throw new Error("Unable to update queue item.");
+      }
+
+      if (data.item) {
+        setActiveQueueItem(data.item);
+      }
+      setQueueUpdateStatus("Loaded queue item updated.");
+      await loadQueueItems();
+    } catch (err) {
+      setQueueUpdateError(
+        err instanceof Error ? err.message : "Unable to update queue item."
+      );
+    } finally {
+      setQueueUpdatingItemId("");
     }
   }
 
@@ -1480,7 +1666,7 @@ export default function LpuV2Page() {
         throw new Error("Server returned an invalid public web comps response.");
       }
 
-      setWebCompsResult(data);
+      setWebCompsResult(normalizeWebCompsResultSourceIds(data));
     } catch (err) {
       setWebCompsError(
         err instanceof Error && err.name === "AbortError"
@@ -2525,6 +2711,26 @@ export default function LpuV2Page() {
                 {queueAuthenticated ? (
                   <div className="space-y-4">
                     <div className="rounded-lg border border-gray-200 bg-white p-3">
+                      {activeQueueItemId ? (
+                        <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
+                          <div className="font-semibold">Active queue item</div>
+                          <div className="mt-1 break-words text-xs">
+                            {activeQueueItemTitle || "Untitled queued listing"}
+                            {activeQueueItemStatus
+                              ? ` · ${formatQueueStatus(activeQueueItemStatus)}`
+                              : ""}
+                          </div>
+                          {activeQueueItemUpdatedAt ? (
+                            <div className="mt-1 text-xs text-blue-800">
+                              Updated {formatQueueDate(activeQueueItemUpdatedAt)}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
+                          Load or save a queue item before updating.
+                        </div>
+                      )}
                       <button
                         type="button"
                         onClick={() => void saveCurrentListingToQueue()}
@@ -2532,6 +2738,16 @@ export default function LpuV2Page() {
                         className="w-full rounded-lg bg-black px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {queueLoading ? "Working..." : "Save Current Listing to Queue"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void updateLoadedQueueItem()}
+                        disabled={!canUpdateLoadedQueueItem}
+                        className="mt-3 w-full rounded-lg border border-gray-900 bg-white px-4 py-3 text-sm font-semibold text-gray-950 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {queueUpdatingItemId
+                          ? "Updating..."
+                          : "Update Loaded Queue Item"}
                       </button>
                       {selectedPhotosNeedUpload ? (
                         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -2551,6 +2767,16 @@ export default function LpuV2Page() {
                       {queueSaveError ? (
                         <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
                           {queueSaveError}
+                        </div>
+                      ) : null}
+                      {queueUpdateStatus ? (
+                        <div className="mt-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+                          {queueUpdateStatus}
+                        </div>
+                      ) : null}
+                      {queueUpdateError ? (
+                        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                          {queueUpdateError}
                         </div>
                       ) : null}
                     </div>
