@@ -21,6 +21,12 @@ import {
   type PayloadPlatformKey,
 } from "@/lib/lpu/payloadPreview";
 import { sendVendooPayloadToExtension } from "@/lib/sendVendooPayloadToExtension";
+import type {
+  JsonObject,
+  ListingQueueRecord,
+  ListingQueueStatus,
+} from "@/lib/lpu/listingQueue";
+import { stripUnsafePhotoDataForQueue } from "@/lib/lpu/listingQueue";
 import type { VendooPhotoPayload } from "@/lib/vendoo/extensionPayload";
 
 const INTERFACE_VERSION = "v2";
@@ -51,6 +57,23 @@ type GeneratorImageReference = {
 };
 
 type GenerationMode = "sellingBrief" | "finalFromBrief";
+
+type QueueStatusResponse = {
+  authenticated?: boolean;
+  error?: string;
+};
+
+type QueueListResponse = {
+  ok?: boolean;
+  items?: ListingQueueRecord[];
+  error?: string;
+};
+
+type QueueItemResponse = {
+  ok?: boolean;
+  item?: ListingQueueRecord;
+  error?: string;
+};
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -437,6 +460,62 @@ function PayloadCopyButton({
   );
 }
 
+function toJsonObject(value: unknown): JsonObject | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as JsonObject;
+}
+
+function buildQueuePhotos(
+  references: GeneratorImageReference[]
+): ListingQueueRecord["photos"] {
+  return references.map((reference, index) => ({
+    storagePath: reference.storagePath,
+    imageUrl: reference.imageUrl,
+    name: reference.name,
+    type: reference.type,
+    size: reference.size,
+    sortOrder: index,
+  }));
+}
+
+function readQueuePayloadString(
+  payload: LpuPayloadPreview["payload"] | null,
+  paths: string[][]
+): string {
+  for (const path of paths) {
+    let current: unknown = payload;
+    for (const segment of path) {
+      if (!current || typeof current !== "object" || Array.isArray(current)) {
+        current = undefined;
+        break;
+      }
+      current = (current as Record<string, unknown>)[segment];
+    }
+
+    if (typeof current === "string" && current.trim()) return current.trim();
+  }
+
+  return "";
+}
+
+function formatQueueDate(value?: string): string {
+  if (!value) return "No date";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+}
+
+function formatQueueStatus(status: ListingQueueStatus): string {
+  return status
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function PayloadPreviewPanel({
   copyStatus,
   onCopy,
@@ -691,6 +770,15 @@ export default function LpuV2Page() {
   const [finalListPriceInput, setFinalListPriceInput] = useState("");
   const [finalListPriceManuallyEdited, setFinalListPriceManuallyEdited] =
     useState(false);
+  const [queueAuthenticated, setQueueAuthenticated] = useState(false);
+  const [queueAuthLoading, setQueueAuthLoading] = useState(false);
+  const [queueAuthError, setQueueAuthError] = useState("");
+  const [queueOwnerSecretInput, setQueueOwnerSecretInput] = useState("");
+  const [queueItems, setQueueItems] = useState<ListingQueueRecord[]>([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState("");
+  const [queueSaveStatus, setQueueSaveStatus] = useState("");
+  const [queueSaveError, setQueueSaveError] = useState("");
 
   const compiledNotes = useMemo(
     () =>
@@ -742,6 +830,55 @@ export default function LpuV2Page() {
     setFinalListPriceInput(suggestedListPriceInputValue);
   }, [finalListPriceManuallyEdited, suggestedListPriceInputValue]);
 
+  useEffect(() => {
+    async function checkInitialQueueAuthStatus() {
+      setQueueAuthLoading(true);
+      setQueueAuthError("");
+
+      try {
+        const statusResponse = await fetch("/api/lpu/queue-auth/status", {
+          method: "GET",
+          cache: "no-store",
+        });
+        const statusData = (await statusResponse.json()) as QueueStatusResponse;
+
+        if (!statusResponse.ok) {
+          throw new Error("Unable to verify queue status.");
+        }
+
+        const authenticated = Boolean(statusData.authenticated);
+        setQueueAuthenticated(authenticated);
+        if (!authenticated) {
+          setQueueItems([]);
+          return;
+        }
+
+        setQueueLoading(true);
+        setQueueError("");
+        const listResponse = await fetch("/api/lpu/listing-queue", {
+          method: "GET",
+          cache: "no-store",
+        });
+        const listData = (await listResponse.json()) as QueueListResponse;
+
+        if (!listResponse.ok || !listData.ok || !Array.isArray(listData.items)) {
+          throw new Error("Unable to load listing queue.");
+        }
+
+        setQueueItems(listData.items);
+      } catch {
+        setQueueAuthenticated(false);
+        setQueueItems([]);
+        setQueueAuthError("Unable to verify queue status.");
+      } finally {
+        setQueueAuthLoading(false);
+        setQueueLoading(false);
+      }
+    }
+
+    void checkInitialQueueAuthStatus();
+  }, []);
+
   const payloadPreview = useMemo(
     () => {
       if (!output.trim()) return null;
@@ -773,6 +910,253 @@ export default function LpuV2Page() {
       vendooPhotos,
     ]
   );
+
+  const queuePhotoMetadata = useMemo(
+    () => buildQueuePhotos(uploadedImageReferences),
+    [uploadedImageReferences]
+  );
+
+  const selectedPhotosNeedUpload =
+    files.length > 0 && queuePhotoMetadata.length < files.length;
+  const canSaveCurrentListingToQueue = Boolean(
+    queueAuthenticated &&
+      output.trim() &&
+      payloadPreview?.payload &&
+      !selectedPhotosNeedUpload &&
+      !queueLoading
+  );
+
+  async function unlockQueue() {
+    const ownerSecret = queueOwnerSecretInput;
+    if (!ownerSecret.trim()) {
+      setQueueAuthError("Enter the queue owner secret.");
+      return;
+    }
+
+    setQueueAuthLoading(true);
+    setQueueAuthError("");
+    setQueueSaveStatus("");
+    setQueueSaveError("");
+
+    try {
+      const response = await fetch("/api/lpu/queue-auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ownerSecret }),
+      });
+      const data = (await response.json()) as QueueStatusResponse;
+
+      if (!response.ok || !data.authenticated) {
+        throw new Error("Queue unlock failed.");
+      }
+
+      setQueueAuthenticated(true);
+      setQueueOwnerSecretInput("");
+      await loadQueueItems();
+    } catch {
+      setQueueAuthenticated(false);
+      setQueueItems([]);
+      setQueueAuthError("Queue unlock failed.");
+    } finally {
+      setQueueAuthLoading(false);
+    }
+  }
+
+  async function lockQueue() {
+    setQueueAuthLoading(true);
+    setQueueAuthError("");
+    setQueueError("");
+    setQueueSaveStatus("");
+    setQueueSaveError("");
+
+    try {
+      await fetch("/api/lpu/queue-auth/logout", {
+        method: "POST",
+      });
+    } finally {
+      setQueueAuthenticated(false);
+      setQueueOwnerSecretInput("");
+      setQueueItems([]);
+      setQueueAuthLoading(false);
+    }
+  }
+
+  async function loadQueueItems() {
+    setQueueLoading(true);
+    setQueueError("");
+
+    try {
+      const response = await fetch("/api/lpu/listing-queue", {
+        method: "GET",
+        cache: "no-store",
+      });
+      const data = (await response.json()) as QueueListResponse;
+
+      if (response.status === 401 || response.status === 403) {
+        setQueueAuthenticated(false);
+        setQueueItems([]);
+        throw new Error("Unlock the queue to view saved listings.");
+      }
+
+      if (!response.ok || !data.ok || !Array.isArray(data.items)) {
+        throw new Error("Unable to load listing queue.");
+      }
+
+      setQueueItems(data.items);
+    } catch (err) {
+      setQueueError(
+        err instanceof Error ? err.message : "Unable to load listing queue."
+      );
+    } finally {
+      setQueueLoading(false);
+    }
+  }
+
+  async function archiveQueueItem(id: string) {
+    if (!id) return;
+
+    setQueueLoading(true);
+    setQueueError("");
+    setQueueSaveStatus("");
+    setQueueSaveError("");
+
+    try {
+      const response = await fetch(
+        `/api/lpu/listing-queue/${encodeURIComponent(id)}`,
+        {
+          method: "DELETE",
+        }
+      );
+      const data = (await response.json()) as QueueItemResponse;
+
+      if (response.status === 401 || response.status === 403) {
+        setQueueAuthenticated(false);
+        setQueueItems([]);
+        throw new Error("Unlock the queue to archive listings.");
+      }
+
+      if (!response.ok || !data.ok) {
+        throw new Error("Unable to archive queue item.");
+      }
+
+      setQueueSaveStatus("Queue item archived.");
+      await loadQueueItems();
+    } catch (err) {
+      setQueueError(
+        err instanceof Error ? err.message : "Unable to archive queue item."
+      );
+    } finally {
+      setQueueLoading(false);
+    }
+  }
+
+  async function saveCurrentListingToQueue() {
+    setQueueSaveStatus("");
+    setQueueSaveError("");
+
+    if (!queueAuthenticated) {
+      setQueueSaveError("Unlock the queue before saving.");
+      return;
+    }
+
+    if (!output.trim()) {
+      setQueueSaveError("Generate or paste Final LP-U output before saving.");
+      return;
+    }
+
+    if (!payloadPreview?.payload) {
+      setQueueSaveError("Generate Final LP-U to create a payload before saving.");
+      return;
+    }
+
+    if (selectedPhotosNeedUpload) {
+      setQueueSaveError("Photos must be uploaded before saving to queue.");
+      return;
+    }
+
+    const payloadSnapshot = toJsonObject(
+      stripUnsafePhotoDataForQueue(payloadPreview.payload)
+    );
+    const title =
+      readQueuePayloadString(payloadPreview.payload, [
+        ["coreFields", "title"],
+        ["marketplaces", "ebay", "title"],
+        ["marketplaces", "ebay", "titleA"],
+      ]) || "Untitled queued listing";
+    const categorySummary =
+      readQueuePayloadString(payloadPreview.payload, [
+        ["coreFields", "canonicalVendooCategoryPath"],
+        ["coreFields", "category"],
+        ["marketplaces", "ebay", "canonicalVendooCategoryPath"],
+        ["marketplaces", "ebay", "category"],
+      ]) || pricingResearch.suggestedEbayCategoryPath;
+
+    setQueueLoading(true);
+
+    try {
+      const response = await fetch("/api/lpu/listing-queue", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          status: payloadSnapshot ? "payload_ready" : "lpu_generated",
+          title,
+          subtitle: categorySummary,
+          categorySummary,
+          thumbnailPath: queuePhotoMetadata[0]?.storagePath,
+          finalListPrice: finalListPriceInput.trim(),
+          itemIntake: {
+            notes,
+            knownDetails,
+            conditionFlaws: conditionNotes,
+            conditionNotes,
+            measurements,
+            markingsLabels: markings,
+            markings,
+          },
+          sellingBrief,
+          finalLpuOutput: output,
+          payloadSnapshot,
+          pricingSnapshot: toJsonObject({
+            finalListPriceInput,
+            pricingRecommendation,
+            pricingResearch,
+          }),
+          publicWebCompsSnapshot: toJsonObject(webCompsResult),
+          manualCompInputs: toJsonObject(manualCompInputs),
+          vendooSendStatus: toJsonObject({
+            status: vendooSendStatus,
+            message: vendooSendMessage,
+          }),
+          appVersion: `${INTERFACE_VERSION}/${PROMPT_VERSION}`,
+          photos: queuePhotoMetadata,
+        }),
+      });
+      const data = (await response.json()) as QueueItemResponse;
+
+      if (response.status === 401 || response.status === 403) {
+        setQueueAuthenticated(false);
+        setQueueItems([]);
+        throw new Error("Unlock the queue before saving.");
+      }
+
+      if (!response.ok || !data.ok) {
+        throw new Error("Unable to save listing to queue.");
+      }
+
+      setQueueSaveStatus("Current listing saved to queue.");
+      await loadQueueItems();
+    } catch (err) {
+      setQueueSaveError(
+        err instanceof Error ? err.message : "Unable to save listing to queue."
+      );
+    } finally {
+      setQueueLoading(false);
+    }
+  }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setFiles(Array.from(event.target.files ?? []));
@@ -1829,6 +2213,214 @@ export default function LpuV2Page() {
           </div>
 
           <aside className="space-y-5">
+            <SectionShell title="Listing Queue">
+              <div className="space-y-4">
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold text-gray-950">
+                        Queue Status
+                      </div>
+                      <div className="mt-1 text-xs text-gray-600">
+                        {queueAuthLoading
+                          ? "Checking queue access..."
+                          : queueAuthenticated
+                            ? "Unlocked for this browser session."
+                            : "Locked."}
+                      </div>
+                    </div>
+                    {queueAuthenticated ? (
+                      <button
+                        type="button"
+                        onClick={() => void lockQueue()}
+                        disabled={queueAuthLoading}
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Lock Queue
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {!queueAuthenticated ? (
+                    <div className="mt-3 space-y-3">
+                      <FieldLabel htmlFor="queue-owner-secret">
+                        Owner Secret
+                      </FieldLabel>
+                      <input
+                        id="queue-owner-secret"
+                        type="password"
+                        value={queueOwnerSecretInput}
+                        onChange={(event) =>
+                          setQueueOwnerSecretInput(event.target.value)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void unlockQueue();
+                          }
+                        }}
+                        className="w-full rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none focus:border-black"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void unlockQueue()}
+                        disabled={queueAuthLoading}
+                        className="w-full rounded-lg bg-black px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {queueAuthLoading ? "Unlocking..." : "Unlock Queue"}
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {queueAuthError ? (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                      {queueAuthError}
+                    </div>
+                  ) : null}
+                </div>
+
+                {queueAuthenticated ? (
+                  <div className="space-y-4">
+                    <div className="rounded-lg border border-gray-200 bg-white p-3">
+                      <button
+                        type="button"
+                        onClick={() => void saveCurrentListingToQueue()}
+                        disabled={!canSaveCurrentListingToQueue}
+                        className="w-full rounded-lg bg-black px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {queueLoading ? "Working..." : "Save Current Listing to Queue"}
+                      </button>
+                      {selectedPhotosNeedUpload ? (
+                        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                          Photos must be uploaded before saving to queue.
+                        </div>
+                      ) : null}
+                      {!output.trim() || !payloadPreview ? (
+                        <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
+                          Generate Final LP-U and payload preview before saving.
+                        </div>
+                      ) : null}
+                      {queueSaveStatus ? (
+                        <div className="mt-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+                          {queueSaveStatus}
+                        </div>
+                      ) : null}
+                      {queueSaveError ? (
+                        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                          {queueSaveError}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-gray-950">
+                        Saved Listings
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void loadQueueItems()}
+                        disabled={queueLoading}
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+
+                    {queueError ? (
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                        {queueError}
+                      </div>
+                    ) : null}
+
+                    {queueLoading && !queueItems.length ? (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
+                        Loading queue...
+                      </div>
+                    ) : null}
+
+                    {!queueLoading && !queueItems.length ? (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
+                        No saved listings yet.
+                      </div>
+                    ) : null}
+
+                    <div className="space-y-3">
+                      {queueItems.map((item) => {
+                        const thumbnailUrl =
+                          item.photos.find((photo) => photo.imageUrl)?.imageUrl ?? "";
+                        const timestamp = item.updatedAt || item.createdAt;
+
+                        return (
+                          <article
+                            key={item.id}
+                            className="rounded-lg border border-gray-200 bg-white p-3"
+                          >
+                            <div className="flex gap-3">
+                              <div className="h-16 w-16 shrink-0 overflow-hidden rounded-md border border-gray-200 bg-gray-100">
+                                {thumbnailUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={thumbnailUrl}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase text-gray-400">
+                                    No image
+                                  </div>
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="break-words text-sm font-semibold text-gray-950">
+                                  {item.title || "Untitled queued listing"}
+                                </div>
+                                <div className="mt-1 text-xs text-gray-600">
+                                  {item.finalListPrice
+                                    ? `$${item.finalListPrice}`
+                                    : "No final price"}{" "}
+                                  · {formatQueueStatus(item.status)}
+                                </div>
+                                {item.categorySummary ? (
+                                  <div className="mt-1 break-words text-xs text-gray-500">
+                                    {item.categorySummary}
+                                  </div>
+                                ) : null}
+                                <div className="mt-1 text-xs text-gray-500">
+                                  {formatQueueDate(timestamp)}
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold">
+                                  {item.sentToVendooAt ? (
+                                    <span className="rounded-full bg-green-100 px-2 py-1 text-green-800">
+                                      Sent
+                                    </span>
+                                  ) : null}
+                                  {item.archivedAt || item.status === "archived" ? (
+                                    <span className="rounded-full bg-gray-200 px-2 py-1 text-gray-700">
+                                      Archived
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                            {item.id && item.status !== "archived" ? (
+                              <button
+                                type="button"
+                                onClick={() => void archiveQueueItem(item.id || "")}
+                                disabled={queueLoading}
+                                className="mt-3 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Archive
+                              </button>
+                            ) : null}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </SectionShell>
+
             <SectionShell title="Vendoo Handoff">
               <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
                 <div className="space-y-2 text-sm text-gray-700">

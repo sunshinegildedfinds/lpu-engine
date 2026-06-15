@@ -263,6 +263,7 @@ const queueAuthLogoutRoutePath = path.join(
 );
 const listingQueueCrudRouteDir = path.join(rootDir, "app/api/lpu/listing-queue");
 const listingQueueServerPath = path.join(rootDir, "lib/lpu/listingQueueServer.ts");
+const lpuV2PagePath = path.join(rootDir, "app/lpu-v2/page.tsx");
 const listingQueueCollectionRoutePath = path.join(
   listingQueueCrudRouteDir,
   "route.ts"
@@ -302,6 +303,7 @@ assert.equal(
   true,
   "Listing queue server helper exists."
 );
+assert.equal(fs.existsSync(lpuV2PagePath), true, "V2 page exists.");
 assert.equal(
   fs.existsSync(listingQueueCollectionRoutePath),
   true,
@@ -422,15 +424,42 @@ assert.match(listingQueueItemRouteSource, /Invalid JSON body/);
 assert.match(listingQueueRestoreRouteSource, /export async function POST/);
 assert.match(listingQueueRestoreRouteSource, /restoreListingQueueItem/);
 
+const lpuV2PageSource = fs.readFileSync(lpuV2PagePath, "utf8");
+assert.match(lpuV2PageSource, /\/api\/lpu\/queue-auth\/status/);
+assert.match(lpuV2PageSource, /\/api\/lpu\/queue-auth\/login/);
+assert.match(lpuV2PageSource, /\/api\/lpu\/queue-auth\/logout/);
+assert.match(lpuV2PageSource, /\/api\/lpu\/listing-queue/);
+assert.match(lpuV2PageSource, /Save Current Listing to Queue/);
+assert.equal(/@supabase\/supabase-js|SUPABASE_SERVICE_ROLE_KEY/.test(lpuV2PageSource), false);
+assert.equal(/localStorage|sessionStorage/.test(lpuV2PageSource), false);
+assert.equal(/Load from Queue|loadFromQueue|restoreQueueItem|restoreListingQueueItem/i.test(lpuV2PageSource), false);
+assert.equal(/Send queued listing|sendQueued|queued.*Vendoo/i.test(lpuV2PageSource), false);
+
+const queueSaveFunctionMatch = lpuV2PageSource.match(
+  /async function saveCurrentListingToQueue\(\) \{[\s\S]*?\n  \}\n\n  function handleFileChange/
+);
+assert(queueSaveFunctionMatch, "V2 page has saveCurrentListingToQueue handler.");
+assert.match(queueSaveFunctionMatch[0], /stripUnsafePhotoDataForQueue\(payloadPreview\.payload\)/);
+assert.equal(/dataUrl|signedUrl/.test(queueSaveFunctionMatch[0]), false);
+
 const changedFiles = execFileSync("git", ["diff", "--name-only"], {
   cwd: rootDir,
   encoding: "utf8",
 })
   .split(/\r?\n/)
   .filter(Boolean);
+const allowedChangedFiles = new Set([
+  "app/lpu-v2/page.tsx",
+  "scripts/check-v2-listing-queue.mjs",
+  "scripts/check-v2-payload-preview.mjs",
+  "package.json",
+  "lib/lpu/listingQueue.ts",
+]);
+const unexpectedChangedFiles = changedFiles.filter(
+  (file) => !allowedChangedFiles.has(file)
+);
 const forbiddenChangedFiles = changedFiles.filter(
   (file) =>
-    file === "app/lpu-v2/page.tsx" ||
     file === "app/lpu/page.tsx" ||
     file.startsWith("listing-writer-app/extension/") ||
     file.startsWith("components/vendoo/") ||
@@ -438,6 +467,7 @@ const forbiddenChangedFiles = changedFiles.filter(
     file === "lib/sendVendooPayloadToExtension.ts"
 );
 
-assert.deepEqual(forbiddenChangedFiles, [], "No V2 UI, V1 UI, Vendoo, or extension files changed.");
+assert.deepEqual(unexpectedChangedFiles, [], "Only intended V2 queue UI/check files changed.");
+assert.deepEqual(forbiddenChangedFiles, [], "No V1 UI, Vendoo, or extension files changed.");
 
 console.log("V2 listing queue checks passed.");

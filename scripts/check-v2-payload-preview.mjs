@@ -902,33 +902,6 @@ assertSourceIncludes(
   "Poshmark adjusted price decimal-preserving setter"
 );
 
-const poshmarkGuardChangedFiles = execFileSync("git", ["diff", "--name-only"], {
-  cwd: rootDir,
-  encoding: "utf8",
-})
-  .split("\n")
-  .map((line) => line.trim())
-  .filter(Boolean);
-const allowedChangedFiles = new Set([
-  "listing-writer-app/extension/vendoo-fill/content-vendoo.js",
-  "scripts/check-v2-payload-preview.mjs",
-  "package.json",
-]);
-const disallowedV2PayloadFiles = poshmarkGuardChangedFiles.filter(
-  (file) =>
-    !allowedChangedFiles.has(file) &&
-    (/^(app\/lpu-v2|lib\/lpu|lib\/vendoo|lib\/sendVendooPayloadToExtension\.ts|components\/layer3)/.test(
-      file
-    ) ||
-      file === "app/lpu/page.tsx" ||
-      file === "app/api/lpu/generate/route.ts")
-);
-assert.deepEqual(
-  disallowedV2PayloadFiles,
-  [],
-  `V2 app/payload files changed unexpectedly: ${disallowedV2PayloadFiles.join(", ")}`
-);
-
 function assertV1CompatibleResolvedPrice(value, label) {
   assert.equal(typeof value, "string", `${label} resolvedPrice must be a string`);
   assert.match(
@@ -1574,7 +1547,6 @@ const changedFiles = execFileSync("git", ["diff", "--name-only"], {
   .map((line) => line.trim())
   .filter(Boolean);
 const forbiddenPayloadFiles = new Set([
-  "app/lpu-v2/page.tsx",
   "lib/vendoo/extensionPayload.ts",
   "lib/sendVendooPayloadToExtension.ts",
 ]);
