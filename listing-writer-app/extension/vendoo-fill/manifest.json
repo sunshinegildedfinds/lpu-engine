@@ -3,10 +3,13 @@
   "name": "LPU Vendoo Fill",
   "version": "0.1.0",
   "description": "Private extension that receives structured payloads from the LP-U app and fills Vendoo fields.",
-  "permissions": ["storage"],
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "http://localhost:3000/*",
-    "https://web.vendoo.co/*"
+    "https://web.vendoo.co/*",
+    "https://lpu-engine.vercel.app/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -16,12 +19,19 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://localhost:3000/*"],
-      "js": ["content-app.js"],
+      "matches": [
+        "http://localhost:3000/*",
+        "https://lpu-engine.vercel.app/*"
+      ],
+      "js": [
+        "content-app.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://web.vendoo.co/*"],
+      "matches": [
+        "https://web.vendoo.co/*"
+      ],
       "js": [
         "vendooSelectors.js",
         "vendooActionModel.js",

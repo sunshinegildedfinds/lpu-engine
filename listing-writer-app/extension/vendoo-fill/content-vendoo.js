@@ -560,6 +560,10 @@
       marketplaceOrderDiagnostics.depopStarted = true;
       await ensureDepopStageOpenForDepopFill();
       await ensureDepopOptionalFieldsOpenForDepopFill();
+      await fillDepopPriceIfPresent({
+        payload,
+        usedElements,
+      });
       await fillDepopSizeIfPresent({
         payload,
         usedElements,
@@ -572,7 +576,20 @@
         payload,
         usedElements,
       });
+      await ensureMercariStageOpenForMercariFill();
+      await fillMercariPriceIfPresent({
+        payload,
+        usedElements,
+      });
       await ensurePoshmarkStageOpenForPoshmarkFill();
+      await fillPoshmarkTitleIfPresent({
+        payload,
+        usedElements,
+      });
+      await fillPoshmarkDescriptionIfPresent({
+        payload,
+        usedElements,
+      });
       await fillPoshmarkAdjustedPriceIfPresent({
         payload,
         usedElements,
@@ -597,6 +614,9 @@
       await fillEtsyTagsIfPresent({
         payload,
         usedElements,
+      });
+      await refillVisibleDepopMercariPricesIfNeeded({
+        payload,
       });
     } else {
       marketplaceOrderDiagnostics.depopBlockedReason = "ebay_stage_not_completed";
@@ -857,6 +877,77 @@
     return result;
   }
 
+  async function fillDepopPriceIfPresent(input) {
+    const { payload, usedElements } = input;
+    const resolvedPriceRaw =
+      typeof payload?.resolvedPrice === "string" ? payload.resolvedPrice.trim() : "";
+    const priceValue = normalizeMarketplacePriceInputValue(resolvedPriceRaw);
+    const diagnostic = {
+      fieldLabel: "Depop Price",
+      payloadKey: "resolvedPrice",
+      payloadValue: resolvedPriceRaw || "",
+      attemptedValue: "",
+      finalValue: "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const depopStageGate = evaluateDepopStageGate();
+    console.debug("[Vendoo][DepopStageGate]", depopStageGate);
+    if (!depopStageGate.stageDetected) {
+      diagnostic.reason = "not depop stage";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!resolvedPriceRaw) {
+      diagnostic.reason = "resolvedPrice missing";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!isValidResolvedPrice(resolvedPriceRaw) || !priceValue) {
+      diagnostic.reason = "resolvedPrice invalid";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    const field = await waitForMarketplacePriceInput({
+      findInput: findDepopPriceInput,
+      label: "Depop Price",
+    });
+    if (!(field instanceof HTMLInputElement)) {
+      diagnostic.status = "skipped_for_safety";
+      diagnostic.reason = "Depop Price field not found after bounded wait";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.finalValue = String(field.value || "").trim();
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.attemptedValue = priceValue;
+    const verifyResult = await fillAndVerifyMarketplacePriceInputWithRetry(field, priceValue);
+    diagnostic.finalValue = String(verifyResult.actualValue || field.value || "").trim();
+
+    if (!verifyResult.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = `verification failed (expected "${priceValue}", got "${diagnostic.finalValue || ""}")`;
+      console.debug("[Vendoo][DepopPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value persisted after blur";
+    console.debug("[Vendoo][DepopPrice]", diagnostic);
+    return diagnostic;
+  }
+
   async function fillDepopSizeIfPresent(input) {
     const { payload, usedElements } = input;
     const payloadValueRaw =
@@ -1016,6 +1107,146 @@
     diagnostic.status = "filled";
     diagnostic.reason = "value persisted after set";
     console.debug("[Vendoo][DepopDescription]", diagnostic);
+    return diagnostic;
+  }
+
+  async function fillMercariPriceIfPresent(input) {
+    const { payload, usedElements } = input;
+    const resolvedPriceRaw =
+      typeof payload?.resolvedPrice === "string" ? payload.resolvedPrice.trim() : "";
+    const priceValue = normalizeMarketplacePriceInputValue(resolvedPriceRaw);
+    const diagnostic = {
+      fieldLabel: "Mercari Listing Price",
+      payloadKey: "resolvedPrice",
+      payloadValue: resolvedPriceRaw || "",
+      attemptedValue: "",
+      finalValue: "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const mercariStageGate = evaluateMercariStageGate();
+    console.debug("[Vendoo][MercariStageGate]", mercariStageGate);
+    if (!mercariStageGate.stageDetected) {
+      diagnostic.reason = "not mercari stage";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!resolvedPriceRaw) {
+      diagnostic.reason = "resolvedPrice missing";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!isValidResolvedPrice(resolvedPriceRaw) || !priceValue) {
+      diagnostic.reason = "resolvedPrice invalid";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    const field = await waitForMarketplacePriceInput({
+      findInput: findMercariPriceInput,
+      label: "Mercari Listing Price",
+    });
+    if (!(field instanceof HTMLInputElement)) {
+      diagnostic.status = "skipped_for_safety";
+      diagnostic.reason = "Mercari Listing Price field not found after bounded wait";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.finalValue = String(field.value || "").trim();
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.attemptedValue = priceValue;
+    const verifyResult = await fillAndVerifyMarketplacePriceInputWithRetry(field, priceValue);
+    diagnostic.finalValue = String(verifyResult.actualValue || field.value || "").trim();
+
+    if (!verifyResult.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = `verification failed (expected "${priceValue}", got "${diagnostic.finalValue || ""}")`;
+      console.debug("[Vendoo][MercariPrice]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value persisted after blur";
+    console.debug("[Vendoo][MercariPrice]", diagnostic);
+    return diagnostic;
+  }
+
+  async function refillVisibleDepopMercariPricesIfNeeded(input) {
+    const { payload } = input;
+    const resolvedPriceRaw =
+      typeof payload?.resolvedPrice === "string" ? payload.resolvedPrice.trim() : "";
+    const priceValue = normalizeMarketplacePriceInputValue(resolvedPriceRaw);
+
+    if (!resolvedPriceRaw || !isValidResolvedPrice(resolvedPriceRaw) || !priceValue) {
+      console.debug("[Vendoo][MarketplacePriceRefill]", {
+        status: "skipped_for_safety",
+        reason: resolvedPriceRaw ? "resolvedPrice invalid" : "resolvedPrice missing",
+      });
+      return;
+    }
+
+    await refillVisibleMarketplacePriceIfNeeded({
+      label: "Depop Price",
+      logPrefix: "[Vendoo][DepopPriceRefill]",
+      findInput: findDepopPriceInput,
+      priceValue,
+    });
+    await refillVisibleMarketplacePriceIfNeeded({
+      label: "Mercari Listing Price",
+      logPrefix: "[Vendoo][MercariPriceRefill]",
+      findInput: findMercariPriceInput,
+      priceValue,
+    });
+  }
+
+  async function refillVisibleMarketplacePriceIfNeeded(input) {
+    const { label, logPrefix, findInput, priceValue } = input;
+    const field = findInput();
+    const diagnostic = {
+      fieldLabel: label,
+      attemptedValue: "",
+      finalValue: field instanceof HTMLInputElement ? String(field.value || "").trim() : "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    if (!(field instanceof HTMLInputElement)) {
+      diagnostic.reason = "visible price field not present for passive refill";
+      console.debug(logPrefix, diagnostic);
+      return diagnostic;
+    }
+
+    if (normalizePriceForCompare(field.value) === normalizePriceForCompare(priceValue)) {
+      diagnostic.status = "filled";
+      diagnostic.reason = "value already persisted";
+      console.debug(logPrefix, diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.attemptedValue = priceValue;
+    const verifyResult = await fillAndVerifyMarketplacePriceInputWithRetry(field, priceValue);
+    diagnostic.finalValue = String(verifyResult.actualValue || field.value || "").trim();
+
+    if (!verifyResult.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = `verification failed (expected "${priceValue}", got "${diagnostic.finalValue || ""}")`;
+      console.debug(logPrefix, diagnostic);
+      return diagnostic;
+    }
+
+    diagnostic.status = "filled";
+    diagnostic.reason = "value refilled after stabilization";
+    console.debug(logPrefix, diagnostic);
     return diagnostic;
   }
 
@@ -1763,6 +1994,42 @@
     return scopedCandidates[0] ?? null;
   }
 
+  function findDepopPriceInput() {
+    const selectors = [
+      'input[name="listings.depop.overrides.price"]',
+      'input[data-testid="listings.depop.overrides.price"]',
+      'input#listings\\.depop\\.overrides\\.price',
+      'input[id="listings.depop.overrides.price"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isMarketplacePriceInputReady(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  function findMercariPriceInput() {
+    const selectors = [
+      'input[name="listings.mercari.overrides.price"]',
+      'input[data-testid="listings.mercari.overrides.price"]',
+      'input#listings\\.mercari\\.overrides\\.price',
+      'input[id="listings.mercari.overrides.price"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isMarketplacePriceInputReady(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
   function findDepopTagsControl() {
     const exactSelectors = [
       'input#listings\\.depop\\.hashtags',
@@ -1978,8 +2245,11 @@
 
   function evaluateDepopStageGate() {
     const depopStageSelectors = [
+      'input[name="listings.depop.overrides.price"]',
+      'input#listings\\.depop\\.overrides\\.price',
       'textarea[name="listings.depop.overrides.description"]',
       'input[id="listings.depop.categorySpecifics.womenswear_dresses_size"]',
+      'input[data-testid="listings.depop.overrides.price"]',
       'textarea#listings\\.depop\\.overrides\\.description',
       'input#listings\\.depop\\.categorySpecifics\\.womenswear_dresses_size',
     ];
@@ -1993,6 +2263,56 @@
       evidenceUsed: matchedSelector || "none",
       reason: stageDetected ? "depop stage evidence confirmed" : "depop stage evidence missing",
     };
+  }
+
+  async function ensureMercariStageOpenForMercariFill() {
+    const diagnostics = {
+      clickAttempted: false,
+      activeDetected: false,
+      formReadyDetected: false,
+      reason: "",
+    };
+
+    const mercariControl = findMercariSideControl();
+    if (!(mercariControl instanceof Element)) {
+      diagnostics.reason = "mercari side control not found";
+      console.debug("[Vendoo][MercariStageOpen]", diagnostics);
+      const gate = evaluateMercariStageGate();
+      console.debug("[Vendoo][MercariStageGate]", gate);
+      return diagnostics;
+    }
+
+    diagnostics.activeDetected = isMercariSideControlActive(mercariControl);
+    if (!diagnostics.activeDetected) {
+      clickElement(mercariControl);
+      diagnostics.clickAttempted = true;
+    }
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (attempt > 0) {
+        await wait(140);
+      }
+
+      const currentControl = findMercariSideControl();
+      diagnostics.activeDetected = isMercariSideControlActive(currentControl);
+      diagnostics.formReadyDetected = isMercariFormReadyInDom();
+
+      if (diagnostics.activeDetected && diagnostics.formReadyDetected) {
+        diagnostics.reason = "mercari stage active and form ready";
+        console.debug("[Vendoo][MercariStageOpen]", diagnostics);
+        const gate = evaluateMercariStageGate();
+        console.debug("[Vendoo][MercariStageGate]", gate);
+        return diagnostics;
+      }
+    }
+
+    diagnostics.reason = diagnostics.activeDetected
+      ? "mercari active but form not ready"
+      : "mercari stage not active";
+    console.debug("[Vendoo][MercariStageOpen]", diagnostics);
+    const gate = evaluateMercariStageGate();
+    console.debug("[Vendoo][MercariStageGate]", gate);
+    return diagnostics;
   }
 
   async function ensurePoshmarkStageOpenForPoshmarkFill() {
@@ -2112,6 +2432,9 @@
 
   function evaluatePoshmarkStageGate() {
     const selectors = [
+      'input[name="listings.poshmark.overrides.title"]',
+      'input[data-testid="listings.poshmark.overrides.title"]',
+      'input#listings\\.poshmark\\.overrides\\.title',
       'textarea[name="listings.poshmark.description"]',
       'textarea#listings\\.poshmark\\.description',
       'input[name="listings.poshmark.title"]',
@@ -2167,8 +2490,36 @@
     };
   }
 
+  function evaluateMercariStageGate() {
+    const selectors = [
+      'input[name="listings.mercari.overrides.price"]',
+      'input#listings\\.mercari\\.overrides\\.price',
+      'input[data-testid="listings.mercari.overrides.price"]',
+    ];
+    const matchedSelector = selectors.find((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element && isVisible(node);
+    });
+    const mercariControl = findMercariSideControl();
+    const activeDetected = isMercariSideControlActive(mercariControl);
+    const formReadyDomEvidence = isMercariFormReadyInDom();
+    const stageDetected = Boolean(matchedSelector) || formReadyDomEvidence || activeDetected;
+
+    return {
+      stageDetected,
+      evidenceUsed:
+        matchedSelector ||
+        (formReadyDomEvidence ? "mercari_form_ready_dom" : "") ||
+        (activeDetected ? "mercari_side_control_active" : "none"),
+      reason: stageDetected ? "mercari stage evidence confirmed" : "mercari stage evidence missing",
+    };
+  }
+
   function isPoshmarkFormReadyInDom() {
     const selectors = [
+      'input[name="listings.poshmark.overrides.title"]',
+      'input[data-testid="listings.poshmark.overrides.title"]',
+      'input#listings\\.poshmark\\.overrides\\.title',
       'textarea[name="listings.poshmark.overrides.description"]',
       'textarea#listings\\.poshmark\\.overrides\\.description',
       'textarea[name="listings.poshmark.description"]',
@@ -2184,6 +2535,56 @@
 
   function isPoshmarkTabSpecificallyActive(tabElement) {
     return detectPoshmarkActiveEvidence(tabElement).active;
+  }
+
+  function findMercariSideControl() {
+    const selectors = [
+      "button#mercari",
+      'button[role="side-control-mercari"]',
+      '#mercari',
+      '[role="side-control-mercari"]',
+    ];
+
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof Element && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+
+    return findMarketplaceTab("mercari");
+  }
+
+  function isMercariSideControlActive(control) {
+    if (!(control instanceof Element)) return false;
+    const controlText = normalizeText(
+      [
+        control.textContent || "",
+        control.getAttribute("aria-label") || "",
+        control.getAttribute("title") || "",
+        control.getAttribute("data-testid") || "",
+        control.getAttribute("name") || "",
+        control.getAttribute("id") || "",
+        control.getAttribute("role") || "",
+      ].join(" ")
+    );
+    if (!controlText.includes("mercari")) return false;
+
+    const selectedAttr = normalizeText(control.getAttribute("aria-selected") || "");
+    const dataState = normalizeText(control.getAttribute("data-state") || "");
+    const ariaCurrent = normalizeText(control.getAttribute("aria-current") || "");
+    const className = normalizeText(
+      typeof control.className === "string" ? control.className : ""
+    );
+
+    return (
+      selectedAttr === "true" ||
+      dataState === "active" ||
+      ariaCurrent === "true" ||
+      ariaCurrent === "page" ||
+      className.includes("active") ||
+      className.includes("selected")
+    );
   }
 
   function isEtsyTabSpecificallyActive(tabElement) {
@@ -2264,10 +2665,25 @@
 
   function isDepopFormReadyInDom() {
     const selectors = [
+      'input[name="listings.depop.overrides.price"]',
+      'input#listings\\.depop\\.overrides\\.price',
+      'input[data-testid="listings.depop.overrides.price"]',
       'textarea[name="listings.depop.overrides.description"]',
       'input[id="listings.depop.categorySpecifics.womenswear_dresses_size"]',
       'textarea#listings\\.depop\\.overrides\\.description',
       'input#listings\\.depop\\.categorySpecifics\\.womenswear_dresses_size',
+    ];
+    return selectors.some((selector) => {
+      const node = document.querySelector(selector);
+      return node instanceof Element && isVisible(node);
+    });
+  }
+
+  function isMercariFormReadyInDom() {
+    const selectors = [
+      'input[name="listings.mercari.overrides.price"]',
+      'input#listings\\.mercari\\.overrides\\.price',
+      'input[data-testid="listings.mercari.overrides.price"]',
     ];
     return selectors.some((selector) => {
       const node = document.querySelector(selector);
@@ -2489,6 +2905,231 @@
       }
     }
     return null;
+  }
+
+  function pickPoshmarkTitle(payload) {
+    const candidates = [
+      payload?.poshmark?.title,
+      payload?.marketplaces?.poshmark?.title,
+      payload?.marketplaceFields?.poshmark?.title,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+    return "";
+  }
+
+  function pickPoshmarkDescription(payload) {
+    const candidates = [
+      payload?.poshmark?.description,
+      payload?.marketplaces?.poshmark?.description,
+      payload?.marketplaceFields?.poshmark?.description,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+    return "";
+  }
+
+  async function fillPoshmarkTitleIfPresent(input) {
+    const { payload, usedElements } = input;
+    const payloadValue = pickPoshmarkTitle(payload);
+    const diagnostic = {
+      payloadValuePresent: Boolean(payloadValue),
+      finalValue: "",
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const poshmarkGate = evaluatePoshmarkStageGate();
+    if (!poshmarkGate.stageDetected) {
+      diagnostic.reason = "not poshmark stage";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!payloadValue) {
+      diagnostic.reason = "poshmark.title missing";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    const field = await waitForPoshmarkTextField({
+      findField: findPoshmarkTitleField,
+      isExpectedField: (candidate) => candidate instanceof HTMLInputElement,
+    });
+    diagnostic.finalValue = field instanceof HTMLInputElement ? String(field.value || "") : "";
+
+    if (!(field instanceof HTMLInputElement) || !isVisible(field)) {
+      diagnostic.reason = "Poshmark Title field not found";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    const result = await fillAndVerifyTextFieldWithRetry(field, payloadValue, {
+      trimForCompare: true,
+    });
+    diagnostic.finalValue = result.actualValue;
+    if (!result.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "verification failed";
+      console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value replaced";
+    console.debug("[Vendoo][PoshmarkTitle]", diagnostic);
+    return diagnostic;
+  }
+
+  async function fillPoshmarkDescriptionIfPresent(input) {
+    const { payload, usedElements } = input;
+    const payloadValue = pickPoshmarkDescription(payload);
+    const diagnostic = {
+      payloadValuePresent: Boolean(payloadValue),
+      finalValuePresent: false,
+      status: "skipped_for_safety",
+      reason: "",
+    };
+
+    const poshmarkGate = evaluatePoshmarkStageGate();
+    if (!poshmarkGate.stageDetected) {
+      diagnostic.reason = "not poshmark stage";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    if (!payloadValue) {
+      diagnostic.reason = "poshmark.description missing";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    const field = await waitForPoshmarkTextField({
+      findField: findPoshmarkDescriptionField,
+      isExpectedField: (candidate) => candidate instanceof HTMLTextAreaElement,
+    });
+    diagnostic.finalValuePresent =
+      field instanceof HTMLTextAreaElement ? Boolean(String(field.value || "").trim()) : false;
+
+    if (!(field instanceof HTMLTextAreaElement) || !isVisible(field)) {
+      diagnostic.reason = "Poshmark Description field not found";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    if (usedElements.has(field)) {
+      diagnostic.reason = "collision prevention";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    const result = await fillAndVerifyTextFieldWithRetry(field, payloadValue, {
+      trimForCompare: true,
+    });
+    diagnostic.finalValuePresent = Boolean(String(result.actualValue || "").trim());
+    if (!result.ok) {
+      diagnostic.status = "needs_review";
+      diagnostic.reason = "verification failed";
+      console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+      return diagnostic;
+    }
+
+    usedElements.add(field);
+    diagnostic.status = "filled";
+    diagnostic.reason = "value replaced";
+    console.debug("[Vendoo][PoshmarkDescription]", diagnostic);
+    return diagnostic;
+  }
+
+  async function waitForPoshmarkTextField(input) {
+    const { findField, isExpectedField } = input;
+    const maxAttempts = 12;
+    const intervalMs = 140;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const field = findField();
+      if (isExpectedField(field) && isTextFieldReady(field)) {
+        return field;
+      }
+      await wait(intervalMs);
+    }
+    return null;
+  }
+
+  function findPoshmarkTitleField() {
+    const selectors = [
+      'input[name="listings.poshmark.overrides.title"]',
+      'input[data-testid="listings.poshmark.overrides.title"]',
+      'input#listings\\.poshmark\\.overrides\\.title',
+    ];
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLInputElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function findPoshmarkDescriptionField() {
+    const selectors = [
+      'textarea[name="listings.poshmark.overrides.description"]',
+      'textarea#listings\\.poshmark\\.overrides\\.description',
+    ];
+    for (const selector of selectors) {
+      const candidate = document.querySelector(selector);
+      if (candidate instanceof HTMLTextAreaElement && isVisible(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function isTextFieldReady(field) {
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) {
+      return false;
+    }
+    return isVisible(field) && !field.disabled && !field.readOnly;
+  }
+
+  async function fillAndVerifyTextFieldWithRetry(field, value, options = {}) {
+    const trimForCompare = options.trimForCompare !== false;
+    let lastActualValue = field instanceof Element ? String(field.value || "") : "";
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!isTextFieldReady(field)) {
+        return { ok: false, actualValue: lastActualValue };
+      }
+
+      setElementValue(field, "");
+      await wait(50);
+      setElementValue(field, value);
+      field.dispatchEvent(new Event("blur", { bubbles: true }));
+      await wait(140);
+
+      lastActualValue = String(field.value || "");
+      const actualComparable = trimForCompare ? lastActualValue.trim() : lastActualValue;
+      const expectedComparable = trimForCompare ? String(value).trim() : String(value);
+      if (actualComparable === expectedComparable) {
+        return { ok: true, actualValue: lastActualValue };
+      }
+
+      await wait(160);
+    }
+
+    return { ok: false, actualValue: lastActualValue };
   }
 
   async function fillPoshmarkAdjustedPriceIfPresent(input) {
@@ -2941,6 +3582,71 @@
     };
   }
 
+  async function fillAndVerifyMarketplacePriceInputWithRetry(inputField, value) {
+    let lastResult = {
+      ok: false,
+      actualValue: inputField instanceof HTMLInputElement ? inputField.value || "" : "",
+    };
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!(inputField instanceof HTMLInputElement) || !isMarketplacePriceInputReady(inputField)) {
+        return lastResult;
+      }
+
+      lastResult = await fillAndVerifyPriceInput(inputField, value);
+      if (lastResult.ok) {
+        return lastResult;
+      }
+
+      await wait(180);
+    }
+
+    return lastResult;
+  }
+
+  async function waitForMarketplacePriceInput(input) {
+    const { findInput, label } = input;
+    const maxAttempts = 22;
+    const intervalMs = 150;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const field = findInput();
+      if (field instanceof HTMLInputElement && isMarketplacePriceInputReady(field)) {
+        if (attempt > 0) {
+          console.debug("[Vendoo][MarketplacePriceWait]", {
+            fieldLabel: label,
+            status: "ready",
+            attempts: attempt + 1,
+          });
+        }
+        return field;
+      }
+
+      await wait(intervalMs);
+    }
+
+    console.debug("[Vendoo][MarketplacePriceWait]", {
+      fieldLabel: label,
+      status: "skipped_for_safety",
+      reason: "price input not ready after bounded wait",
+      attempts: maxAttempts,
+    });
+    return null;
+  }
+
+  function isMarketplacePriceInputReady(field) {
+    if (!(field instanceof HTMLInputElement) || !isVisible(field)) {
+      return false;
+    }
+
+    return (
+      !field.disabled &&
+      !field.readOnly &&
+      field.getAttribute("disabled") === null &&
+      field.getAttribute("aria-disabled") !== "true"
+    );
+  }
+
   async function findListingPriceInputWithFallback() {
     const selectors = [
       'input[data-testid="generalDetails.price"]',
@@ -3152,6 +3858,13 @@
     return String(value ?? "")
       .replace(/[$,\s]/g, "")
       .replace(/^0+(\d)/, "$1")
+      .trim();
+  }
+
+  function normalizeMarketplacePriceInputValue(value) {
+    return String(value ?? "")
+      .trim()
+      .replace(/^\$/, "")
       .trim();
   }
 
@@ -3794,6 +4507,26 @@
       uploadVerificationReason: "",
       photoStageStatus: "skipped_no_photos",
       photoStageError: "",
+      photoReferenceCount: photoResolution.photoReferenceCount,
+      resolvedPhotoCount: 0,
+      failedPhotoCount: 0,
+      resolverSource: "unavailable",
+      resolutionFailureReasons: [],
+      storedPayloadPhotoReferences: photoResolution.storedPayloadPhotoReferences,
+      transientPhotoReferences: photoResolution.transientPhotoReferences,
+      payloadPhotoReferences: photoResolution.payloadPhotoReferences,
+      hasStoragePath: false,
+      hasImageUrl: false,
+      hasSignedUrl: false,
+      attemptedResolverOrder: [],
+      signingEndpointCalled: false,
+      signingEndpointStatus: "",
+      signingEndpointUrlUsed: "",
+      signingEndpointError: "",
+      signingEndpointResponseText: "",
+      fetchUrlSource: "",
+      fetchStatus: 0,
+      fetchContentType: "",
     };
     try {
       if (!photos.length) {
@@ -3809,11 +4542,29 @@
       diagnostics.fileInputFound = uploadSurface.fileInput instanceof HTMLInputElement;
       diagnostics.dropzoneNodeFound = uploadSurface.dropzoneNode instanceof Element;
 
-      const files = buildFilesFromPhotoPayload(photos);
+      const fileResolution = await buildFilesFromPhotoPayload(photos, payload);
+      diagnostics.photoReferenceCount = fileResolution.photoReferenceCount;
+      diagnostics.resolvedPhotoCount = fileResolution.resolvedPhotoCount;
+      diagnostics.failedPhotoCount = fileResolution.failedPhotoCount;
+      diagnostics.resolverSource = fileResolution.resolverSource;
+      diagnostics.resolutionFailureReasons = fileResolution.failureReasons.slice(0, 10);
+      diagnostics.hasStoragePath = fileResolution.hasStoragePath;
+      diagnostics.hasImageUrl = fileResolution.hasImageUrl;
+      diagnostics.hasSignedUrl = fileResolution.hasSignedUrl;
+      diagnostics.attemptedResolverOrder = fileResolution.attemptedResolverOrder;
+      diagnostics.signingEndpointCalled = fileResolution.signingEndpointCalled;
+      diagnostics.signingEndpointStatus = fileResolution.signingEndpointStatus;
+      diagnostics.signingEndpointUrlUsed = fileResolution.signingEndpointUrlUsed;
+      diagnostics.signingEndpointError = fileResolution.signingEndpointError;
+      diagnostics.signingEndpointResponseText = fileResolution.signingEndpointResponseText;
+      diagnostics.fetchUrlSource = fileResolution.fetchUrlSource;
+      diagnostics.fetchStatus = fileResolution.fetchStatus;
+      diagnostics.fetchContentType = fileResolution.fetchContentType;
+      const files = fileResolution.files;
       if (!files.length) {
-        diagnostics.photoStageStatus = "failed";
-        diagnostics.uploadVerificationReason = "no valid photo files from payload";
-        diagnostics.photoStageError = "payload photos could not be converted to File objects";
+        diagnostics.photoStageStatus = "needs_review";
+        diagnostics.uploadVerificationReason = "photo references could not be resolved";
+        diagnostics.photoStageError = "no uploadable files resolved from photo payload";
         console.debug("[LPU Vendoo] Photo stage diagnostics", diagnostics);
         return diagnostics;
       }
@@ -7619,6 +8370,20 @@
         if (selectResult.status === "filled") {
           entryDiagnostics.optionMatchAccepted = true;
           entryDiagnostics.finalStatusByToken[target] = "filled_option_match";
+          console.debug("[Vendoo][OptionResolutionOrder]", {
+            fieldLabel: field.label,
+            rawPayloadValue: String(value ?? "").trim(),
+            availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+            comparisonCandidates: Array.isArray(selectResult.comparisonCandidates)
+              ? selectResult.comparisonCandidates
+              : [],
+            optionMatchAttempted: true,
+            selectedOptions: selectResult.resolvedOption ? [selectResult.resolvedOption] : [],
+            matchStrategy: selectResult.matchStrategy || "",
+            matchedCandidate: selectResult.matchedCandidate || "",
+            rawCustomFallbackUsed: false,
+            fallbackReason: "",
+          });
           continue;
         }
 
@@ -7629,6 +8394,22 @@
           entryDiagnostics.finalStatusByToken[target] = committed
             ? "filled_custom_commit"
             : "rejected";
+          console.debug("[Vendoo][OptionResolutionOrder]", {
+            fieldLabel: field.label,
+            rawPayloadValue: String(value ?? "").trim(),
+            availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+            comparisonCandidates: Array.isArray(selectResult.comparisonCandidates)
+              ? selectResult.comparisonCandidates
+              : [],
+            optionMatchAttempted: true,
+            selectedOptions: [],
+            matchStrategy: selectResult.matchStrategy || "",
+            matchedCandidate: selectResult.matchedCandidate || "",
+            rawCustomFallbackUsed: true,
+            fallbackReason: committed
+              ? `custom_fallback_used_after_option_result:${selectResult.reason || "no_safe_option_match"}`
+              : `custom_fallback_failed_after_option_result:${selectResult.reason || "no_safe_option_match"}`,
+          });
           if (committed) {
             continue;
           }
@@ -7721,6 +8502,36 @@
           accepted = selectResult.status === "filled";
           if (accepted) {
             chipDiagnostics.optionMatchAccepted = true;
+            console.debug("[Vendoo][OptionResolutionOrder]", {
+              fieldLabel: field.label,
+              rawPayloadValue: String(value ?? "").trim(),
+              availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+              comparisonCandidates: Array.isArray(selectResult.comparisonCandidates)
+                ? selectResult.comparisonCandidates
+                : [],
+              optionMatchAttempted: true,
+              selectedOptions: selectResult.resolvedOption ? [selectResult.resolvedOption] : [],
+              matchStrategy: selectResult.matchStrategy || "",
+              matchedCandidate: selectResult.matchedCandidate || "",
+              rawCustomFallbackUsed: false,
+              fallbackReason: "",
+            });
+          }
+          if (!accepted) {
+            console.debug("[Vendoo][OptionResolutionOrder]", {
+              fieldLabel: field.label,
+              rawPayloadValue: String(value ?? "").trim(),
+              availableOptionsFound: Boolean(selectResult.availableOptionsFound),
+              comparisonCandidates: Array.isArray(selectResult.comparisonCandidates)
+                ? selectResult.comparisonCandidates
+                : [],
+              optionMatchAttempted: true,
+              selectedOptions: [],
+              matchStrategy: selectResult.matchStrategy || "",
+              matchedCandidate: selectResult.matchedCandidate || "",
+              rawCustomFallbackUsed: false,
+              fallbackReason: `option_match_not_selected:${selectResult.reason || "no_safe_option_match"}`,
+            });
           }
         }
 
@@ -7730,6 +8541,18 @@
           if (accepted) {
             chipDiagnostics.customCommitAccepted = true;
           }
+          console.debug("[Vendoo][OptionResolutionOrder]", {
+            fieldLabel: field.label,
+            rawPayloadValue: String(value ?? "").trim(),
+            availableOptionsFound: false,
+            comparisonCandidates: [],
+            optionMatchAttempted: chipDiagnostics.optionMatchAttempted,
+            selectedOptions: [],
+            rawCustomFallbackUsed: true,
+            fallbackReason: accepted
+              ? "custom_fallback_used_after_option_path"
+              : "custom_fallback_failed_after_option_path",
+          });
         }
 
         if (accepted) {
@@ -8619,6 +9442,7 @@
   async function selectComboboxValueByNormalizedMatch(input) {
     const { control, optionSelectors, target, fieldLabel, payloadRaw, payloadCanonical, valueMode } =
       input;
+    const comparisonCandidates = buildComboboxComparisonCandidates(target);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       openCustomSelectControl(control);
@@ -8644,6 +9468,10 @@
             reason: `active control opened but no options rendered (${optionDiscovery.scopeMode}; active: ${
               optionDiscovery.activeControlIdentified ? "yes" : "no"
             })`,
+            availableOptionsFound: false,
+            selectedOptions: [],
+            optionMatchAttempted: true,
+            comparisonCandidates,
           };
         }
         continue;
@@ -8656,9 +9484,22 @@
       }));
       const normalizedOptions = getUniqueComboboxNormalizedValues(normalizedEntries, 18);
       const normalizedPayloadValue = normalizeOptionValue(target);
-      let matches = normalizedEntries.filter((candidate) =>
-        candidate.values.some((value) => normalizeOptionValue(value) === normalizedPayloadValue)
-      );
+      const normalizedComparisonCandidates =
+        comparisonCandidates.length > 0 ? comparisonCandidates : [normalizedPayloadValue];
+      let matchStrategy = "exact_normalized";
+      let matchedCandidate = normalizedPayloadValue;
+      let matches = findExactComboboxMatches(normalizedEntries, normalizedComparisonCandidates);
+      if (!matches.length) {
+        const tokenBoundaryMatch = findTokenBoundaryComboboxMatches(
+          normalizedEntries,
+          normalizedComparisonCandidates
+        );
+        matches = tokenBoundaryMatch.matches;
+        if (matches.length) {
+          matchStrategy = "token_boundary_option_in_candidate";
+          matchedCandidate = tokenBoundaryMatch.matchedCandidate;
+        }
+      }
       let conditionResolution = null;
       const isConditionField = normalizeText(fieldLabel) === "condition";
       if (!matches.length && isConditionField) {
@@ -8705,6 +9546,12 @@
             `options rendered but no normalized match (${optionDiscovery.scopeMode}; active: ${
               optionDiscovery.activeControlIdentified ? "yes" : "no"
             }; mode: ${valueMode}; canonical: "${payloadCanonical}")`,
+          availableOptionsFound: true,
+          selectedOptions: [],
+          optionMatchAttempted: true,
+          comparisonCandidates,
+          matchStrategy,
+          matchedCandidate,
         };
       }
 
@@ -8712,24 +9559,242 @@
         return {
           status: "needs_review",
           reason: "multiple normalized combobox options",
+          availableOptionsFound: true,
+          selectedOptions: [],
+          optionMatchAttempted: true,
+          comparisonCandidates,
+          matchStrategy,
+          matchedCandidate,
         };
       }
 
       clickElement(matches[0].entry.clickTarget);
       await wait(110);
+      const resolvedOptionLabel =
+        conditionResolution?.resolvedOption ||
+        getResolvedOptionLabelFromMatch(matches[0]) ||
+        target;
       return {
         status: "filled",
-        resolvedOption:
-          conditionResolution?.resolvedOption ||
-          getResolvedOptionFromMatch(matches[0]) ||
-          target,
+        resolvedOption: resolvedOptionLabel,
+        availableOptionsFound: true,
+        selectedOptions: [resolvedOptionLabel],
+        optionMatchAttempted: true,
+        comparisonCandidates,
+        matchStrategy,
+        matchedCandidate,
       };
     }
 
     return {
       status: "needs_review",
       reason: "control opened but options could not be harvested",
+      availableOptionsFound: false,
+      selectedOptions: [],
+      optionMatchAttempted: true,
+      comparisonCandidates,
+      matchStrategy: "none",
+      matchedCandidate: "",
     };
+  }
+
+  function buildComboboxComparisonCandidates(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return [];
+
+    const candidates = [];
+    const seen = new Set();
+    function add(candidateRaw) {
+      const normalized = normalizeOptionValue(candidateRaw);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push(normalized);
+    }
+
+    add(raw);
+    add(cleanComboboxComparisonText(raw));
+    add(stripStandaloneEvidenceStatusEdgeTokens(raw));
+    add(stripStandaloneEvidenceStatusEdgeTokens(cleanComboboxComparisonText(raw)));
+
+    // Comparison-only cleanup: strip parenthetical/brace notes without mutating payload.
+    add(raw.replace(/\([^)]*\)/g, " "));
+    add(raw.replace(/\[[^\]]*\]/g, " "));
+    add(cleanComboboxComparisonText(raw.replace(/\([^)]*\)/g, " ")));
+    add(cleanComboboxComparisonText(raw.replace(/\[[^\]]*\]/g, " ")));
+    add(stripStandaloneEvidenceStatusEdgeTokens(raw.replace(/\([^)]*\)/g, " ")));
+    add(stripStandaloneEvidenceStatusEdgeTokens(raw.replace(/\[[^\]]*\]/g, " ")));
+    add(
+      stripStandaloneEvidenceStatusEdgeTokens(
+        cleanComboboxComparisonText(raw.replace(/\([^)]*\)/g, " "))
+      )
+    );
+    add(
+      stripStandaloneEvidenceStatusEdgeTokens(
+        cleanComboboxComparisonText(raw.replace(/\[[^\]]*\]/g, " "))
+      )
+    );
+
+    // Comparison-only tokenization for delimiter-separated values.
+    const parts = raw
+      .split(/[;|,/]+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    for (const part of parts) {
+      add(part);
+      add(cleanComboboxComparisonText(part));
+      add(stripStandaloneEvidenceStatusEdgeTokens(part));
+      add(stripStandaloneEvidenceStatusEdgeTokens(cleanComboboxComparisonText(part)));
+      add(part.replace(/\([^)]*\)/g, " "));
+      add(part.replace(/\[[^\]]*\]/g, " "));
+      add(cleanComboboxComparisonText(part.replace(/\([^)]*\)/g, " ")));
+      add(cleanComboboxComparisonText(part.replace(/\[[^\]]*\]/g, " ")));
+      add(stripStandaloneEvidenceStatusEdgeTokens(part.replace(/\([^)]*\)/g, " ")));
+      add(stripStandaloneEvidenceStatusEdgeTokens(part.replace(/\[[^\]]*\]/g, " ")));
+      add(
+        stripStandaloneEvidenceStatusEdgeTokens(
+          cleanComboboxComparisonText(part.replace(/\([^)]*\)/g, " "))
+        )
+      );
+      add(
+        stripStandaloneEvidenceStatusEdgeTokens(
+          cleanComboboxComparisonText(part.replace(/\[[^\]]*\]/g, " "))
+        )
+      );
+    }
+
+    return candidates;
+  }
+
+  function findExactComboboxMatches(normalizedEntries, normalizedComparisonCandidates) {
+    return normalizedEntries.filter((candidate) =>
+      candidate.values.some((value) =>
+        normalizedComparisonCandidates.includes(normalizeOptionValue(value))
+      )
+    );
+  }
+
+  function findTokenBoundaryComboboxMatches(normalizedEntries, normalizedComparisonCandidates) {
+    const bucket = [];
+    for (const candidate of normalizedEntries) {
+      for (const optionValue of candidate.values) {
+        const normalizedOption = normalizeOptionValue(optionValue);
+        if (!isSafeTokenBoundaryOption(normalizedOption)) continue;
+        for (const normalizedCandidate of normalizedComparisonCandidates) {
+          if (!containsTokenBoundaryPhrase(normalizedCandidate, normalizedOption)) continue;
+          bucket.push({ candidate, normalizedOption, normalizedCandidate });
+        }
+      }
+    }
+
+    if (!bucket.length) {
+      return { matches: [], matchedCandidate: "" };
+    }
+
+    bucket.sort((a, b) => {
+      const byOptionLength = b.normalizedOption.length - a.normalizedOption.length;
+      if (byOptionLength !== 0) return byOptionLength;
+      return b.normalizedCandidate.length - a.normalizedCandidate.length;
+    });
+
+    const bestOption = bucket[0].normalizedOption;
+    const bestCandidate = bucket[0].normalizedCandidate;
+    const bestMatches = bucket
+      .filter(
+        (entry) =>
+          entry.normalizedOption === bestOption &&
+          entry.normalizedCandidate === bestCandidate
+      )
+      .map((entry) => entry.candidate);
+
+    const deduped = Array.from(new Set(bestMatches));
+    return { matches: deduped, matchedCandidate: bestCandidate };
+  }
+
+  function isSafeTokenBoundaryOption(normalizedOption) {
+    if (!normalizedOption) return false;
+    if (normalizedOption.length < 3) return false;
+    const tokens = normalizedOption.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return false;
+    if (tokens.some((token) => token.length < 2)) return false;
+    return true;
+  }
+
+  function containsTokenBoundaryPhrase(normalizedCandidate, normalizedOption) {
+    if (!normalizedCandidate || !normalizedOption) return false;
+    const escaped = normalizedOption.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(^|\\s)${escaped}(\\s|$)`);
+    return pattern.test(normalizedCandidate);
+  }
+
+  function cleanComboboxComparisonText(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+
+    let cleaned = raw
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/\[[^\]]*\]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const fragmentSplit = /\s(?:[-–—:;|]|\b(?:with|including|includes)\b)\s/gi;
+    const fragments = cleaned
+      .split(fragmentSplit)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (fragments.length <= 1) return cleaned;
+
+    const explanatoryPattern =
+      /\b(?:confidence|inference|inferred|evidence|source|sourced|supported|observed|observation|notes?|note|confirmed|confirmation|approx(?:imate|\\.)?|approximation)\b/i;
+
+    const kept = [];
+    for (const fragment of fragments) {
+      if (!fragment) continue;
+      if (explanatoryPattern.test(fragment)) continue;
+      kept.push(fragment);
+    }
+
+    if (!kept.length) return cleaned;
+    return kept.join(" ").replace(/\s+/g, " ").trim();
+  }
+
+  function stripStandaloneEvidenceStatusEdgeTokens(value) {
+    const normalized = normalizeOptionValue(value);
+    if (!normalized) return "";
+
+    const removableTokens = new Set([
+      "inferred",
+      "inference",
+      "confirmed",
+      "confirmation",
+      "observed",
+      "observation",
+      "approximate",
+      "approx",
+      "supported",
+      "evidence",
+      "source",
+      "sourced",
+      "note",
+      "notes",
+    ]);
+
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return normalized;
+
+    let start = 0;
+    let end = tokens.length - 1;
+    while (start <= end && removableTokens.has(tokens[start])) {
+      start += 1;
+    }
+    while (end >= start && removableTokens.has(tokens[end])) {
+      end -= 1;
+    }
+
+    if (start === 0 && end === tokens.length - 1) {
+      return normalized;
+    }
+
+    return tokens.slice(start, end + 1).join(" ").trim();
   }
 
   function getUniqueComboboxOptionTexts(entries, maxItems) {
@@ -8964,6 +10029,13 @@
   function getResolvedOptionFromMatch(match) {
     if (!match || !Array.isArray(match.values) || !match.values.length) return "";
     return match.values[0] || "";
+  }
+
+  function getResolvedOptionLabelFromMatch(match) {
+    if (!match) return "";
+    const entryLabel = cleanCategoryStage(getOptionTextFromEntry(match.entry));
+    if (entryLabel) return entryLabel;
+    return getResolvedOptionFromMatch(match);
   }
 
   function buildComboboxDebugSummary(input) {
@@ -9564,6 +10636,10 @@
               ? photo.size
               : 0,
           dataUrl: typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "",
+          storagePath:
+            typeof photo.storagePath === "string" ? photo.storagePath.trim() : "",
+          imageUrl: typeof photo.imageUrl === "string" ? photo.imageUrl.trim() : "",
+          signedUrl: typeof photo.signedUrl === "string" ? photo.signedUrl.trim() : "",
         };
       })
       .filter(Boolean);
@@ -9576,6 +10652,10 @@
     );
     const persistedMetadataOnly =
       persistedPhotos.length > 0 && persistedWithData.length === 0;
+    const persistedReferenceCount = persistedPhotos.filter(
+      (photo) =>
+        Boolean(photo?.storagePath) || Boolean(photo?.imageUrl) || Boolean(photo?.signedUrl)
+    ).length;
 
     let transientPhotos = [];
     let transientPhotoPayloadSource = "none";
@@ -9586,7 +10666,13 @@
           if (!photo || typeof photo !== "object") return null;
           const dataUrl =
             typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "";
-          if (!dataUrl) return null;
+          const storagePath =
+            typeof photo.storagePath === "string" ? photo.storagePath.trim() : "";
+          const imageUrl =
+            typeof photo.imageUrl === "string" ? photo.imageUrl.trim() : "";
+          const signedUrl =
+            typeof photo.signedUrl === "string" ? photo.signedUrl.trim() : "";
+          if (!dataUrl && !storagePath && !imageUrl && !signedUrl) return null;
           return {
             index:
               typeof photo.index === "number" && Number.isFinite(photo.index)
@@ -9600,7 +10686,10 @@
               photo.size >= 0
                 ? photo.size
                 : 0,
-            dataUrl,
+            ...(dataUrl ? { dataUrl } : {}),
+            ...(storagePath ? { storagePath } : {}),
+            ...(imageUrl ? { imageUrl } : {}),
+            ...(signedUrl ? { signedUrl } : {}),
           };
         })
         .filter(Boolean);
@@ -9612,6 +10701,10 @@
       transientPhotos = extensionTransient.photos;
       transientPhotoPayloadSource = extensionTransient.source;
     }
+    const transientReferenceCount = transientPhotos.filter(
+      (photo) =>
+        Boolean(photo?.storagePath) || Boolean(photo?.imageUrl) || Boolean(photo?.signedUrl)
+    ).length;
 
     const fallbackByIndex = new Map(transientPhotos.map((photo) => [photo.index, photo]));
     const fallbackByName = new Map(
@@ -9622,11 +10715,27 @@
 
     const merged = persistedPhotos
       .map((photo) => {
-        if (photo.dataUrl) return photo;
+        if (photo.dataUrl || photo.signedUrl || photo.imageUrl || photo.storagePath) return photo;
         const byIndex = fallbackByIndex.get(photo.index);
-        if (byIndex) return { ...photo, dataUrl: byIndex.dataUrl };
+        if (byIndex) {
+          return {
+            ...photo,
+            dataUrl: byIndex.dataUrl || "",
+            signedUrl: byIndex.signedUrl || "",
+            imageUrl: byIndex.imageUrl || "",
+            storagePath: byIndex.storagePath || "",
+          };
+        }
         const byName = photo.name ? fallbackByName.get(normalizeText(photo.name)) : null;
-        if (byName) return { ...photo, dataUrl: byName.dataUrl };
+        if (byName) {
+          return {
+            ...photo,
+            dataUrl: byName.dataUrl || "",
+            signedUrl: byName.signedUrl || "",
+            imageUrl: byName.imageUrl || "",
+            storagePath: byName.storagePath || "",
+          };
+        }
         return null;
       })
       .filter(Boolean);
@@ -9649,6 +10758,19 @@
         typeof payload?.meta?.storedPayloadByteEstimate === "number"
           ? payload.meta.storedPayloadByteEstimate
           : -1,
+      photoReferenceCount: usablePhotos.filter(
+        (photo) =>
+          Boolean(photo?.dataUrl) ||
+          Boolean(photo?.signedUrl) ||
+          Boolean(photo?.imageUrl) ||
+          Boolean(photo?.storagePath)
+      ).length,
+      storedPayloadPhotoReferences: persistedReferenceCount,
+      transientPhotoReferences: transientReferenceCount,
+      payloadPhotoReferences: usablePhotos.filter(
+        (photo) =>
+          Boolean(photo?.signedUrl) || Boolean(photo?.imageUrl) || Boolean(photo?.storagePath)
+      ).length,
     };
   }
 
@@ -9671,7 +10793,13 @@
                 if (!photo || typeof photo !== "object") return null;
                 const dataUrl =
                   typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "";
-                if (!dataUrl) return null;
+                const storagePath =
+                  typeof photo.storagePath === "string" ? photo.storagePath.trim() : "";
+                const imageUrl =
+                  typeof photo.imageUrl === "string" ? photo.imageUrl.trim() : "";
+                const signedUrl =
+                  typeof photo.signedUrl === "string" ? photo.signedUrl.trim() : "";
+                if (!dataUrl && !storagePath && !imageUrl && !signedUrl) return null;
                 return {
                   index:
                     typeof photo.index === "number" && Number.isFinite(photo.index)
@@ -9685,7 +10813,10 @@
                     photo.size >= 0
                       ? photo.size
                       : 0,
-                  dataUrl,
+                  ...(dataUrl ? { dataUrl } : {}),
+                  ...(storagePath ? { storagePath } : {}),
+                  ...(imageUrl ? { imageUrl } : {}),
+                  ...(signedUrl ? { signedUrl } : {}),
                 };
               })
               .filter(Boolean)
@@ -9899,17 +11030,392 @@
     }
   }
 
-  function buildFilesFromPhotoPayload(photos) {
+  async function buildFilesFromPhotoPayload(photos, payload) {
     const files = [];
+    const failureReasons = [];
+    const resolverSources = new Set();
+    const sourcePage = typeof payload?.meta?.sourcePage === "string" ? payload.meta.sourcePage : "";
+    let hasStoragePath = false;
+    let hasImageUrl = false;
+    let hasSignedUrl = false;
+    const attemptedResolverOrder = new Set();
+    let signingEndpointCalled = false;
+    let signingEndpointStatus = "";
+    let signingEndpointUrlUsed = "";
+    let signingEndpointError = "";
+    let signingEndpointResponseText = "";
+    let fetchUrlSource = "";
+    let fetchStatus = 0;
+    let fetchContentType = "";
 
     for (let index = 0; index < photos.length; index += 1) {
       const photo = photos[index];
-      if (!photo?.dataUrl || typeof photo.dataUrl !== "string") continue;
-      const built = buildFileFromDataUrl(photo, index);
-      if (built) files.push(built);
+      const resolved = await resolvePhotoToFile(photo, index, sourcePage);
+      hasStoragePath = hasStoragePath || resolved.hasStoragePath;
+      hasImageUrl = hasImageUrl || resolved.hasImageUrl;
+      hasSignedUrl = hasSignedUrl || resolved.hasSignedUrl;
+      for (const step of resolved.attemptedResolverOrder) {
+        attemptedResolverOrder.add(step);
+      }
+      signingEndpointCalled = signingEndpointCalled || resolved.signingEndpointCalled;
+      if (!signingEndpointStatus && resolved.signingEndpointStatus) {
+        signingEndpointStatus = resolved.signingEndpointStatus;
+      }
+      if (!signingEndpointUrlUsed && resolved.signingEndpointUrlUsed) {
+        signingEndpointUrlUsed = resolved.signingEndpointUrlUsed;
+      }
+      if (!signingEndpointError && resolved.signingEndpointError) {
+        signingEndpointError = resolved.signingEndpointError;
+      }
+      if (!signingEndpointResponseText && resolved.signingEndpointResponseText) {
+        signingEndpointResponseText = resolved.signingEndpointResponseText;
+      }
+      if (!fetchUrlSource && resolved.fetchUrlSource) {
+        fetchUrlSource = resolved.fetchUrlSource;
+      }
+      if (!fetchStatus && resolved.fetchStatus) {
+        fetchStatus = resolved.fetchStatus;
+      }
+      if (!fetchContentType && resolved.fetchContentType) {
+        fetchContentType = resolved.fetchContentType;
+      }
+      if (resolved.file) {
+        files.push(resolved.file);
+        if (resolved.source) resolverSources.add(resolved.source);
+      } else if (resolved.reason) {
+        failureReasons.push(`${photo?.name || `photo-${index + 1}`}: ${resolved.reason}`);
+      }
     }
 
-    return files;
+    return {
+      files,
+      photoReferenceCount: photos.length,
+      resolvedPhotoCount: files.length,
+      failedPhotoCount: Math.max(0, photos.length - files.length),
+      resolverSource: resolverSources.size ? Array.from(resolverSources).join("|") : "unavailable",
+      failureReasons,
+      hasStoragePath,
+      hasImageUrl,
+      hasSignedUrl,
+      attemptedResolverOrder: Array.from(attemptedResolverOrder),
+      signingEndpointCalled,
+      signingEndpointStatus,
+      signingEndpointUrlUsed,
+      signingEndpointError,
+      signingEndpointResponseText,
+      fetchUrlSource,
+      fetchStatus,
+      fetchContentType,
+    };
+  }
+
+  async function resolvePhotoToFile(photo, index, sourcePage) {
+    const attemptedResolverOrder = [];
+    const hasStoragePath =
+      Boolean(typeof photo?.storagePath === "string" && photo.storagePath.trim());
+    const hasImageUrl =
+      Boolean(typeof photo?.imageUrl === "string" && photo.imageUrl.trim());
+    const hasSignedUrl =
+      Boolean(typeof photo?.signedUrl === "string" && photo.signedUrl.trim());
+    let signingEndpointCalled = false;
+    let signingEndpointStatus = "";
+    let signingEndpointUrlUsed = "";
+    let signingEndpointError = "";
+    let signingEndpointResponseText = "";
+    let fetchUrlSource = "";
+    let fetchStatus = 0;
+    let fetchContentType = "";
+
+    if (!photo || typeof photo !== "object") {
+      return {
+        file: null,
+        source: "unavailable",
+        reason: "invalid photo reference",
+        hasStoragePath: false,
+        hasImageUrl: false,
+        hasSignedUrl: false,
+        attemptedResolverOrder,
+        signingEndpointCalled,
+        signingEndpointStatus,
+        signingEndpointUrlUsed,
+        signingEndpointError,
+        signingEndpointResponseText,
+        fetchUrlSource,
+        fetchStatus,
+        fetchContentType,
+      };
+    }
+    if (typeof photo.dataUrl === "string" && photo.dataUrl.trim()) {
+      attemptedResolverOrder.push("dataUrl");
+      const file = buildFileFromDataUrl(photo, index);
+      return file
+        ? {
+            file,
+            source: "dataUrl",
+            reason: "",
+            hasStoragePath,
+            hasImageUrl,
+            hasSignedUrl,
+            attemptedResolverOrder,
+            signingEndpointCalled,
+            signingEndpointStatus,
+            signingEndpointUrlUsed,
+            signingEndpointError,
+            signingEndpointResponseText,
+            fetchUrlSource,
+            fetchStatus,
+            fetchContentType,
+          }
+        : {
+            file: null,
+            source: "dataUrl",
+            reason: "invalid dataUrl",
+            hasStoragePath,
+            hasImageUrl,
+            hasSignedUrl,
+            attemptedResolverOrder,
+            signingEndpointCalled,
+            signingEndpointStatus,
+            signingEndpointUrlUsed,
+            signingEndpointError,
+            signingEndpointResponseText,
+            fetchUrlSource,
+            fetchStatus,
+            fetchContentType,
+          };
+    }
+
+    const signedUrl =
+      typeof photo.signedUrl === "string" && photo.signedUrl.trim() ? photo.signedUrl.trim() : "";
+    const imageUrl =
+      typeof photo.imageUrl === "string" && photo.imageUrl.trim() ? photo.imageUrl.trim() : "";
+    const storagePath =
+      typeof photo.storagePath === "string" && photo.storagePath.trim()
+        ? photo.storagePath.trim()
+        : "";
+
+    let resolvedUrl = signedUrl;
+    let source = signedUrl ? "signedUrl" : "unavailable";
+
+    if (!resolvedUrl && storagePath) {
+      attemptedResolverOrder.push("storagePathSignedUrl");
+      signingEndpointCalled = true;
+      const signResult = await getSignedPhotoUrlFromAppOrigin(storagePath, sourcePage);
+      signingEndpointStatus = signResult.status;
+      signingEndpointUrlUsed = signResult.endpointUrl;
+      signingEndpointError = signResult.error;
+      signingEndpointResponseText = signResult.responseText;
+      if (signResult.url) {
+        resolvedUrl = signResult.url;
+        source = "storagePathSignedUrl";
+      }
+    }
+
+    if (!resolvedUrl && imageUrl) {
+      attemptedResolverOrder.push("imageUrl");
+      resolvedUrl = imageUrl;
+      source = "imageUrl";
+    }
+
+    if (signedUrl) {
+      attemptedResolverOrder.unshift("signedUrl");
+    }
+
+    if (!resolvedUrl) {
+      return {
+        file: null,
+        source: "unavailable",
+        reason: signingEndpointCalled && signingEndpointStatus
+          ? `signing failed (${signingEndpointStatus})`
+          : "no fetchable photo reference",
+        hasStoragePath,
+        hasImageUrl,
+        hasSignedUrl,
+        attemptedResolverOrder,
+        signingEndpointCalled,
+        signingEndpointStatus,
+        signingEndpointUrlUsed,
+        signingEndpointError,
+        signingEndpointResponseText,
+        fetchUrlSource,
+        fetchStatus,
+        fetchContentType,
+      };
+    }
+
+    try {
+      fetchUrlSource = source;
+      const response = await fetch(resolvedUrl, { method: "GET" });
+      fetchStatus = response.status;
+      fetchContentType = response.headers.get("content-type") || "";
+      if (!response.ok) {
+        return {
+          file: null,
+          source,
+          reason: `fetch failed (${source}:${response.status})`,
+          hasStoragePath,
+          hasImageUrl,
+          hasSignedUrl,
+          attemptedResolverOrder,
+          signingEndpointCalled,
+          signingEndpointStatus,
+          signingEndpointUrlUsed,
+          signingEndpointError,
+          signingEndpointResponseText,
+          fetchUrlSource,
+          fetchStatus,
+          fetchContentType,
+        };
+      }
+      const blob = await response.blob();
+      const inferredType = (photo.type || blob.type || "image/jpeg").trim();
+      const fallbackExt = inferredType.split("/")[1] || "jpg";
+      const name = photo.name?.trim() || `photo-${index + 1}.${fallbackExt}`;
+      const file = new File([blob], name, { type: inferredType });
+      return {
+        file,
+        source,
+        reason: "",
+        hasStoragePath,
+        hasImageUrl,
+        hasSignedUrl,
+        attemptedResolverOrder,
+        signingEndpointCalled,
+        signingEndpointStatus,
+        signingEndpointUrlUsed,
+        signingEndpointError,
+        signingEndpointResponseText,
+        fetchUrlSource,
+        fetchStatus,
+        fetchContentType,
+      };
+    } catch (error) {
+      return {
+        file: null,
+        source,
+        reason: error instanceof Error ? error.message : "photo fetch error",
+        hasStoragePath,
+        hasImageUrl,
+        hasSignedUrl,
+        attemptedResolverOrder,
+        signingEndpointCalled,
+        signingEndpointStatus,
+        fetchUrlSource,
+        fetchStatus,
+        fetchContentType,
+      };
+    }
+  }
+
+  async function getSignedPhotoUrlFromAppOrigin(storagePath, sourcePage) {
+    if (!storagePath) {
+      return {
+        url: "",
+        status: "missing_storage_path",
+        endpointUrl: "",
+        error: "",
+        responseText: "",
+      };
+    }
+
+    const originCandidates = buildSigningOriginCandidates(sourcePage);
+    if (!originCandidates.length) {
+      return {
+        url: "",
+        status: "no_origin_candidates",
+        endpointUrl: "",
+        error: "",
+        responseText: "",
+      };
+    }
+
+    let lastFailure = {
+      status: "request_failed",
+      endpointUrl: `${originCandidates[0]}/api/lpu/sign-storage-image`,
+      error: "request_failed",
+      responseText: "",
+    };
+
+    for (const origin of originCandidates) {
+      const endpoint = `${origin}/api/lpu/sign-storage-image`;
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ storagePath }),
+        });
+        const responseTextRaw = await response.text();
+        const responseText = responseTextRaw.slice(0, 220);
+        if (!response.ok) {
+          lastFailure = {
+            status: String(response.status),
+            endpointUrl: endpoint,
+            error: "non_ok_response",
+            responseText,
+          };
+          continue;
+        }
+        let data = {};
+        try {
+          data = responseTextRaw ? JSON.parse(responseTextRaw) : {};
+        } catch {
+          data = {};
+        }
+        const signedUrl = typeof data?.signedUrl === "string" ? data.signedUrl.trim() : "";
+        if (signedUrl) {
+          return {
+            url: signedUrl,
+            status: String(response.status),
+            endpointUrl: endpoint,
+            error: "",
+            responseText,
+          };
+        }
+        lastFailure = {
+          status: String(response.status),
+          endpointUrl: endpoint,
+          error: "missing_signed_url",
+          responseText,
+        };
+      } catch (error) {
+        lastFailure = {
+          status: "request_failed",
+          endpointUrl: endpoint,
+          error: error instanceof Error ? error.message : "request_failed",
+          responseText: "",
+        };
+        continue;
+      }
+    }
+    return {
+      url: "",
+      status: lastFailure.status,
+      endpointUrl: lastFailure.endpointUrl,
+      error: lastFailure.error,
+      responseText: lastFailure.responseText,
+    };
+  }
+
+  function buildSigningOriginCandidates(sourcePage) {
+    const candidates = [];
+    const seen = new Set();
+    const addOrigin = (value) => {
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      candidates.push(value);
+    };
+
+    try {
+      if (typeof sourcePage === "string" && sourcePage.trim()) {
+        addOrigin(new URL(sourcePage).origin);
+      }
+    } catch {
+      // ignore invalid sourcePage
+    }
+
+    addOrigin("https://lpu-engine.vercel.app");
+    addOrigin("http://localhost:3000");
+    return candidates;
   }
 
   function buildFileFromDataUrl(photo, index) {

@@ -37,10 +37,6 @@ export function validateEtsy(
     addIssue(result, 'ETSY_TITLE_MISSING', 'Etsy title is missing.');
   }
 
-  if (!result.metrics.hasCategory) {
-    addIssue(result, 'ETSY_CATEGORY_MISSING', 'Etsy category is missing.');
-  }
-
   if (!result.metrics.hasMaterials) {
     addIssue(result, 'ETSY_MATERIALS_MISSING', 'Etsy materials block is missing.');
   }

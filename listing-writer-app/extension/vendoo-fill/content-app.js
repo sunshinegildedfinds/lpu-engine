@@ -23,19 +23,39 @@
       return;
     }
 
-    chrome.runtime.sendMessage(
-      {
-        type: "STORE_PAYLOAD",
-        payload: prepared.payloadForStorage,
-        transientPhotos: normalized.photos ?? [],
-      },
-      (response) => {
+    const transientPhotoReferences = buildTransientPhotoReferences(normalized.photos ?? []);
+    const referencePhotoCountBeforeSend = transientPhotoReferences.filter(
+      (photo) => photo.storagePath || photo.imageUrl || photo.signedUrl
+    ).length;
+    const strippedDataUrlCount = (normalized.photos ?? []).filter(
+      (photo) => typeof photo?.dataUrl === "string" && photo.dataUrl.trim()
+    ).length;
+    const runtimeMessage = {
+      type: "STORE_PAYLOAD",
+      payload: prepared.payloadForStorage,
+      transientPhotos: transientPhotoReferences,
+    };
+
+    const runtimeMessageByteEstimate = estimateByteSize(runtimeMessage);
+    try {
+      chrome.runtime.sendMessage(runtimeMessage, (response) => {
         const runtimeError = chrome.runtime.lastError?.message;
         const storageSaveError = runtimeError || (!response?.ok ? response?.error ?? "Unknown error" : "");
         const transportDiagnostics = {
           ...prepared.diagnostics,
+          selectedPhotoCount: Array.isArray(normalized.photos) ? normalized.photos.length : 0,
+          referencePhotoCountBeforeSend,
+          strippedDataUrlCount,
+          hasStoragePath: transientPhotoReferences.some((photo) => Boolean(photo.storagePath)),
+          hasImageUrl: transientPhotoReferences.some((photo) => Boolean(photo.imageUrl)),
+          hasSignedUrl: transientPhotoReferences.some((photo) => Boolean(photo.signedUrl)),
+          referencePhotoCountAfterStorage:
+            typeof response?.transientPhotoReferenceCount === "number"
+              ? response.transientPhotoReferenceCount
+              : 0,
           storageSavePassed: !storageSaveError,
           storageSaveError,
+          runtimeMessageByteEstimate,
         };
         console.debug("[LPU Vendoo] Payload storage diagnostics", transportDiagnostics);
 
@@ -50,8 +70,18 @@
         }
 
         showToast("Vendoo payload sent to extension.", true);
-      }
-    );
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || "Unknown error");
+      const transportDiagnostics = {
+        ...prepared.diagnostics,
+        storageSavePassed: false,
+        storageSaveError: message,
+        runtimeMessageByteEstimate,
+      };
+      console.debug("[LPU Vendoo] Payload storage diagnostics", transportDiagnostics);
+      showToast(`Extension error: ${message}`, false);
+    }
   });
 
   function normalizePayload(input) {
@@ -389,6 +419,10 @@
         typeof photo?.size === "number" && Number.isFinite(photo.size) && photo.size >= 0
           ? photo.size
           : 0,
+      storagePath:
+        typeof photo?.storagePath === "string" ? photo.storagePath.trim() : "",
+      imageUrl: typeof photo?.imageUrl === "string" ? photo.imageUrl.trim() : "",
+      signedUrl: typeof photo?.signedUrl === "string" ? photo.signedUrl.trim() : "",
     }));
 
     safePayload.photos = metadataPhotos;
@@ -403,6 +437,9 @@
       photoCount: photos.length,
       persistedPhotoMetadataOnly: true,
       photoPayloadStrippedForStorage: photos.length > 0,
+      runtimePhotoBytesStripped: photos.length > 0,
+      runtimePhotoReferencesSent: metadataPhotos.length > 0,
+      photoUploadStatus: metadataPhotos.length > 0 ? "references_sent_needs_resolution" : "no_photos",
     };
     safePayload.meta = {
       ...(safePayload.meta && typeof safePayload.meta === "object" ? safePayload.meta : {}),
@@ -439,6 +476,30 @@
       savedAt: Date.now(),
       photos: sanitized,
     };
+  }
+
+  function buildTransientPhotoReferences(photos) {
+    if (!Array.isArray(photos)) return [];
+    return photos
+      .map((photo, index) => {
+        if (!photo || typeof photo !== "object") return null;
+        return {
+          index,
+          name: typeof photo.name === "string" ? photo.name.trim() : "",
+          type: typeof photo.type === "string" ? photo.type.trim() : "",
+          size:
+            typeof photo.size === "number" &&
+            Number.isFinite(photo.size) &&
+            photo.size >= 0
+              ? photo.size
+              : 0,
+          storagePath:
+            typeof photo.storagePath === "string" ? photo.storagePath.trim() : "",
+          imageUrl: typeof photo.imageUrl === "string" ? photo.imageUrl.trim() : "",
+          signedUrl: typeof photo.signedUrl === "string" ? photo.signedUrl.trim() : "",
+        };
+      })
+      .filter(Boolean);
   }
 
   function estimateByteSize(value) {
@@ -498,7 +559,13 @@
           if (!photo || typeof photo !== "object") return null;
           const dataUrl =
             typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "";
-          if (!dataUrl) return null;
+          const storagePath =
+            typeof photo.storagePath === "string" ? photo.storagePath.trim() : "";
+          const imageUrl =
+            typeof photo.imageUrl === "string" ? photo.imageUrl.trim() : "";
+          const signedUrl =
+            typeof photo.signedUrl === "string" ? photo.signedUrl.trim() : "";
+          if (!dataUrl && !storagePath && !imageUrl && !signedUrl) return null;
           return {
             name: typeof photo.name === "string" ? photo.name.trim() : "",
             type: typeof photo.type === "string" ? photo.type.trim() : "",
@@ -508,7 +575,10 @@
               photo.size >= 0
                 ? photo.size
                 : 0,
-            dataUrl,
+            ...(dataUrl ? { dataUrl } : {}),
+            ...(storagePath ? { storagePath } : {}),
+            ...(imageUrl ? { imageUrl } : {}),
+            ...(signedUrl ? { signedUrl } : {}),
           };
         })
         .filter(Boolean);

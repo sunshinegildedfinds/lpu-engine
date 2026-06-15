@@ -29,6 +29,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
 
     const transientPhotos = normalizeTransientPhotos(message.transientPhotos);
+    const transientPhotoReferenceCount = transientPhotos.filter(
+      (photo) =>
+        (typeof photo.storagePath === "string" && photo.storagePath) ||
+        (typeof photo.imageUrl === "string" && photo.imageUrl) ||
+        (typeof photo.signedUrl === "string" && photo.signedUrl)
+    ).length;
+    const transientPhotoDataUrlCount = transientPhotos.filter(
+      (photo) => typeof photo.dataUrl === "string" && photo.dataUrl
+    ).length;
     const savedAt = Date.now();
     const record = {
       payload: message.payload ?? null,
@@ -56,6 +65,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ok: true,
         savedAt: record.savedAt,
         transientPhotoCount: transientPhotos.length,
+        transientPhotoReferenceCount,
+        transientPhotoDataUrlCount,
       });
     });
 
@@ -126,7 +137,11 @@ function normalizeTransientPhotos(value) {
     .map((photo, index) => {
       if (!photo || typeof photo !== "object") return null;
       const dataUrl = typeof photo.dataUrl === "string" ? photo.dataUrl.trim() : "";
-      if (!dataUrl) return null;
+      const storagePath =
+        typeof photo.storagePath === "string" ? photo.storagePath.trim() : "";
+      const imageUrl = typeof photo.imageUrl === "string" ? photo.imageUrl.trim() : "";
+      const signedUrl = typeof photo.signedUrl === "string" ? photo.signedUrl.trim() : "";
+      if (!dataUrl && !storagePath && !imageUrl && !signedUrl) return null;
       return {
         index:
           typeof photo.index === "number" && Number.isFinite(photo.index)
@@ -138,7 +153,10 @@ function normalizeTransientPhotos(value) {
           typeof photo.size === "number" && Number.isFinite(photo.size) && photo.size >= 0
             ? photo.size
             : 0,
-        dataUrl,
+        ...(dataUrl ? { dataUrl } : {}),
+        ...(storagePath ? { storagePath } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
+        ...(signedUrl ? { signedUrl } : {}),
       };
     })
     .filter(Boolean);

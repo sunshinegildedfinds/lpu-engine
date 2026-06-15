@@ -123,6 +123,10 @@ function findLabelStartIndex(lines: string[], labels: readonly string[]): number
   return -1;
 }
 
+export function findLabeledLineIndex(section: string, labels: readonly string[]): number {
+  return findLabelStartIndex(section.replace(/\r\n/g, '\n').split('\n'), labels);
+}
+
 export function extractLabeledBlockText(
   section: string,
   labels: readonly string[],

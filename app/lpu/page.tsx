@@ -30,6 +30,17 @@ type ImagePayload = {
   type: string;
   size: number;
   dataUrl: string;
+  storagePath?: string;
+  imageUrl?: string;
+  signedUrl?: string;
+};
+
+type GeneratorImageReference = {
+  name: string;
+  type: string;
+  size: number;
+  storagePath: string;
+  imageUrl: string;
 };
 
 type ValidationIssue = {
@@ -64,6 +75,20 @@ type ValidationResult = {
   };
 };
 
+type GeneratorInstructionsReport = {
+  instructions: string;
+  characterLength: number;
+  checks: {
+    ebayTitleAOrder: boolean;
+    ebayThemeRequirement: boolean;
+    depopAttributesRequirement: boolean;
+    etsyExactly13TagsRequirement: boolean;
+    poshmarkStyleTagsMasterListRequirement: boolean;
+    compact3TagMasterListRequirement: boolean;
+  };
+  generatedAt: string;
+};
+
 type WorkflowStatus = "ready" | "generating" | "pass" | "needs-review";
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -85,6 +110,88 @@ function fileToDataUrl(file: File): Promise<string> {
 
     reader.readAsDataURL(file);
   });
+}
+
+function sanitizeFileName(name: string): string {
+  return name
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function buildStoragePath(file: File): string {
+  const safeName = sanitizeFileName(file.name) || "upload.jpg";
+  const stamp = Date.now();
+  const random = Math.random().toString(36).slice(2, 10);
+  return `lpu/${stamp}-${random}-${safeName}`;
+}
+
+function encodeStoragePath(path: string): string {
+  return path
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+async function uploadFilesToSupabaseStorage(
+  files: File[]
+): Promise<GeneratorImageReference[]> {
+  if (!files.length) return [];
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+  const bucketName =
+    process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() ||
+    "lpu-generator-images";
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error(
+      "Missing Supabase configuration. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+    );
+  }
+
+  const references: GeneratorImageReference[] = [];
+
+  for (const file of files) {
+    const storagePath = buildStoragePath(file);
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucketName}/${encodeStoragePath(
+      storagePath
+    )}`;
+
+    const uploadResponse = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+        "x-upsert": "false",
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: file,
+    });
+
+    if (!uploadResponse.ok) {
+      const bodyText = await uploadResponse.text();
+      throw new Error(
+        `Supabase image upload failed for ${file.name}: ${uploadResponse.status} ${bodyText}`
+      );
+    }
+
+    // Prefer private-bucket-friendly render URL path; route only needs a fetchable URL.
+    const imageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${encodeStoragePath(
+      storagePath
+    )}`;
+
+    references.push({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      storagePath,
+      imageUrl,
+    });
+  }
+
+  return references;
 }
 
 function formatMetricValue(value: unknown): string {
@@ -259,7 +366,12 @@ export default function LpuPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
   const [layer3Photos, setLayer3Photos] = useState<ImagePayload[]>([]);
+  const [generatorImageUploadStatus, setGeneratorImageUploadStatus] = useState("");
   const [enableResearchPanel, setEnableResearchPanel] = useState(false);
+  const [showGeneratorInstructionsReport, setShowGeneratorInstructionsReport] =
+    useState(false);
+  const [generatorInstructionsReport, setGeneratorInstructionsReport] =
+    useState<GeneratorInstructionsReport | null>(null);
   const [priceDecision, setPriceDecision] = useState<OptionalPriceInput>(
     INITIAL_PRICE_DECISION
   );
@@ -276,9 +388,11 @@ export default function LpuPage() {
     setValidation(null);
     setCopiedTarget(null);
     setIsLoading(true);
+    setGeneratorInstructionsReport(null);
+    setGeneratorImageUploadStatus("");
 
     try {
-      const images: ImagePayload[] = await Promise.all(
+      const layer3ImagePayloads: ImagePayload[] = await Promise.all(
         files.map(async (file) => ({
           name: file.name,
           type: file.type,
@@ -287,6 +401,16 @@ export default function LpuPage() {
         }))
       );
 
+      if (files.length) {
+        setGeneratorImageUploadStatus("Uploading images to Supabase Storage...");
+      }
+      const generatorImageReferences = await uploadFilesToSupabaseStorage(files);
+      if (files.length) {
+        setGeneratorImageUploadStatus(
+          `Uploaded ${generatorImageReferences.length} image(s). Generating LP-U...`
+        );
+      }
+
       const response = await fetch("/api/lpu/generate", {
         method: "POST",
         headers: {
@@ -294,20 +418,51 @@ export default function LpuPage() {
         },
         body: JSON.stringify({
           notes,
-          images,
+          images: generatorImageReferences,
+          includeGeneratorInstructionsReport: showGeneratorInstructionsReport,
         }),
       });
-
-      const data = await response.json();
+      const responseContentType = response.headers.get("content-type") || "";
+      const rawBody = await response.text();
+      const data = responseContentType.includes("application/json")
+        ? JSON.parse(rawBody)
+        : null;
 
       if (!response.ok) {
-        throw new Error(data.error || "Something went wrong.");
+        if (data?.error) {
+          throw new Error(data.error);
+        }
+        throw new Error(
+          rawBody?.trim() ||
+            `Request failed with status ${response.status}.`
+        );
+      }
+
+      if (!data) {
+        throw new Error("Server returned a non-JSON success response.");
       }
 
       setOutput(data.output || "");
       setValidation(data.validation ?? null);
-      setLayer3Photos(images);
+      setGeneratorInstructionsReport(data.generatorInstructionsReport ?? null);
+      const layer3PhotosWithReferences: ImagePayload[] = layer3ImagePayloads.map(
+        (photo, index) => {
+          const reference = generatorImageReferences[index];
+          return {
+            ...photo,
+            ...(reference?.storagePath ? { storagePath: reference.storagePath } : {}),
+            ...(reference?.imageUrl ? { imageUrl: reference.imageUrl } : {}),
+          };
+        }
+      );
+
+      setLayer3Photos(layer3PhotosWithReferences);
       setPriceDecision(INITIAL_PRICE_DECISION);
+      setGeneratorImageUploadStatus(
+        files.length
+          ? "Generation used Supabase image references successfully."
+          : ""
+      );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to generate output.";
@@ -315,6 +470,8 @@ export default function LpuPage() {
       setValidation(null);
       setCopiedTarget(null);
       setLayer3Photos([]);
+      setGeneratorInstructionsReport(null);
+      setGeneratorImageUploadStatus("");
       setPriceDecision(INITIAL_PRICE_DECISION);
     } finally {
       setIsLoading(false);
@@ -625,19 +782,124 @@ export default function LpuPage() {
             {error}
           </div>
         ) : null}
+
+        {generatorImageUploadStatus ? (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+            {generatorImageUploadStatus}
+          </div>
+        ) : null}
       </form>
 
       <section className="mt-8 rounded-2xl border p-4">
-        <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
-          <input
-            type="checkbox"
-            checked={enableResearchPanel}
-            onChange={(event) => setEnableResearchPanel(event.target.checked)}
-            className="h-4 w-4"
-          />
-          Enable Research Panel
-        </label>
+        <div className="space-y-3">
+          <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
+            <input
+              type="checkbox"
+              checked={enableResearchPanel}
+              onChange={(event) => setEnableResearchPanel(event.target.checked)}
+              className="h-4 w-4"
+            />
+            Enable Research Panel
+          </label>
+          <label className="flex items-center gap-3 text-sm font-medium text-gray-800">
+            <input
+              type="checkbox"
+              checked={showGeneratorInstructionsReport}
+              onChange={(event) =>
+                setShowGeneratorInstructionsReport(event.target.checked)
+              }
+              className="h-4 w-4"
+            />
+            Show Generator Instructions Report
+          </label>
+        </div>
       </section>
+
+      {showGeneratorInstructionsReport && generatorInstructionsReport ? (
+        <section className="mt-6 rounded-2xl border p-6">
+          <details open>
+            <summary className="cursor-pointer text-lg font-semibold">
+              Generator Instructions Report
+            </summary>
+            <div className="mt-4 space-y-4 text-sm">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-xl border bg-gray-50 p-3">
+                  <div className="text-xs uppercase tracking-wide text-gray-500">
+                    Character Length
+                  </div>
+                  <div className="mt-1 font-semibold">
+                    {generatorInstructionsReport.characterLength}
+                  </div>
+                </div>
+                <div className="rounded-xl border bg-gray-50 p-3">
+                  <div className="text-xs uppercase tracking-wide text-gray-500">
+                    Report Generated
+                  </div>
+                  <div className="mt-1 font-semibold">
+                    {new Date(
+                      generatorInstructionsReport.generatedAt
+                    ).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="mb-2 font-semibold">Framework Checks</div>
+                <ul className="list-disc space-y-1 pl-5">
+                  <li>
+                    eBay Title A order present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks.ebayTitleAOrder
+                    )}
+                  </li>
+                  <li>
+                    eBay Theme requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks.ebayThemeRequirement
+                    )}
+                  </li>
+                  <li>
+                    Depop Attributes requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks.depopAttributesRequirement
+                    )}
+                  </li>
+                  <li>
+                    Etsy exactly 13 tags requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks
+                        .etsyExactly13TagsRequirement
+                    )}
+                  </li>
+                  <li>
+                    Poshmark Style Tags master-list requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks
+                        .poshmarkStyleTagsMasterListRequirement
+                    )}
+                  </li>
+                  <li>
+                    Compact 3-Tag Strategy master-list requirement present:{" "}
+                    {String(
+                      generatorInstructionsReport.checks
+                        .compact3TagMasterListRequirement
+                    )}
+                  </li>
+                </ul>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <div className="mb-2 font-semibold">
+                  Runtime MASTER_LPU_INSTRUCTIONS
+                </div>
+                <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-800">
+                  {generatorInstructionsReport.instructions}
+                </pre>
+              </div>
+            </div>
+          </details>
+        </section>
+      ) : null}
 
       {enableResearchPanel && validation && researchRecord ? (
         <ResearchPanel
