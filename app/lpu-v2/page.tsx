@@ -949,6 +949,10 @@ export default function LpuV2Page() {
   const [queueUpdateStatus, setQueueUpdateStatus] = useState("");
   const [queueUpdateError, setQueueUpdateError] = useState("");
   const [queueUpdatingItemId, setQueueUpdatingItemId] = useState("");
+  const [queueSendingItemId, setQueueSendingItemId] = useState("");
+  const [queueSendFeedbackItemId, setQueueSendFeedbackItemId] = useState("");
+  const [queueSendStatus, setQueueSendStatus] = useState("");
+  const [queueSendError, setQueueSendError] = useState("");
 
   const compiledNotes = useMemo(
     () =>
@@ -1177,6 +1181,22 @@ export default function LpuV2Page() {
     };
   }
 
+  function buildQueuedVendooPayload(item: ListingQueueRecord) {
+    const finalOutput = cleanQueueString(item.finalLpuOutput);
+    if (!finalOutput) {
+      throw new Error("Queued listing is missing Final LP-U output.");
+    }
+
+    const preview = buildLpuPayloadPreview({
+      finalOutput,
+      hasSellingBrief: Boolean(cleanQueueString(item.sellingBrief)),
+      finalListPriceInput: readSavedFinalListPrice(item),
+      photos: queuePhotosToVendooPhotos(item.photos),
+    });
+
+    return preview.payload;
+  }
+
   function hasUnsavedWorkspaceContent(): boolean {
     const manualCompFormHasContent = Object.entries(manualPricingForm).some(
       ([key, value]) =>
@@ -1215,6 +1235,9 @@ export default function LpuV2Page() {
     setQueueLoadError("");
     setQueueUpdateStatus("");
     setQueueUpdateError("");
+    setQueueSendStatus("");
+    setQueueSendFeedbackItemId("");
+    setQueueSendError("");
 
     try {
       const response = await fetch("/api/lpu/queue-auth/login", {
@@ -1253,6 +1276,9 @@ export default function LpuV2Page() {
     setQueueLoadError("");
     setQueueUpdateStatus("");
     setQueueUpdateError("");
+    setQueueSendStatus("");
+    setQueueSendFeedbackItemId("");
+    setQueueSendError("");
 
     try {
       await fetch("/api/lpu/queue-auth/logout", {
@@ -1311,6 +1337,9 @@ export default function LpuV2Page() {
     setQueueLoadError("");
     setQueueUpdateStatus("");
     setQueueUpdateError("");
+    setQueueSendStatus("");
+    setQueueSendFeedbackItemId("");
+    setQueueSendError("");
 
     try {
       const response = await fetch(
@@ -1366,6 +1395,9 @@ export default function LpuV2Page() {
     setQueueSaveError("");
     setQueueUpdateStatus("");
     setQueueUpdateError("");
+    setQueueSendStatus("");
+    setQueueSendFeedbackItemId("");
+    setQueueSendError("");
 
     try {
       const response = await fetch(
@@ -1443,6 +1475,9 @@ export default function LpuV2Page() {
     setQueueLoadError("");
     setQueueUpdateStatus("");
     setQueueUpdateError("");
+    setQueueSendStatus("");
+    setQueueSendFeedbackItemId("");
+    setQueueSendError("");
 
     if (!queueAuthenticated) {
       setQueueSaveError("Unlock the queue before saving.");
@@ -1514,6 +1549,9 @@ export default function LpuV2Page() {
     setQueueSaveError("");
     setQueueLoadStatus("");
     setQueueLoadError("");
+    setQueueSendStatus("");
+    setQueueSendFeedbackItemId("");
+    setQueueSendError("");
 
     if (!queueAuthenticated) {
       setQueueUpdateError("Unlock the queue before updating.");
@@ -1584,6 +1622,99 @@ export default function LpuV2Page() {
       );
     } finally {
       setQueueUpdatingItemId("");
+    }
+  }
+
+  async function sendQueuedItemToVendoo(id: string) {
+    if (!id) return;
+
+    setQueueSendStatus("");
+    setQueueSendFeedbackItemId(id);
+    setQueueSendError("");
+    setQueueError("");
+
+    if (!queueAuthenticated) {
+      setQueueSendError("Unlock the queue before sending to Vendoo.");
+      return;
+    }
+
+    setQueueSendingItemId(id);
+
+    try {
+      const response = await fetch(
+        `/api/lpu/listing-queue/${encodeURIComponent(id)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
+      const data = (await response.json()) as QueueItemResponse;
+
+      if (response.status === 401 || response.status === 403) {
+        setQueueAuthenticated(false);
+        setQueueItems([]);
+        clearActiveQueueItem();
+        throw new Error("Unlock the queue before sending to Vendoo.");
+      }
+
+      if (!response.ok || !data.ok || !data.item) {
+        throw new Error("Unable to load queued listing for Vendoo send.");
+      }
+
+      const payload = buildQueuedVendooPayload(data.item);
+      const sendResult = sendVendooPayloadToExtension(payload);
+      if (sendResult === false) {
+        throw new Error("Payload could not be posted from this browser page.");
+      }
+
+      const sentAt = new Date().toISOString();
+      const postedMessage =
+        "Payload send message posted. If the extension is installed and active on this app origin, it should receive it.";
+      const patchResponse = await fetch(
+        `/api/lpu/listing-queue/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          cache: "no-store",
+          body: JSON.stringify({
+            status: "sent_to_vendoo",
+            vendooSendStatus: {
+              status: "sent",
+              message: postedMessage,
+              sentAt,
+            },
+          }),
+        }
+      );
+      const patchData = (await patchResponse.json()) as QueueItemResponse;
+
+      if (patchResponse.status === 401 || patchResponse.status === 403) {
+        setQueueAuthenticated(false);
+        setQueueItems([]);
+        clearActiveQueueItem();
+        setQueueSendError(
+          `${postedMessage} Queue status update failed because the queue is locked.`
+        );
+        return;
+      }
+
+      if (!patchResponse.ok || !patchData.ok) {
+        setQueueSendError(`${postedMessage} Queue status update failed.`);
+        return;
+      }
+
+      setQueueSendStatus(postedMessage);
+      await loadQueueItems();
+    } catch (err) {
+      setQueueSendError(
+        err instanceof Error
+          ? err.message
+          : "Payload could not be posted to the extension bridge."
+      );
+    } finally {
+      setQueueSendingItemId("");
     }
   }
 
@@ -2884,13 +3015,16 @@ export default function LpuV2Page() {
                               </div>
                             </div>
                             {item.id && item.status !== "archived" ? (
-                              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                              <div className="mt-3 grid gap-2 sm:grid-cols-3">
                                 <button
                                   type="button"
                                   onClick={() =>
                                     void loadQueueItemToWorkspace(item.id || "")
                                   }
-                                  disabled={Boolean(queueLoadingItemId)}
+                                  disabled={
+                                    Boolean(queueLoadingItemId) ||
+                                    queueSendingItemId === item.id
+                                  }
                                   className="rounded-lg bg-black px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   {queueLoadingItemId === item.id
@@ -2899,12 +3033,43 @@ export default function LpuV2Page() {
                                 </button>
                                 <button
                                   type="button"
+                                  onClick={() =>
+                                    void sendQueuedItemToVendoo(item.id || "")
+                                  }
+                                  disabled={
+                                    !queueAuthenticated ||
+                                    queueSendingItemId === item.id ||
+                                    queueLoadingItemId === item.id ||
+                                    queueUpdatingItemId === item.id
+                                  }
+                                  className="rounded-lg border border-gray-900 bg-white px-3 py-2 text-xs font-semibold text-gray-950 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {queueSendingItemId === item.id
+                                    ? "Sending..."
+                                    : "Send to Vendoo"}
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => void archiveQueueItem(item.id || "")}
-                                  disabled={queueLoading || Boolean(queueLoadingItemId)}
+                                  disabled={
+                                    queueLoading ||
+                                    Boolean(queueLoadingItemId) ||
+                                    queueSendingItemId === item.id
+                                  }
                                   className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   Archive
                                 </button>
+                              </div>
+                            ) : null}
+                            {item.id === queueSendFeedbackItemId && queueSendStatus ? (
+                              <div className="mt-3 rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-900">
+                                {queueSendStatus}
+                              </div>
+                            ) : null}
+                            {item.id === queueSendFeedbackItemId && queueSendError ? (
+                              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                                {queueSendError}
                               </div>
                             ) : null}
                           </article>

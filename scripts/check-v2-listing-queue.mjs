@@ -440,9 +440,12 @@ assert.match(lpuV2PageSource, /setActiveQueueItemId/);
 assert.match(lpuV2PageSource, /queueUpdateStatus/);
 assert.match(lpuV2PageSource, /queueUpdateError/);
 assert.match(lpuV2PageSource, /queueUpdatingItemId/);
+assert.match(lpuV2PageSource, /queueSendingItemId/);
+assert.match(lpuV2PageSource, /queueSendStatus/);
+assert.match(lpuV2PageSource, /queueSendError/);
 assert.equal(/@supabase\/supabase-js|SUPABASE_SERVICE_ROLE_KEY/.test(lpuV2PageSource), false);
 assert.equal(/localStorage|sessionStorage/.test(lpuV2PageSource), false);
-assert.equal(/Send queued listing|sendQueued|queued.*Vendoo/i.test(lpuV2PageSource), false);
+assert.match(lpuV2PageSource, /Send to Vendoo/);
 
 const queueSnapshotBuilderMatch = lpuV2PageSource.match(
   /function buildCurrentQueueSnapshotBody\(\): CurrentQueueSnapshotBody \| null \{[\s\S]*?\n  \}\n\n  function hasUnsavedWorkspaceContent/
@@ -503,6 +506,63 @@ assert.match(queuePhotoVendooRestoreMatch[0], /fileName/);
 assert.match(queuePhotoVendooRestoreMatch[0], /mimeType/);
 assert.equal(/dataUrl|signedUrl|new File|FileReader/.test(queuePhotoVendooRestoreMatch[0]), false);
 
+const queuedPayloadBuilderMatch = lpuV2PageSource.match(
+  /function buildQueuedVendooPayload\([\s\S]*?\n  \}\n\n  function hasUnsavedWorkspaceContent/
+);
+assert(queuedPayloadBuilderMatch, "V2 page has queued Vendoo payload builder.");
+const queuedPayloadBuilderSource = queuedPayloadBuilderMatch[0];
+assert.match(queuedPayloadBuilderSource, /finalLpuOutput/);
+assert.match(queuedPayloadBuilderSource, /readSavedFinalListPrice\(item\)/);
+assert.match(queuedPayloadBuilderSource, /queuePhotosToVendooPhotos\(item\.photos\)/);
+assert.match(queuedPayloadBuilderSource, /buildLpuPayloadPreview\(\{/);
+assert.match(queuedPayloadBuilderSource, /finalOutput/);
+assert.match(queuedPayloadBuilderSource, /hasSellingBrief/);
+assert.match(queuedPayloadBuilderSource, /finalListPriceInput/);
+assert.match(queuedPayloadBuilderSource, /photos/);
+assert.equal(/payloadSnapshot/.test(queuedPayloadBuilderSource), false);
+assert.equal(/dataUrl|signedUrl|FileReader|new File|sign-storage-image|supabase/i.test(queuedPayloadBuilderSource), false);
+
+const queuedSendFunctionMatch = lpuV2PageSource.match(
+  /async function sendQueuedItemToVendoo\(id: string\) \{[\s\S]*?\n  \}\n\n  function handleFileChange/
+);
+assert(queuedSendFunctionMatch, "V2 page has queued Vendoo send handler.");
+const queuedSendFunctionSource = queuedSendFunctionMatch[0];
+assert.match(queuedSendFunctionSource, /queueAuthenticated/);
+assert.match(queuedSendFunctionSource, /\/api\/lpu\/listing-queue\/\$\{encodeURIComponent\(id\)\}/);
+assert.match(queuedSendFunctionSource, /method:\s*["']GET["']/);
+assert.match(queuedSendFunctionSource, /cache:\s*["']no-store["']/);
+assert.match(queuedSendFunctionSource, /response\.status === 401 \|\| response\.status === 403/);
+assert.match(queuedSendFunctionSource, /setQueueAuthenticated\(false\)/);
+assert.match(queuedSendFunctionSource, /setQueueItems\(\[\]\)/);
+assert.match(queuedSendFunctionSource, /clearActiveQueueItem\(\)/);
+assert.match(queuedSendFunctionSource, /buildQueuedVendooPayload\(data\.item\)/);
+assert.match(queuedSendFunctionSource, /sendVendooPayloadToExtension\(payload\)/);
+assert.match(queuedSendFunctionSource, /Payload send message posted/);
+assert.match(queuedSendFunctionSource, /method:\s*["']PATCH["']/);
+assert.match(queuedSendFunctionSource, /status:\s*["']sent_to_vendoo["']/);
+assert.match(queuedSendFunctionSource, /vendooSendStatus/);
+assert.match(queuedSendFunctionSource, /sentAt/);
+assert.match(queuedSendFunctionSource, /await loadQueueItems\(\)/);
+assert.equal(/sentToVendooAt/.test(queuedSendFunctionSource), false);
+assert.equal(/payloadSnapshot/.test(queuedSendFunctionSource), false);
+assert.equal(/dataUrl|signedUrl|new File|FileReader|sign-storage-image/.test(queuedSendFunctionSource), false);
+assert.equal(/loadQueueItemToWorkspace/.test(queuedSendFunctionSource), false);
+assert.equal(/setActiveQueueItemId|setActiveQueueItem\(/.test(queuedSendFunctionSource), false);
+assert.equal(/\/restore/.test(queuedSendFunctionSource), false);
+assert.equal(/method:\s*["']DELETE["']/.test(queuedSendFunctionSource), false);
+assert.equal(/method:\s*["']POST["']/.test(queuedSendFunctionSource), false);
+assert.equal(/@supabase\/supabase-js|SUPABASE_SERVICE_ROLE_KEY/.test(queuedSendFunctionSource), false);
+
+const queueCardActionsMatch = lpuV2PageSource.match(
+  /queueItems\.map\(\(item\) => \{[\s\S]*?<\/article>/
+);
+assert(queueCardActionsMatch, "V2 page renders queue cards.");
+assert.match(queueCardActionsMatch[0], /Send to Vendoo/);
+assert.match(queueCardActionsMatch[0], /sendQueuedItemToVendoo\(item\.id \|\| ["']["']\)/);
+assert.match(queueCardActionsMatch[0], /queueSendingItemId === item\.id/);
+assert.match(queueCardActionsMatch[0], /queueSendStatus/);
+assert.match(queueCardActionsMatch[0], /queueSendError/);
+
 assert.match(lpuV2PageSource, /function restoreManualPricingForm/);
 assert.match(lpuV2PageSource, /manualPricingValueToString/);
 assert.match(lpuV2PageSource, /function hasUnsavedWorkspaceContent/);
@@ -547,7 +607,7 @@ assert.equal(/\/restore/.test(queueLoadFunctionSource), false);
 assert.equal(/method:\s*["'](?:POST|PATCH|DELETE)["']/.test(queueLoadFunctionSource), false);
 
 const queueUpdateFunctionMatch = lpuV2PageSource.match(
-  /async function updateLoadedQueueItem\(\) \{[\s\S]*?\n  \}\n\n  function handleFileChange/
+  /async function updateLoadedQueueItem\(\) \{[\s\S]*?\n  \}\n\n  async function sendQueuedItemToVendoo/
 );
 assert(queueUpdateFunctionMatch, "V2 page has updateLoadedQueueItem handler.");
 const queueUpdateFunctionSource = queueUpdateFunctionMatch[0];
@@ -580,8 +640,6 @@ const changedFiles = execFileSync("git", ["diff", "--name-only"], {
   .filter(Boolean);
 const allowedChangedFiles = new Set([
   "app/lpu-v2/page.tsx",
-  "lib/lpu/webComps.ts",
-  "scripts/check-v2-web-comps.mjs",
   "scripts/check-v2-listing-queue.mjs",
 ]);
 const unexpectedChangedFiles = changedFiles.filter(
@@ -596,7 +654,7 @@ const forbiddenChangedFiles = changedFiles.filter(
     file === "lib/sendVendooPayloadToExtension.ts"
 );
 
-assert.deepEqual(unexpectedChangedFiles, [], "Only intended V2 queue UI/web-comps check files changed.");
+assert.deepEqual(unexpectedChangedFiles, [], "Only intended V2 queue UI/check files changed.");
 assert.deepEqual(forbiddenChangedFiles, [], "No V1 UI, Vendoo, or extension files changed.");
 
 console.log("V2 listing queue checks passed.");
