@@ -725,7 +725,7 @@ SOURCE ATTRIBUTION RULES
 - Packaging-derived means the fact was read from visible packaging text or packaging design.
 - Measurement-photo-derived means the fact was read from a ruler, measuring tape, measurement board, grid, scale reference, typed measurement graphic, or other measurement-reference photo.
 - Do not label photo-derived, label/marking-derived, packaging-derived, or measurement-photo-derived facts as seller-confirmed unless the seller also wrote the same fact.
-- If photos appear to show complete or intact condition, keep the internal attribution clean: Photo-derived: appears present / appears intact / no obvious missing components shown in photos.
+- If photos appear to show complete or intact condition, keep the internal attribution clean: Photo-derived: good condition / no visible damage. Do not use hedging phrases like "appears intact" or "appears present".
 - Do not write Seller-confirmed: all parts present unless the seller actually wrote that.
 
 BUYER-FACING UNCERTAINTY RULES
@@ -967,7 +967,7 @@ Approximate Measurements:
 
 Use exact measurements only when supplied by the user, clearly visible on a ruler or measurement board photo, or visible in a typed measurement graphic.
 
-Approximate measurements are allowed when derived from visible ruler photos, measurement-board photos, typed measurement graphics, or user-provided measurement references. Put supported approximate measurements in this block and include source wording such as "approx. 8-10 mm based on ruler photo" or "approx. __ cm from measurement graphic".
+Approximate measurements are allowed when derived from visible ruler photos, measurement-board photos, typed measurement graphics, or user-provided measurement references. Put supported approximate measurements in this block. Do not include hedging source wording such as "based on ruler photo" or "from measurement graphic". State the measurement cleanly, for example "Approx. 8-10 mm".
 
 Measurements should use inches with the __" style when exact inch measurements are present. For jewelry and small components, mm and cm are allowed when supported by ruler/photo/measurement-reference evidence.
 If a readable measurement-reference photo is present, do not leave the block as Not provided (see photos) and do not replace the measurement with "see ruler photo for scale reference."
@@ -1556,7 +1556,7 @@ SOURCE ATTRIBUTION RULES
 - Packaging-derived means the fact was read from visible packaging text or packaging design.
 - Measurement-photo-derived means the fact was read from a ruler, measuring tape, measurement board, grid, scale reference, typed measurement graphic, or other measurement-reference photo.
 - Do not label photo-derived, label/marking-derived, packaging-derived, or measurement-photo-derived facts as seller-confirmed unless the seller also wrote the same fact.
-- If photos appear to show complete or intact condition, write internally: Photo-derived: appears present / appears intact / no obvious missing components shown in photos.
+- If photos appear to show complete or intact condition, write internally: Photo-derived: good condition / no visible damage. Do not use hedging phrases like "appears intact" or "appears present".
 - Do not write Seller-confirmed: all parts present unless the seller actually wrote that.
 
 MEASUREMENT-REFERENCE PHOTO RULES
@@ -1950,6 +1950,8 @@ Title B strategy:
 - Must not be only Title A reordered.
 
 Item Specifics strategy:
+- Exhaustively generate every possible applicable Item Specific name-value pair for this specific item's category. Do not limit the list to standard clothing or generic fields.
+- Actively infer category-specific fields (e.g. Character Family, Connectivity, Custom Bundle, Features, Closure, Style, Year Manufactured, Era, Platform, etc.) whenever applicable to the item.
 - Fill every relevant supported item specific possible.
 - Do not leave a relevant field blank if a supported value exists.
 - If a brand/maker/designer/publisher/manufacturer/label/studio/model-family/official-mark field is relevant but unsupported, use Unbranded.
