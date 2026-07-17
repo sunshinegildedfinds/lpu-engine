@@ -390,7 +390,7 @@ IMPORTANT:
 - Fix ONLY estimated physical measurement language listed in the validation failures.
 - Preserve every platform section unchanged except the offending estimated measurement wording.
 - If the offending numeric measurement says it is based on a ruler photo, measurement-board photo, measurement-reference photo, typed measurement graphic, or visual comparison to a visible measurement reference, move that existing measurement into that platform's Approximate Measurements block.
-- When moving a supported approximate measurement into the block, replace "Not provided (see photos)" with the existing measurement line. Do not append hedging phrases like "based on ruler photo" or "from ruler photo".
+- When moving a supported approximate measurement into the block, replace "Not provided (see photos)" with the existing measurement line and preserve source wording such as "based on ruler photo" or "from ruler photo".
 - For jewelry and small components, mm and cm measurements are allowed when supported by ruler/photo/measurement-reference evidence.
 - If the offending numeric measurement does not include ruler/photo/measurement-reference source language, remove the unsupported numeric estimate.
 - Replace removed unsupported estimates with non-numeric descriptive wording supported by the existing item details, such as "graduated bead sizes" or "varied bead sizes".
@@ -581,7 +581,7 @@ Universal rule:
 - Seller-confirmed means the fact came from Known Details, Condition / Flaw notes, item notes, seller-entered fields, user-provided text, or another seller-written input.
 - Photo-derived means the fact was inferred from item photos.
 - Label/marking-derived, packaging-derived, and measurement-photo-derived facts must not be relabeled as seller-confirmed unless the seller also wrote the same fact.
-- If photos appear to show complete or intact condition, write internally: Photo-derived: good condition / no visible damage. Do not use hedging phrases like "appears intact" or "appears present". Do not write Seller-confirmed: all parts present unless the seller actually wrote that.
+- If photos appear to show complete or intact condition, write internally: Photo-derived: appears present / appears intact / no obvious missing components in provided images. Do not write Seller-confirmed: all parts present unless the seller actually wrote that.
 - If no brand, maker, designer, publisher, manufacturer, label, studio, model family, or official mark is visible or seller-provided, use Unbranded as the brand fallback. Do not use Not specified, Unknown, See photos, or Not specified (see photos) as brand fallback.
 - If Measurement Basis says no measurements were provided but the brief references a readable ruler, measuring tape, measurement board, grid, scale reference, typed measurement graphic, measurement-reference photo, or photo-derived dimensions, repair Measurement Basis to state that a measurement-reference photo was provided and approximate measurements were derived from the photo.
 - Do not leave Measurement Basis as No measurements provided when readable measurement-reference evidence exists in the brief.
