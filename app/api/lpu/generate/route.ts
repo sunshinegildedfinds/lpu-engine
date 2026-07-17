@@ -744,7 +744,6 @@ ${notes}`,
 
   const response = await openai.responses.create({
     model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
     instructions: UNIVERSAL_SELLING_BRIEF_INSTRUCTIONS_V2,
     input: [
       {
@@ -767,7 +766,6 @@ async function repairSellingBriefCandidateBank(
 
   const response = await openai.responses.create({
     model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
     input: [
       {
         role: "user",
@@ -3416,7 +3414,6 @@ async function repairFinalFromBriefBodySectionsWithAiIfNeeded({
 
   const response = await openai.responses.create({
     model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
     input: [
       {
         role: "user",
@@ -4268,7 +4265,6 @@ ${notes}`;
 
   const response = await openai.responses.create({
     model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
     instructions,
     input: [
       {
@@ -4291,7 +4287,6 @@ ${notes}`;
   if (hasPoshmarkOutputOrderIssues(validation)) {
     const revisionResponse = await openai.responses.create({
       model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
       input: [
         {
           role: "user",
@@ -4317,7 +4312,6 @@ ${notes}`;
   if (promptVersion === "v2" && hasMercariOutputFormatIssues(validation)) {
     const revisionResponse = await openai.responses.create({
       model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
       input: [
         {
           role: "user",
@@ -4343,7 +4337,6 @@ ${notes}`;
   if (promptVersion === "v2" && hasPoshmarkInvalidStyleTagIssues(validation)) {
     const revisionResponse = await openai.responses.create({
       model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
       input: [
         {
           role: "user",
@@ -4369,7 +4362,6 @@ ${notes}`;
   if (promptVersion === "v2" && hasDepopInvalidAestheticModeIssues(validation)) {
     const revisionResponse = await openai.responses.create({
       model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
       input: [
         {
           role: "user",
@@ -4395,7 +4387,6 @@ ${notes}`;
   if (promptVersion === "v2" && hasEstimatedMeasurementUnsupportedIssues(validation)) {
     const revisionResponse = await openai.responses.create({
       model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
       input: [
         {
           role: "user",
@@ -4421,7 +4412,6 @@ ${notes}`;
   if (hasOnlyTitleLengthIssues(validation)) {
     const revisionResponse = await openai.responses.create({
       model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
       input: [
         {
           role: "user",
@@ -4447,7 +4437,6 @@ ${notes}`;
   if (promptVersion === "v2" && sellingBrief?.trim()) {
     const revisionResponse = await openai.responses.create({
       model: "gpt-5.3-chat-latest",
-    temperature: 0.1,
       input: [
         {
           role: "user",
