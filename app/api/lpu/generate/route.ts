@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { openai } from "@/lib/openai";
+import { isStagingDeployment } from "@/lib/lpu/deploymentEnv";
 import {
   getMasterPrompt,
   UNIVERSAL_SELLING_BRIEF_INSTRUCTIONS_V2,
@@ -10,6 +11,11 @@ import {
   POSHMARK_STYLE_TAG_MASTER_LIST,
   validateLpuOutput,
 } from "@/lib/validator";
+import {
+  getProductionStorageBucket,
+  getRequiredStagingStorageBucket,
+  isStagingStoragePath,
+} from "@/lib/lpu/stagingStoragePolicy";
 
 type IncomingImage = {
   name: string;
@@ -159,14 +165,17 @@ async function resolveGeneratorImageUrl(
   const storagePath =
     typeof image?.storagePath === "string" ? image.storagePath.trim() : "";
 
+  const staging = isStagingDeployment();
+  if (staging && !isStagingStoragePath(storagePath)) return "";
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  const bucketName =
-    process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() ||
-    "lpu-generator-images";
+  const bucketName = staging
+    ? getRequiredStagingStorageBucket(process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim())
+    : getProductionStorageBucket(process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim());
 
   if (!storagePath || !supabaseUrl || !serviceRoleKey) {
-    return directUrl;
+    return staging ? "" : directUrl;
   }
 
   const encodedPath = storagePath
@@ -186,12 +195,12 @@ async function resolveGeneratorImageUrl(
   });
 
   if (!signResponse.ok) {
-    return directUrl;
+    return staging ? "" : directUrl;
   }
 
   const signData = (await signResponse.json()) as { signedURL?: string };
   const signedPath = typeof signData?.signedURL === "string" ? signData.signedURL : "";
-  if (!signedPath) return directUrl;
+  if (!signedPath) return staging ? "" : directUrl;
 
   return `${supabaseUrl}/storage/v1${signedPath}`;
 }

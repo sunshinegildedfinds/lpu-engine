@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import vm from "node:vm";
+import ts from "typescript";
 
 const root = process.cwd();
 const source = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -8,6 +10,25 @@ const migration = source("supabase/migrations/20260803000000_add_listing_queue_s
 const env = source("lib/lpu/deploymentEnv.ts");
 const server = source("lib/lpu/listingQueueServer.ts");
 const route = source("app/api/lpu/staging/listing-queue/[id]/route.ts");
+const storagePolicySource = source("lib/lpu/stagingStoragePolicy.ts");
+const uploadRoute = source("app/api/lpu/sign-storage-upload/route.ts");
+const readRoute = source("app/api/lpu/sign-storage-image/route.ts");
+const generateRoute = source("app/api/lpu/generate/route.ts");
+const lpuPage = source("app/lpu/page.tsx");
+const lpuV2Page = source("app/lpu-v2/page.tsx");
+
+function loadPolicyModule() {
+  const transpiled = ts.transpileModule(storagePolicySource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const loadedModule = { exports: {} };
+  vm.runInNewContext(transpiled, { exports: loadedModule.exports, module: loadedModule }, {
+    filename: "lib/lpu/stagingStoragePolicy.ts",
+  });
+  return loadedModule.exports;
+}
+
+const policy = loadPolicyModule();
 
 // Production rejection: the staging endpoint has no production behavior.
 assert.match(route, /if \(!isStagingDeployment\(\)\) return jsonError\("Not found\."\s*,\s*404\)/);
@@ -45,5 +66,87 @@ assert.match(env, /=== "staging"[\s\S]*: "production"/);
 assert.match(migration, /add column if not exists environment text null/i);
 assert.match(migration, /add column if not exists test_run_id uuid null/i);
 assert.match(migration, /add column if not exists expires_at timestamptz null/i);
+
+// Private staging Storage policy: supported MIME types, a per-image limit, and
+// server-generated paths are enforced before any signed upload is minted.
+assert.equal(policy.STAGING_STORAGE_BUCKET, "lpu-generator-images-staging");
+assert.equal(policy.STAGING_MAX_UPLOAD_BYTES, 10 * 1024 * 1024);
+assert.equal(policy.STAGING_SIGNED_UPLOAD_TTL_SECONDS, 2 * 60 * 60);
+assert.equal(policy.validateStagingImageUpload({ mimeType: "image/jpeg", size: 1 }).ok, true);
+assert.equal(policy.validateStagingImageUpload({ mimeType: "image/png", size: 1 }).ok, true);
+assert.equal(policy.validateStagingImageUpload({ mimeType: "image/webp", size: 1 }).ok, true);
+assert.equal(policy.validateStagingImageUpload({ mimeType: "image/gif", size: 1 }).ok, false);
+assert.equal(
+  policy.validateStagingImageUpload({
+    mimeType: "image/jpeg",
+    size: policy.STAGING_MAX_UPLOAD_BYTES + 1,
+  }).ok,
+  false
+);
+const stagingPath = policy.buildStagingStoragePath(
+  "11111111-1111-4111-8111-111111111111",
+  "image/jpeg"
+);
+assert.equal(stagingPath, "lpu/staging/11111111-1111-4111-8111-111111111111.jpg");
+assert.equal(policy.isStagingStoragePath("../lpu/staging/file.jpg"), false);
+assert.equal(policy.isStagingStoragePath("lpu/staging/../../private.jpg"), false);
+assert.throws(() => policy.getRequiredStagingStorageBucket("another-bucket"));
+assert.equal(
+  policy.hasRequiredStagingBucketConfiguration({
+    id: policy.STAGING_STORAGE_BUCKET,
+    public: false,
+    file_size_limit: policy.STAGING_MAX_UPLOAD_BYTES,
+    allowed_mime_types: ["image/webp", "image/jpeg", "image/png"],
+  }),
+  true
+);
+assert.equal(
+  policy.hasRequiredStagingBucketConfiguration({
+    id: policy.STAGING_STORAGE_BUCKET,
+    public: true,
+    file_size_limit: policy.STAGING_MAX_UPLOAD_BYTES,
+    allowed_mime_types: ["image/jpeg", "image/png", "image/webp"],
+  }),
+  false
+);
+assert.equal(
+  policy.hasRequiredStagingBucketConfiguration({
+    id: policy.STAGING_STORAGE_BUCKET,
+    public: false,
+    file_size_limit: policy.STAGING_MAX_UPLOAD_BYTES + 1,
+    allowed_mime_types: ["image/jpeg", "image/png", "image/webp"],
+  }),
+  false
+);
+assert.equal(policy.getProductionStorageBucket("production-bucket"), "production-bucket");
+assert.equal(policy.isValidStagingSignedReadRequest(stagingPath, 60), true);
+assert.equal(policy.isValidStagingSignedReadRequest(stagingPath, 0), false);
+assert.equal(
+  policy.isValidStagingSignedReadRequest(
+    stagingPath,
+    policy.STAGING_SIGNED_READ_TTL_SECONDS + 1
+  ),
+  false
+);
+assert.equal(policy.isValidStagingSignedReadRequest("lpu/staging/../../bad.jpg", 60), false);
+
+// Staging uses authenticated, server-selected signed upload/read capabilities;
+// production keeps the existing browser upload route when this endpoint is 404.
+assert.match(uploadRoute, /if \(!isStagingDeployment\(\)\) return jsonError\("Not found\."\s*,\s*404\)/);
+assert.match(uploadRoute, /await requireQueueOwnerSession\(\)/);
+assert.match(uploadRoute, /getRequiredStagingStorageBucket/);
+assert.match(uploadRoute, /hasRequiredStagingBucketConfiguration/);
+assert.match(uploadRoute, /\/storage\/v1\/bucket\//);
+assert.match(uploadRoute, /buildStagingStoragePath\(randomUUID\(\)/);
+assert.match(uploadRoute, /\/storage\/v1\/object\/upload\/sign\//);
+assert.equal(/storagePath\?:/.test(uploadRoute), false);
+assert.match(readRoute, /if \(staging\) \{[\s\S]*await requireQueueOwnerSession\(\)/);
+assert.match(readRoute, /isValidStagingSignedReadRequest/);
+assert.match(generateRoute, /if \(staging && !isStagingStoragePath\(storagePath\)\) return ""/);
+for (const browserSource of [lpuPage, lpuV2Page]) {
+  assert.match(browserSource, /sign-storage-upload/);
+  assert.match(browserSource, /signingResponse\.status !== 404/);
+  assert.equal(/SUPABASE_SERVICE_ROLE_KEY|serviceRoleKey/.test(browserSource), false);
+}
 
 console.log("Staging support checks passed.");

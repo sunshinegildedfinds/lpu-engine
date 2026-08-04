@@ -145,15 +145,58 @@ async function uploadFilesToSupabaseStorage(
     process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() ||
     "lpu-generator-images";
 
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error(
-      "Missing Supabase configuration. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
-    );
-  }
-
   const references: GeneratorImageReference[] = [];
 
   for (const file of files) {
+    const signingResponse = await fetch("/api/lpu/sign-storage-upload", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mimeType: file.type, size: file.size }),
+    });
+    if (signingResponse.status !== 404) {
+      const signingData = (await signingResponse.json().catch(() => ({}))) as {
+        uploadUrl?: unknown;
+        storagePath?: unknown;
+        error?: unknown;
+      };
+      const uploadUrl = typeof signingData.uploadUrl === "string" ? signingData.uploadUrl : "";
+      const storagePath =
+        typeof signingData.storagePath === "string" ? signingData.storagePath : "";
+      if (!signingResponse.ok || !uploadUrl || !storagePath) {
+        throw new Error(
+          typeof signingData.error === "string"
+            ? signingData.error
+            : "Unable to create staging upload URL."
+        );
+      }
+      const uploadResponse = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "x-upsert": "false",
+          "Content-Type": file.type,
+        },
+        body: file,
+      });
+      if (!uploadResponse.ok) {
+        throw new Error(`Staging image upload failed for ${file.name}: ${uploadResponse.status}`);
+      }
+      references.push({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        storagePath,
+        imageUrl: "",
+      });
+      continue;
+    }
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error(
+        "Missing Supabase configuration. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+      );
+    }
+
     const storagePath = buildStoragePath(file);
     const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucketName}/${encodeStoragePath(
       storagePath

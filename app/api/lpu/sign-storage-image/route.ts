@@ -1,5 +1,14 @@
 import { NextResponse } from "next/server";
 
+import { isStagingDeployment } from "@/lib/lpu/deploymentEnv";
+import { QueueAuthError, requireQueueOwnerSession } from "@/lib/lpu/queueAuth";
+import {
+  getProductionStorageBucket,
+  getRequiredStagingStorageBucket,
+  isValidStagingSignedReadRequest,
+  STAGING_SIGNED_READ_TTL_SECONDS,
+} from "@/lib/lpu/stagingStoragePolicy";
+
 type SignRequest = {
   storagePath?: string;
 };
@@ -45,7 +54,8 @@ export async function OPTIONS(request: Request) {
 
 export async function POST(request: Request) {
   const origin = request.headers.get("origin");
-  if (origin && !ALLOWED_ORIGINS.has(origin)) {
+  const sameOrigin = origin === new URL(request.url).origin;
+  if (origin && !sameOrigin && !ALLOWED_ORIGINS.has(origin)) {
     return jsonWithCors(
       request,
       { error: "Origin not allowed." },
@@ -66,11 +76,19 @@ export async function POST(request: Request) {
       );
     }
 
+    const staging = isStagingDeployment();
+    if (staging) {
+      await requireQueueOwnerSession();
+      if (!isValidStagingSignedReadRequest(storagePath, STAGING_SIGNED_READ_TTL_SECONDS)) {
+        return jsonWithCors(request, { error: "Invalid staging image request." }, { status: 400 });
+      }
+    }
+
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-    const bucketName =
-      process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim() ||
-      "lpu-generator-images";
+    const bucketName = staging
+      ? getRequiredStagingStorageBucket(process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim())
+      : getProductionStorageBucket(process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET?.trim());
 
     if (!supabaseUrl || !serviceRoleKey) {
       return jsonWithCors(
@@ -92,7 +110,9 @@ export async function POST(request: Request) {
         Authorization: `Bearer ${serviceRoleKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ expiresIn: 60 * 30 }),
+      body: JSON.stringify({
+        expiresIn: staging ? STAGING_SIGNED_READ_TTL_SECONDS : 60 * 30,
+      }),
       cache: "no-store",
     });
 
@@ -130,6 +150,9 @@ export async function POST(request: Request) {
 
     return jsonWithCors(request, { signedUrl });
   } catch (error) {
+    if (error instanceof QueueAuthError) {
+      return jsonWithCors(request, { error: "Unauthorized" }, { status: error.status });
+    }
     const message =
       error instanceof Error ? error.message : "Failed to sign storage image.";
     return jsonWithCors(request, { error: message }, { status: 500 });

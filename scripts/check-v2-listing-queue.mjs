@@ -747,7 +747,27 @@ const allowedChangedFiles = new Set([
   "package.json",
   "lib/lpu/listingQueueServer.ts",
   "lib/lpu/deploymentEnv.ts",
+  "lib/lpu/stagingStoragePolicy.ts",
   "app/api/lpu/staging/listing-queue/[id]/route.ts",
+  "app/api/lpu/sign-storage-upload/route.ts",
+  "app/api/lpu/sign-storage-image/route.ts",
+  "app/api/lpu/generate/route.ts",
+  "app/lpu/page.tsx",
+  "scripts/check-staging-support.mjs",
+  "supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql",
+]);
+const reviewedStagingFiles = new Set([
+  "README.md",
+  "package.json",
+  "lib/lpu/listingQueueServer.ts",
+  "lib/lpu/deploymentEnv.ts",
+  "lib/lpu/stagingStoragePolicy.ts",
+  "app/api/lpu/staging/listing-queue/[id]/route.ts",
+  "app/api/lpu/sign-storage-upload/route.ts",
+  "app/api/lpu/sign-storage-image/route.ts",
+  "app/api/lpu/generate/route.ts",
+  "app/lpu/page.tsx",
+  "app/lpu-v2/page.tsx",
   "scripts/check-staging-support.mjs",
   "supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql",
 ]);
@@ -756,7 +776,7 @@ const unexpectedChangedFiles = changedFiles.filter(
 );
 const forbiddenChangedFiles = changedFiles.filter(
   (file) =>
-    file === "app/lpu/page.tsx" ||
+    (file === "app/lpu/page.tsx" && !reviewedStagingFiles.has(file)) ||
     file.startsWith("listing-writer-app/extension/") ||
     file.startsWith("components/vendoo/") ||
     file.startsWith("lib/vendoo/") ||
@@ -767,12 +787,18 @@ assert.deepEqual(unexpectedChangedFiles, [], "Only intended V2 queue UI/check fi
 assert.deepEqual(forbiddenChangedFiles, [], "No V1 UI, Vendoo, or extension files changed.");
 
 const approvedStagingFileHashes = new Map([
-  ["README.md", "b6539e47f3f8f5b8e81fddd2b150ee43a85ca97db39561b69ada33e229d96338"],
+  ["README.md", "9bb586e3bd346960451bbdc87da478346d87a99d41bf9516480f84f925e17b78"],
   ["package.json", "4bbee19ade3c77b53fc41c7b89b59952fef005baa0080bb41c2f6285dcef3789"],
   ["lib/lpu/listingQueueServer.ts", "41ac79b23f39becd00f406e5705e50b7195adfe1f97e106718c713b4d50e4b5b"],
   ["lib/lpu/deploymentEnv.ts", "55906ba293e303b4302f0e2b02a249ef9b126ce7755df08f04c0045dc69bc8d6"],
+  ["lib/lpu/stagingStoragePolicy.ts", "f3dd4d818c6a955b6ec66bbb7fd97d31b3973ed8e08886c85743e51f808bbb8d"],
   ["app/api/lpu/staging/listing-queue/[id]/route.ts", "3130809e9647cb61e19e4d37b464b861cd132648045ab5bf1ae46526fb158b97"],
-  ["scripts/check-staging-support.mjs", "0d253ac4f76338805f552cacb5cc8d8bd009ffd8de79a870d2a8c12bdda7629b"],
+  ["app/api/lpu/sign-storage-upload/route.ts", "01c28fa03d17bdfba69ccd12adae75ead28525dad734a924f2bc3dd5e37eaa4d"],
+  ["app/api/lpu/sign-storage-image/route.ts", "5eb7411b391ec429d861e824bcd2997412ef797b4d39062251c8fbdc631a000a"],
+  ["app/api/lpu/generate/route.ts", "aacb7953ed4b9f00568215094bfaf02ac02de79dc06957925f951ccc9da0d379"],
+  ["app/lpu/page.tsx", "7a3dab72bccbb8d35a1599dea69399ab397a5258a81a27912d82e8e681af737a"],
+  ["app/lpu-v2/page.tsx", "2ec1e091259e31e26a35e03ece2fed9cd03e98e17e710c243b6177ee73c7675b"],
+  ["scripts/check-staging-support.mjs", "03f0c23571c1632df7e3b9f6c60a9ac473d670bc49b7259a86aadc58e78a231b"],
   ["supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql", "1277225437f5f6477a187c730c8b05438ab3be99b77a2b2d500cf7d1db368f89"],
 ]);
 

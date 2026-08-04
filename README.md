@@ -49,7 +49,19 @@ to the staging database. Configure these server-side variables there:
 - `LPU_STAGING_TEST_RUN_ID=<UUID>` (recommended to group a test run; a UUID is generated if omitted)
 - `LPU_STAGING_TTL_HOURS=24` (optional positive integer; 24 is the default)
 - The existing `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and
-  `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET` values for the staging project.
+  `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET=lpu-generator-images-staging` values for
+  the staging project.
+
+Staging Storage must use the private bucket named
+`lpu-generator-images-staging`. The app must obtain signed upload URLs from the
+server; direct anonymous uploads and public object URLs are production-only.
+Staging uploads require a queue-owner session, accept only JPEG, PNG, or WebP,
+and are limited to 10 MB per image. Configure that exact private bucket with
+the same 10 MB file-size limit and the exact MIME allowlist `image/jpeg`,
+`image/png`, and `image/webp`; the server verifies those settings before it
+issues an upload capability. The server generates the staging object path and
+creates short-lived signed read URLs for previews and generation. Never
+configure public-read Storage policies for this staging bucket.
 
 Staging-created titles are visibly prefixed with `[STAGING TEST]`, and records
 receive `environment`, `test_run_id`, and `expires_at`. The authenticated
