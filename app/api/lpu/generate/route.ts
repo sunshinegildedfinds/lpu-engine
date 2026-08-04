@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { openai } from "@/lib/openai";
 import { isStagingDeployment } from "@/lib/lpu/deploymentEnv";
+import { QueueAuthError, requireQueueOwnerSession } from "@/lib/lpu/queueAuth";
 import {
   getMasterPrompt,
   UNIVERSAL_SELLING_BRIEF_INSTRUCTIONS_V2,
@@ -4554,6 +4555,9 @@ ${notes}`;
 
 export async function POST(request: Request) {
   try {
+    if (isStagingDeployment()) {
+      await requireQueueOwnerSession();
+    }
     const body = (await request.json()) as GenerateBody;
     const notes = body?.notes?.trim();
     const images = Array.isArray(body?.images) ? body.images : [];
@@ -4652,6 +4656,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json(responseBody);
   } catch (error) {
+    if (error instanceof QueueAuthError) {
+      return NextResponse.json(
+        { error: "Staging generation requires Queue sign-in. Use /lpu-v2 to sign in." },
+        { status: 401 }
+      );
+    }
     console.error("LP-U generation error:", error);
 
     return NextResponse.json(

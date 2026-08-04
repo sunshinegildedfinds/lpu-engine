@@ -63,6 +63,12 @@ issues an upload capability. The server generates the staging object path and
 creates short-lived signed read URLs for previews and generation. Never
 configure public-read Storage policies for this staging bucket.
 
+In staging, generation and public web-comps requests also require the
+queue-owner session before their request body is processed. Sign in through
+`/lpu-v2`; `/lpu` and `/lpu-extension` direct unauthenticated staging users to
+that flow instead of making an unauthenticated model request. This gate is
+staging-only and production retains its existing behavior.
+
 Staging-created titles are visibly prefixed with `[STAGING TEST]`, and records
 receive `environment`, `test_run_id`, and `expires_at`. The authenticated
 staging-only exact-ID hard-delete endpoint is:

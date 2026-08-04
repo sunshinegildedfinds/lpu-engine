@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { isStagingDeployment } from "@/lib/lpu/deploymentEnv";
+import { QueueAuthError, requireQueueOwnerSession } from "@/lib/lpu/queueAuth";
 import {
   WEB_COMPS_RESPONSE_SCHEMA,
   buildWebCompsPrompt,
@@ -60,6 +62,17 @@ function jsonError(message: string, status: number) {
 }
 
 export async function POST(request: Request) {
+  if (isStagingDeployment()) {
+    try {
+      await requireQueueOwnerSession();
+    } catch (error) {
+      if (error instanceof QueueAuthError) {
+        return jsonError("Staging web comps requires Queue sign-in. Use /lpu-v2 to sign in.", 401);
+      }
+      return jsonError("Unable to verify staging access.", 500);
+    }
+  }
+
   let parsedBody;
 
   try {

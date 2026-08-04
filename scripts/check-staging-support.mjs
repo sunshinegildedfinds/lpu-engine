@@ -14,8 +14,11 @@ const storagePolicySource = source("lib/lpu/stagingStoragePolicy.ts");
 const uploadRoute = source("app/api/lpu/sign-storage-upload/route.ts");
 const readRoute = source("app/api/lpu/sign-storage-image/route.ts");
 const generateRoute = source("app/api/lpu/generate/route.ts");
+const webCompsRoute = source("app/api/lpu/web-comps/route.ts");
+const stagingAccessRoute = source("app/api/lpu/staging-access/route.ts");
 const lpuPage = source("app/lpu/page.tsx");
 const lpuV2Page = source("app/lpu-v2/page.tsx");
+const lpuExtensionPage = source("app/lpu-extension/page.tsx");
 
 function loadPolicyModule() {
   const transpiled = ts.transpileModule(storagePolicySource, {
@@ -148,5 +151,62 @@ for (const browserSource of [lpuPage, lpuV2Page]) {
   assert.match(browserSource, /signingResponse\.status !== 404/);
   assert.equal(/SUPABASE_SERVICE_ROLE_KEY|serviceRoleKey/.test(browserSource), false);
 }
+
+// Staging generation and web-comps reject an unauthenticated request before
+// reading its body, signing a Storage URL, or creating an OpenAI client.
+function postSource(routeSource) {
+  return routeSource.slice(routeSource.indexOf("export async function POST"));
+}
+
+const generatePost = postSource(generateRoute);
+const generateSessionCheck = generatePost.indexOf("await requireQueueOwnerSession()");
+assert(generateSessionCheck >= 0, "Generate requires a staging queue session.");
+assert(generateSessionCheck < generatePost.indexOf("await request.json()"));
+assert(generateSessionCheck < generatePost.indexOf("resolveGeneratorImageUrl"));
+assert(generateSessionCheck < generatePost.indexOf("await generateSellingBrief"));
+assert(generateSessionCheck < generatePost.indexOf("await generateValidatedLpuOutput"));
+assert.match(generatePost, /error instanceof QueueAuthError[\s\S]*status:\s*401/);
+
+const webCompsPost = postSource(webCompsRoute);
+const webCompsSessionCheck = webCompsPost.indexOf("await requireQueueOwnerSession()");
+assert(webCompsSessionCheck >= 0, "Web comps requires a staging queue session.");
+assert(webCompsSessionCheck < webCompsPost.indexOf("await request.json()"));
+assert(webCompsSessionCheck < webCompsPost.indexOf("getOpenAIClient()"));
+assert(webCompsSessionCheck < webCompsPost.indexOf("openai.responses.create"));
+assert.match(webCompsPost, /error instanceof QueueAuthError[\s\S]*,\s*401\)/);
+
+// The browser checks the staging-only status route first. Its intentional 404
+// preserves production behavior; any staging authentication failure stops the
+// upload/generation or web-comps request.
+assert.match(stagingAccessRoute, /if \(!isStagingDeployment\(\)\)/);
+assert.match(stagingAccessRoute, /status:\s*404/);
+assert.match(stagingAccessRoute, /await requireQueueOwnerSession\(\)/);
+assert.match(stagingAccessRoute, /error instanceof QueueAuthError[\s\S]*status:\s*401/);
+for (const browserSource of [lpuPage, lpuV2Page, lpuExtensionPage]) {
+  const sessionCheck = browserSource.indexOf("await requireStagingSessionBeforeCostlyRequest()");
+  assert(sessionCheck >= 0, "Browser flow checks staging access before costly work.");
+  assert.match(browserSource, /response\.status === 404 \|\| response\.ok/);
+  assert.equal(/VERCEL_AUTOMATION|vercel-protection-bypass|bypass/i.test(browserSource), false);
+}
+assert(
+  lpuPage.indexOf("await requireStagingSessionBeforeCostlyRequest()") <
+    lpuPage.indexOf('fetch("/api/lpu/generate"'),
+  "LPU checks staging access before generation."
+);
+assert(
+  lpuExtensionPage.indexOf("await requireStagingSessionBeforeCostlyRequest()") <
+    lpuExtensionPage.indexOf('fetch("/api/lpu/generate"'),
+  "Extension checks staging access before generation."
+);
+assert(
+  lpuV2Page.indexOf("await requireStagingSessionBeforeCostlyRequest()") <
+    lpuV2Page.indexOf('fetch("/api/lpu/generate"'),
+  "V2 checks staging access before generation."
+);
+assert(
+  lpuV2Page.indexOf("await requireStagingSessionBeforeCostlyRequest()") <
+    lpuV2Page.indexOf('fetch("/api/lpu/web-comps"'),
+  "V2 checks staging access before web comps."
+);
 
 console.log("Staging support checks passed.");

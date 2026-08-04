@@ -134,6 +134,18 @@ function encodeStoragePath(path: string): string {
     .join("/");
 }
 
+async function requireStagingSessionBeforeCostlyRequest(): Promise<void> {
+  const response = await fetch("/api/lpu/staging-access", { credentials: "include" });
+  if (response.status === 404 || response.ok) return;
+
+  const data = (await response.json().catch(() => ({}))) as { error?: unknown };
+  throw new Error(
+    typeof data.error === "string"
+      ? data.error
+      : "Staging access requires Queue sign-in. Use /lpu-v2 to sign in."
+  );
+}
+
 async function uploadFilesToSupabaseStorage(
   files: File[]
 ): Promise<GeneratorImageReference[]> {
@@ -435,6 +447,7 @@ export default function LpuPage() {
     setGeneratorImageUploadStatus("");
 
     try {
+      await requireStagingSessionBeforeCostlyRequest();
       const layer3ImagePayloads: ImagePayload[] = await Promise.all(
         files.map(async (file) => ({
           name: file.name,

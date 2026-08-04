@@ -297,6 +297,18 @@ function encodeStoragePath(path: string): string {
     .join("/");
 }
 
+async function requireStagingSessionBeforeCostlyRequest(): Promise<void> {
+  const response = await fetch("/api/lpu/staging-access", { credentials: "include" });
+  if (response.status === 404 || response.ok) return;
+
+  const data = (await response.json().catch(() => ({}))) as { error?: unknown };
+  throw new Error(
+    typeof data.error === "string"
+      ? data.error
+      : "Staging access requires Queue sign-in. Use /lpu-v2 to sign in."
+  );
+}
+
 async function uploadFilesToSupabaseStorage(
   files: File[]
 ): Promise<GeneratorImageReference[]> {
@@ -1980,6 +1992,7 @@ export default function LpuV2Page() {
     const timeoutId = window.setTimeout(() => controller.abort(), 65000);
 
     try {
+      await requireStagingSessionBeforeCostlyRequest();
       const response = await fetch("/api/lpu/web-comps", {
         method: "POST",
         headers: {
@@ -2152,6 +2165,7 @@ export default function LpuV2Page() {
     setActiveMode(mode);
 
     try {
+      await requireStagingSessionBeforeCostlyRequest();
       if (mode === "finalFromBrief" && !sellingBrief.trim()) {
         throw new Error("Generate or enter a Selling Brief before final LP-U generation.");
       }

@@ -74,6 +74,18 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+async function requireStagingSessionBeforeCostlyRequest(): Promise<void> {
+  const response = await fetch("/api/lpu/staging-access", { credentials: "include" });
+  if (response.status === 404 || response.ok) return;
+
+  const data = (await response.json().catch(() => ({}))) as { error?: unknown };
+  throw new Error(
+    typeof data.error === "string"
+      ? data.error
+      : "Staging access requires Queue sign-in. Use /lpu-v2 to sign in."
+  );
+}
+
 function formatMetricValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (Array.isArray(value)) return value.join(", ");
@@ -213,6 +225,7 @@ export default function LpuPage() {
     setIsLoading(true);
 
     try {
+      await requireStagingSessionBeforeCostlyRequest();
       const images: ImagePayload[] = await Promise.all(
         files.map(async (file) => ({
           name: file.name,
