@@ -13,9 +13,16 @@ import {
   sanitizePayloadSnapshotForQueue,
   sanitizeQueuePhotosForStorage,
 } from "@/lib/lpu/listingQueue";
+import {
+  getStagingListingMetadata,
+  isExactUuid,
+  isStagingDeployment,
+  prefixStagingTitle,
+} from "@/lib/lpu/deploymentEnv";
 
 const SUPABASE_URL_ENV = "NEXT_PUBLIC_SUPABASE_URL";
 const SUPABASE_SERVICE_ROLE_ENV = "SUPABASE_SERVICE_ROLE_KEY";
+const SUPABASE_STORAGE_BUCKET_ENV = "NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET";
 
 const QUEUE_COLUMNS = [
   "id",
@@ -41,6 +48,8 @@ const QUEUE_COLUMNS = [
   "archived_at",
   "sent_to_vendoo_at",
 ].join(",");
+
+const STAGING_QUEUE_COLUMNS = `${QUEUE_COLUMNS},environment,test_run_id,expires_at`;
 
 const PHOTO_COLUMNS = [
   "id",
@@ -82,6 +91,9 @@ type QueueRow = {
   updated_at: string;
   archived_at: string | null;
   sent_to_vendoo_at: string | null;
+  environment?: string | null;
+  test_run_id?: string | null;
+  expires_at?: string | null;
 };
 
 type PhotoRow = {
@@ -126,6 +138,22 @@ export class ListingQueueServerError extends Error {
   }
 }
 
+export class StagingCleanupError extends ListingQueueServerError {
+  listingId: string;
+  phase: "storage_objects" | "photo_metadata" | "queue_row";
+
+  constructor(
+    listingId: string,
+    phase: StagingCleanupError["phase"],
+    message: string
+  ) {
+    super(message, 502, "supabase_failed");
+    this.name = "StagingCleanupError";
+    this.listingId = listingId;
+    this.phase = phase;
+  }
+}
+
 export function normalizeQueueApiError(error: unknown): {
   message: string;
   status: number;
@@ -152,10 +180,11 @@ export async function createListingQueueItem(
   assertPhotoStoragePaths(input.photos);
 
   const draft = createListingQueueDraftFromSnapshot(input);
+  const staging = isStagingDeployment();
   const queueRow = await supabaseRequest<QueueRow[]>({
-    path: `/rest/v1/listing_queue?select=${QUEUE_COLUMNS}`,
+    path: `/rest/v1/listing_queue?select=${queueColumnsForEnvironment(staging)}`,
     method: "POST",
-    body: toQueueInsertRow(draft, input),
+    body: toQueueInsertRow(draft, input, staging),
     headers: { Prefer: "return=representation" },
   });
   const createdRow = queueRow[0];
@@ -178,7 +207,7 @@ export async function listListingQueueItems(
   options: ListingQueueListOptions = {}
 ): Promise<ListingQueueRecord[]> {
   const params = new URLSearchParams();
-  params.set("select", QUEUE_COLUMNS);
+  params.set("select", queueColumnsForEnvironment(isStagingDeployment()));
   params.set("order", "updated_at.desc");
   params.set("limit", normalizeLimit(options.limit).toString());
 
@@ -210,7 +239,7 @@ export async function updateListingQueueItem(
   input: ListingQueueUpdateInput
 ): Promise<ListingQueueRecord> {
   assertValidId(id);
-  const patch = toQueuePatchRow(input);
+  const patch = toQueuePatchRow(input, isStagingDeployment());
 
   if (Object.keys(patch).length > 0) {
     await supabaseRequest<QueueRow[]>({
@@ -260,10 +289,105 @@ export async function restoreListingQueueItem(id: string): Promise<ListingQueueR
   return getListingQueueItem(id);
 }
 
+/**
+ * Staging-only destructive cleanup. This is deliberately not wired to a route
+ * or scheduler; a future authenticated job may call it after provisioning.
+ */
+export async function cleanupExpiredStagingListingQueueItems(
+  now = new Date()
+): Promise<{
+  deletedIds: string[];
+  failures: Array<{ id: string; phase: StagingCleanupError["phase"]; error: string }>;
+}> {
+  if (!isStagingDeployment()) return { deletedIds: [], failures: [] };
+
+  const params = new URLSearchParams();
+  params.set("select", "id");
+  params.set("environment", "eq.staging");
+  params.set("expires_at", `lt.${now.toISOString()}`);
+  params.set("order", "expires_at.asc");
+  const rows = await supabaseRequest<Array<{ id: string }>>({
+    path: `/rest/v1/listing_queue?${params.toString()}`,
+    method: "GET",
+  });
+
+  const deletedIds: string[] = [];
+  const failures: Array<{
+    id: string;
+    phase: StagingCleanupError["phase"];
+    error: string;
+  }> = [];
+  for (const row of rows) {
+    if (!isExactUuid(row.id)) continue;
+    try {
+      await hardDeleteStagingListingQueueItem(row.id);
+      deletedIds.push(row.id);
+    } catch (error) {
+      if (error instanceof StagingCleanupError) {
+        failures.push({ id: row.id, phase: error.phase, error: error.message });
+        continue;
+      }
+      const detail = error instanceof Error ? error.message : "Unknown cleanup failure.";
+      failures.push({
+        id: row.id,
+        phase: "queue_row",
+        error: `Staging cleanup failed during queue_row for queue item ${row.id}: ${detail}`,
+      });
+    }
+  }
+  return { deletedIds, failures };
+}
+
+export async function hardDeleteStagingListingQueueItem(id: string): Promise<void> {
+  if (!isStagingDeployment()) {
+    throw new ListingQueueServerError("Queue item not found.", 404, "not_found");
+  }
+  assertExactUuid(id);
+
+  const rows = await supabaseRequest<QueueRow[]>({
+    path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}&environment=eq.staging&select=id&limit=1`,
+    method: "GET",
+  });
+  if (!rows[0]) {
+    throw new ListingQueueServerError("Staging queue item not found.", 404, "not_found");
+  }
+
+  const photos = await listPhotoRows(id);
+  try {
+    await assertStoragePathsExclusiveToListing(
+      id,
+      photos.map((photo) => photo.storage_path)
+    );
+    await deleteStorageObjects(photos.map((photo) => photo.storage_path));
+  } catch (error) {
+    throw stagingCleanupError(id, "storage_objects", error);
+  }
+  try {
+    await supabaseRequest<null>({
+      path: `/rest/v1/listing_queue_photos?listing_id=eq.${encodeURIComponent(id)}`,
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+      parseJson: false,
+    });
+  } catch (error) {
+    throw stagingCleanupError(id, "photo_metadata", error);
+  }
+  try {
+    await supabaseRequest<null>({
+      path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}&environment=eq.staging`,
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+      parseJson: false,
+    });
+  } catch (error) {
+    throw stagingCleanupError(id, "queue_row", error);
+  }
+}
+
 async function getQueueRow(id: string): Promise<QueueRow> {
   assertValidId(id);
   const rows = await supabaseRequest<QueueRow[]>({
-    path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}&select=${QUEUE_COLUMNS}&limit=1`,
+    path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}&select=${queueColumnsForEnvironment(isStagingDeployment())}&limit=1`,
     method: "GET",
   });
   const row = rows[0];
@@ -392,14 +516,15 @@ function getSupabaseConfig(): SupabaseConfig {
 
 function toQueueInsertRow(
   record: ListingQueueRecord,
-  input: ListingQueueCreateInput
+  input: ListingQueueCreateInput,
+  staging: boolean
 ): Record<string, unknown> {
   const thumbnailPath = cleanString(input.thumbnailPath) || record.thumbnailPath || null;
 
-  return {
+  const row: Record<string, unknown> = {
     user_id: record.userId ?? null,
     status: record.status,
-    title: record.title ?? null,
+    title: staging ? prefixStagingTitle(record.title) : record.title ?? null,
     subtitle: record.subtitle ?? null,
     category_summary: record.categorySummary ?? null,
     thumbnail_path: thumbnailPath,
@@ -416,12 +541,26 @@ function toQueueInsertRow(
     schema_version: LISTING_QUEUE_SCHEMA_VERSION,
     sent_to_vendoo_at: record.sentToVendooAt ?? null,
   };
+  if (staging) {
+    const metadata = getStagingListingMetadata();
+    row.environment = metadata.environment;
+    row.test_run_id = metadata.testRunId;
+    row.expires_at = metadata.expiresAt;
+  }
+  return row;
 }
 
-function toQueuePatchRow(input: ListingQueueUpdateInput): Record<string, unknown> {
+function toQueuePatchRow(
+  input: ListingQueueUpdateInput,
+  staging: boolean
+): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
 
-  setStringPatch(patch, "title", input.title);
+  if (typeof input.title !== "undefined") {
+    patch.title = staging
+      ? prefixStagingTitle(cleanString(input.title))
+      : cleanString(input.title) || null;
+  }
   setStringPatch(patch, "subtitle", input.subtitle);
   setStringPatch(patch, "category_summary", input.categorySummary);
   setStringPatch(patch, "thumbnail_path", input.thumbnailPath);
@@ -560,6 +699,78 @@ function assertValidId(id: string): void {
   if (!id || typeof id !== "string") {
     throw new ListingQueueServerError("Queue item not found.", 404, "not_found");
   }
+}
+
+function assertExactUuid(id: string): void {
+  if (!isExactUuid(id)) {
+    throw new ListingQueueServerError("Invalid queue item ID.", 400, "invalid_input");
+  }
+}
+
+function queueColumnsForEnvironment(staging: boolean): string {
+  return staging ? STAGING_QUEUE_COLUMNS : QUEUE_COLUMNS;
+}
+
+async function deleteStorageObjects(storagePaths: string[]): Promise<void> {
+  const uniquePaths = [...new Set(storagePaths.filter(Boolean))];
+  if (uniquePaths.length === 0) return;
+
+  const config = getSupabaseConfig();
+  const bucket = process.env[SUPABASE_STORAGE_BUCKET_ENV]?.trim() || "lpu-generator-images";
+  for (const storagePath of uniquePaths) {
+    const encodedPath = storagePath.split("/").map(encodeURIComponent).join("/");
+    const response = await fetch(
+      `${config.url}/storage/v1/object/${encodeURIComponent(bucket)}/${encodedPath}`,
+      {
+        method: "DELETE",
+        headers: {
+          apikey: config.serviceRoleKey,
+          Authorization: `Bearer ${config.serviceRoleKey}`,
+        },
+        cache: "no-store",
+      }
+    );
+    // A prior partial run may already have removed this exact object. Treating
+    // 404 as success makes retry safe without ever widening the target.
+    if (!response.ok && response.status !== 404) {
+      throw new ListingQueueServerError("Unable to delete staging storage object.", 502, "supabase_failed");
+    }
+  }
+}
+
+async function assertStoragePathsExclusiveToListing(
+  listingId: string,
+  storagePaths: string[]
+): Promise<void> {
+  for (const storagePath of [...new Set(storagePaths.filter(Boolean))]) {
+    const rows = await supabaseRequest<Array<{ listing_id: string }>>({
+      path: `/rest/v1/listing_queue_photos?storage_path=eq.${encodeURIComponent(
+        storagePath
+      )}&select=listing_id`,
+      method: "GET",
+    });
+    if (rows.some((row) => row.listing_id !== listingId)) {
+      throw new ListingQueueServerError(
+        "Staging storage path is shared by another queue item.",
+        409,
+        "invalid_input"
+      );
+    }
+  }
+}
+
+function stagingCleanupError(
+  listingId: string,
+  phase: StagingCleanupError["phase"],
+  error: unknown
+): StagingCleanupError {
+  if (error instanceof StagingCleanupError) return error;
+  const detail = error instanceof Error ? error.message : "Unknown cleanup failure.";
+  return new StagingCleanupError(
+    listingId,
+    phase,
+    `Staging cleanup failed during ${phase} for queue item ${listingId}: ${detail}`
+  );
 }
 
 function normalizeLimit(value: unknown): number {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -396,6 +397,55 @@ assert.match(listingQueueServerSource, /archived_at/);
 assert.match(listingQueueServerSource, /restoreListingQueueItem/);
 assert.match(listingQueueServerSource, /archived_at:\s*null/);
 
+const productionQueueColumnsMatch = listingQueueServerSource.match(
+  /const QUEUE_COLUMNS = \[([\s\S]*?)\]\.join\(","\);/
+);
+assert(productionQueueColumnsMatch, "Production queue columns are defined.");
+const productionQueueColumns = [...productionQueueColumnsMatch[1].matchAll(/"([^"]+)"/g)].map(
+  ([, column]) => column
+);
+assert.deepEqual(productionQueueColumns, [
+  "id",
+  "user_id",
+  "status",
+  "title",
+  "subtitle",
+  "category_summary",
+  "thumbnail_path",
+  "final_list_price",
+  "item_intake",
+  "selling_brief",
+  "final_lpu_output",
+  "payload_snapshot",
+  "pricing_snapshot",
+  "public_web_comps_snapshot",
+  "manual_comp_inputs",
+  "vendoo_send_status",
+  "app_version",
+  "schema_version",
+  "created_at",
+  "updated_at",
+  "archived_at",
+  "sent_to_vendoo_at",
+]);
+assert.equal(
+  productionQueueColumns.some((column) => ["environment", "test_run_id", "expires_at"].includes(column)),
+  false,
+  "Production insert columns exclude staging metadata."
+);
+assert.match(
+  listingQueueServerSource,
+  /const STAGING_QUEUE_COLUMNS = `\$\{QUEUE_COLUMNS\},environment,test_run_id,expires_at`;/
+);
+assert.match(
+  listingQueueServerSource,
+  /title: staging \? prefixStagingTitle\(record\.title\) : record\.title \?\? null/
+);
+assert.match(
+  listingQueueServerSource,
+  /if \(staging\) \{[\s\S]*row\.environment = metadata\.environment;[\s\S]*row\.test_run_id = metadata\.testRunId;[\s\S]*row\.expires_at = metadata\.expiresAt;/
+);
+
 for (const routeSource of listingQueueRouteSources) {
   assert.match(routeSource, /requireQueueOwnerSession/);
   assert.match(routeSource, /QueueAuthError/);
@@ -683,15 +733,23 @@ assert.equal(/method:\s*["']DELETE["']/.test(queueUpdateFunctionSource), false);
 assert.equal(/sendVendooPayloadToExtension/.test(queueUpdateFunctionSource), false);
 assert.equal(/sent_to_vendoo/.test(queueUpdateFunctionSource), false);
 
-const changedFiles = execFileSync("git", ["diff", "--name-only"], {
+const changedFiles = execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
   cwd: rootDir,
   encoding: "utf8",
 })
   .split(/\r?\n/)
-  .filter(Boolean);
+  .filter(Boolean)
+  .map((line) => line.slice(3));
 const allowedChangedFiles = new Set([
   "app/lpu-v2/page.tsx",
   "scripts/check-v2-listing-queue.mjs",
+  "README.md",
+  "package.json",
+  "lib/lpu/listingQueueServer.ts",
+  "lib/lpu/deploymentEnv.ts",
+  "app/api/lpu/staging/listing-queue/[id]/route.ts",
+  "scripts/check-staging-support.mjs",
+  "supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql",
 ]);
 const unexpectedChangedFiles = changedFiles.filter(
   (file) => !allowedChangedFiles.has(file)
@@ -707,5 +765,22 @@ const forbiddenChangedFiles = changedFiles.filter(
 
 assert.deepEqual(unexpectedChangedFiles, [], "Only intended V2 queue UI/check files changed.");
 assert.deepEqual(forbiddenChangedFiles, [], "No V1 UI, Vendoo, or extension files changed.");
+
+const approvedStagingFileHashes = new Map([
+  ["README.md", "b6539e47f3f8f5b8e81fddd2b150ee43a85ca97db39561b69ada33e229d96338"],
+  ["package.json", "4bbee19ade3c77b53fc41c7b89b59952fef005baa0080bb41c2f6285dcef3789"],
+  ["lib/lpu/listingQueueServer.ts", "41ac79b23f39becd00f406e5705e50b7195adfe1f97e106718c713b4d50e4b5b"],
+  ["lib/lpu/deploymentEnv.ts", "55906ba293e303b4302f0e2b02a249ef9b126ce7755df08f04c0045dc69bc8d6"],
+  ["app/api/lpu/staging/listing-queue/[id]/route.ts", "3130809e9647cb61e19e4d37b464b861cd132648045ab5bf1ae46526fb158b97"],
+  ["scripts/check-staging-support.mjs", "0d253ac4f76338805f552cacb5cc8d8bd009ffd8de79a870d2a8c12bdda7629b"],
+  ["supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql", "1277225437f5f6477a187c730c8b05438ab3be99b77a2b2d500cf7d1db368f89"],
+]);
+
+for (const [file, expectedHash] of approvedStagingFileHashes) {
+  const actualHash = createHash("sha256")
+    .update(fs.readFileSync(path.join(rootDir, file)))
+    .digest("hex");
+  assert.equal(actualHash, expectedHash, `Reviewed staging file changed unexpectedly: ${file}`);
+}
 
 console.log("V2 listing queue checks passed.");
