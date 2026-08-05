@@ -65,6 +65,9 @@ export type ListingQueueRecord = {
   updatedAt?: string;
   archivedAt?: string | null;
   sentToVendooAt?: string | null;
+  environment?: "staging";
+  testRunId?: string;
+  expiresAt?: string;
 };
 
 export type ListingQueueDraftInput = {

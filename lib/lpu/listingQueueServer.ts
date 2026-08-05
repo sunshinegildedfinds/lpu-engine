@@ -632,7 +632,32 @@ function queueRecordFromRows(
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
     sentToVendooAt: row.sent_to_vendoo_at,
+    ...getStagingResponseMetadata(row, isStagingDeployment()),
   };
+}
+
+export function getStagingResponseMetadata(
+  row: Pick<QueueRow, "environment" | "test_run_id" | "expires_at">,
+  staging: boolean
+): Pick<ListingQueueRecord, "environment" | "testRunId" | "expiresAt"> {
+  if (
+    !staging ||
+    row.environment !== "staging" ||
+    !isExactUuid(row.test_run_id) ||
+    !isValidStagingExpiry(row.expires_at)
+  ) {
+    return {};
+  }
+
+  return {
+    environment: "staging",
+    testRunId: row.test_run_id,
+    expiresAt: row.expires_at,
+  };
+}
+
+function isValidStagingExpiry(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
 }
 
 function photoFromRow(row: PhotoRow): ListingQueuePhoto {

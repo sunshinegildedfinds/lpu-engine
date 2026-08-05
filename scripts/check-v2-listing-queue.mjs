@@ -53,6 +53,9 @@ function loadTsModule(filePath, cache = new Map()) {
     module: loadedModule,
     console,
     require: (request) => {
+      if (request === "server-only") {
+        return {};
+      }
       const resolvedRequest = resolveTsModule(request, resolvedPath);
       if (resolvedRequest.endsWith(".ts")) {
         return loadTsModule(resolvedRequest, cache);
@@ -78,6 +81,9 @@ const {
   sanitizeQueuePhotosForStorage,
   stripUnsafePhotoDataForQueue,
 } = loadTsModule(path.join(rootDir, "lib/lpu/listingQueue.ts"));
+const { getStagingResponseMetadata } = loadTsModule(
+  path.join(rootDir, "lib/lpu/listingQueueServer.ts")
+);
 
 function assertNoUnsafeStorageKeys(value, label) {
   const json = JSON.stringify(value);
@@ -232,6 +238,94 @@ const minimalDraft = createListingQueueDraftFromSnapshot({
 assert.equal(minimalDraft.status, "intake");
 assert.equal(minimalDraft.itemIntake.notes, "Only intake");
 assert.equal(isSerializableQueueRecord(minimalDraft), true);
+
+const draftWithClientSuppliedStagingMetadata = createListingQueueDraftFromSnapshot({
+  itemIntake: { notes: "Client metadata must not be trusted" },
+  photos: [],
+  environment: "production",
+  testRunId: "00000000-0000-4000-8000-000000000000",
+  test_run_id: "00000000-0000-4000-8000-000000000000",
+  expiresAt: "2099-01-01T00:00:00.000Z",
+  expires_at: "2099-01-01T00:00:00.000Z",
+});
+assert.equal("environment" in draftWithClientSuppliedStagingMetadata, false);
+assert.equal("testRunId" in draftWithClientSuppliedStagingMetadata, false);
+assert.equal("test_run_id" in draftWithClientSuppliedStagingMetadata, false);
+assert.equal("expiresAt" in draftWithClientSuppliedStagingMetadata, false);
+assert.equal("expires_at" in draftWithClientSuppliedStagingMetadata, false);
+
+const validStagingRowMetadata = {
+  environment: "staging",
+  test_run_id: "11111111-1111-4111-8111-111111111111",
+  expires_at: "2099-01-01T00:00:00.000Z",
+};
+assert.deepEqual(
+  JSON.parse(JSON.stringify(getStagingResponseMetadata(validStagingRowMetadata, true))),
+  {
+    environment: "staging",
+    testRunId: "11111111-1111-4111-8111-111111111111",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  }
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(getStagingResponseMetadata(validStagingRowMetadata, false))),
+  {}
+);
+assert.deepEqual(
+  JSON.parse(
+    JSON.stringify(
+      getStagingResponseMetadata(
+        { ...validStagingRowMetadata, test_run_id: "not-a-uuid" },
+        true
+      )
+    )
+  ),
+  {}
+);
+assert.deepEqual(
+  JSON.parse(
+    JSON.stringify(
+      getStagingResponseMetadata(
+        { environment: "staging", test_run_id: validStagingRowMetadata.test_run_id },
+        true
+      )
+    )
+  ),
+  {}
+);
+assert.deepEqual(
+  JSON.parse(
+    JSON.stringify(
+      getStagingResponseMetadata(
+        { environment: "staging", expires_at: validStagingRowMetadata.expires_at },
+        true
+      )
+    )
+  ),
+  {}
+);
+assert.deepEqual(
+  JSON.parse(
+    JSON.stringify(
+      getStagingResponseMetadata(
+        { ...validStagingRowMetadata, environment: "production" },
+        true
+      )
+    )
+  ),
+  {}
+);
+assert.deepEqual(
+  JSON.parse(
+    JSON.stringify(
+      getStagingResponseMetadata(
+        { ...validStagingRowMetadata, expires_at: "not-a-timestamp" },
+        true
+      )
+    )
+  ),
+  {}
+);
 
 for (const status of LISTING_QUEUE_STATUSES) {
   assert.equal(normalizeQueueStatus(status), status);
@@ -445,6 +539,24 @@ assert.match(
   listingQueueServerSource,
   /if \(staging\) \{[\s\S]*row\.environment = metadata\.environment;[\s\S]*row\.test_run_id = metadata\.testRunId;[\s\S]*row\.expires_at = metadata\.expiresAt;/
 );
+assert.match(
+  listingQueueServerSource,
+  /\.\.\.getStagingResponseMetadata\(row, isStagingDeployment\(\)\)/
+);
+assert.match(listingQueueServerSource, /row\.environment !== "staging"/);
+assert.match(listingQueueServerSource, /!isExactUuid\(row\.test_run_id\)/);
+assert.match(listingQueueServerSource, /!isValidStagingExpiry\(row\.expires_at\)/);
+assert.match(listingQueueServerSource, /return getListingQueueItem\(createdRow\.id\)/);
+assert.match(listingQueueServerSource, /return queueRecordFromRows\(row, photos\)/);
+const listingQueueTypeSource = fs.readFileSync(path.join(rootDir, "lib/lpu/listingQueue.ts"), "utf8");
+assert.match(listingQueueTypeSource, /environment\?: "staging";/);
+assert.match(listingQueueTypeSource, /testRunId\?: string;/);
+assert.match(listingQueueTypeSource, /expiresAt\?: string;/);
+const draftInputType = listingQueueTypeSource.match(
+  /export type ListingQueueDraftInput = \{([\s\S]*?)\n\};/
+);
+assert(draftInputType, "Draft input type is defined.");
+assert.equal(/environment|testRunId|expiresAt/.test(draftInputType[1]), false);
 
 for (const routeSource of listingQueueRouteSources) {
   assert.match(routeSource, /requireQueueOwnerSession/);
@@ -745,6 +857,7 @@ const allowedChangedFiles = new Set([
   "scripts/check-v2-listing-queue.mjs",
   "README.md",
   "package.json",
+  "lib/lpu/listingQueue.ts",
   "lib/lpu/listingQueueServer.ts",
   "lib/lpu/deploymentEnv.ts",
   "lib/lpu/stagingStoragePolicy.ts",
@@ -762,6 +875,7 @@ const allowedChangedFiles = new Set([
 const reviewedStagingFiles = new Set([
   "README.md",
   "package.json",
+  "lib/lpu/listingQueue.ts",
   "lib/lpu/listingQueueServer.ts",
   "lib/lpu/deploymentEnv.ts",
   "lib/lpu/stagingStoragePolicy.ts",
@@ -795,7 +909,8 @@ assert.deepEqual(forbiddenChangedFiles, [], "No V1 UI, Vendoo, or extension file
 const approvedStagingFileHashes = new Map([
   ["README.md", "6256f56f8a5854ec98bd6c8927bc15df237376ada0060a1af582d9d92246959a"],
   ["package.json", "4bbee19ade3c77b53fc41c7b89b59952fef005baa0080bb41c2f6285dcef3789"],
-  ["lib/lpu/listingQueueServer.ts", "41ac79b23f39becd00f406e5705e50b7195adfe1f97e106718c713b4d50e4b5b"],
+  ["lib/lpu/listingQueue.ts", "8702b012d44417fd9358c02d1e6c6e52b0c3f7ad8c1878d4bb99ce7f3a2aaa65"],
+  ["lib/lpu/listingQueueServer.ts", "887e0874b57b27680ebfe1dc8da64fe448dd7d6e3178a678106f20847dfb5a99"],
   ["lib/lpu/deploymentEnv.ts", "55906ba293e303b4302f0e2b02a249ef9b126ce7755df08f04c0045dc69bc8d6"],
   ["lib/lpu/stagingStoragePolicy.ts", "f3dd4d818c6a955b6ec66bbb7fd97d31b3973ed8e08886c85743e51f808bbb8d"],
   ["app/api/lpu/staging/listing-queue/[id]/route.ts", "3130809e9647cb61e19e4d37b464b861cd132648045ab5bf1ae46526fb158b97"],
