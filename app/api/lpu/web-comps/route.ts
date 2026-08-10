@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { isStagingDeployment } from "@/lib/lpu/deploymentEnv";
+import { getLpuOpenAIWebCompsModel } from "@/lib/lpu/openaiModels";
 import { QueueAuthError, requireQueueOwnerSession } from "@/lib/lpu/queueAuth";
 import {
   WEB_COMPS_RESPONSE_SCHEMA,
@@ -88,7 +89,7 @@ export async function POST(request: Request) {
     const openai = getOpenAIClient();
     const response = await openai.responses.create(
       {
-        model: "gpt-5.3-chat-latest",
+        model: getLpuOpenAIWebCompsModel(),
         instructions:
           "You are a careful resale pricing research assistant. Use only public eBay evidence from the web_search tool. Return structured JSON only. Do not invent sold comp data.",
         tools: [

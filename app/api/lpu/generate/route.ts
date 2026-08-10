@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { openai } from "@/lib/openai";
+import { getLpuOpenAIGenerationModel } from "@/lib/lpu/openaiModels";
 import { isStagingDeployment } from "@/lib/lpu/deploymentEnv";
 import { QueueAuthError, requireQueueOwnerSession } from "@/lib/lpu/queueAuth";
 import {
@@ -759,7 +760,7 @@ ${notes}`,
   ];
 
   const response = await openai.responses.create({
-    model: "gpt-5.3-chat-latest",
+    model: getLpuOpenAIGenerationModel(),
     instructions: UNIVERSAL_SELLING_BRIEF_INSTRUCTIONS_V2,
     input: [
       {
@@ -781,7 +782,7 @@ async function repairSellingBriefCandidateBank(
   }
 
   const response = await openai.responses.create({
-    model: "gpt-5.3-chat-latest",
+    model: getLpuOpenAIGenerationModel(),
     input: [
       {
         role: "user",
@@ -3429,7 +3430,7 @@ async function repairFinalFromBriefBodySectionsWithAiIfNeeded({
   }
 
   const response = await openai.responses.create({
-    model: "gpt-5.3-chat-latest",
+    model: getLpuOpenAIGenerationModel(),
     input: [
       {
         role: "user",
@@ -4280,7 +4281,7 @@ ${notes}`;
   ];
 
   const response = await openai.responses.create({
-    model: "gpt-5.3-chat-latest",
+    model: getLpuOpenAIGenerationModel(),
     instructions,
     input: [
       {
@@ -4302,7 +4303,7 @@ ${notes}`;
 
   if (hasPoshmarkOutputOrderIssues(validation)) {
     const revisionResponse = await openai.responses.create({
-      model: "gpt-5.3-chat-latest",
+      model: getLpuOpenAIGenerationModel(),
       input: [
         {
           role: "user",
@@ -4327,7 +4328,7 @@ ${notes}`;
 
   if (promptVersion === "v2" && hasMercariOutputFormatIssues(validation)) {
     const revisionResponse = await openai.responses.create({
-      model: "gpt-5.3-chat-latest",
+      model: getLpuOpenAIGenerationModel(),
       input: [
         {
           role: "user",
@@ -4352,7 +4353,7 @@ ${notes}`;
 
   if (promptVersion === "v2" && hasPoshmarkInvalidStyleTagIssues(validation)) {
     const revisionResponse = await openai.responses.create({
-      model: "gpt-5.3-chat-latest",
+      model: getLpuOpenAIGenerationModel(),
       input: [
         {
           role: "user",
@@ -4377,7 +4378,7 @@ ${notes}`;
 
   if (promptVersion === "v2" && hasDepopInvalidAestheticModeIssues(validation)) {
     const revisionResponse = await openai.responses.create({
-      model: "gpt-5.3-chat-latest",
+      model: getLpuOpenAIGenerationModel(),
       input: [
         {
           role: "user",
@@ -4402,7 +4403,7 @@ ${notes}`;
 
   if (promptVersion === "v2" && hasEstimatedMeasurementUnsupportedIssues(validation)) {
     const revisionResponse = await openai.responses.create({
-      model: "gpt-5.3-chat-latest",
+      model: getLpuOpenAIGenerationModel(),
       input: [
         {
           role: "user",
@@ -4427,7 +4428,7 @@ ${notes}`;
 
   if (hasOnlyTitleLengthIssues(validation)) {
     const revisionResponse = await openai.responses.create({
-      model: "gpt-5.3-chat-latest",
+      model: getLpuOpenAIGenerationModel(),
       input: [
         {
           role: "user",
@@ -4452,7 +4453,7 @@ ${notes}`;
 
   if (promptVersion === "v2" && sellingBrief?.trim()) {
     const revisionResponse = await openai.responses.create({
-      model: "gpt-5.3-chat-latest",
+      model: getLpuOpenAIGenerationModel(),
       input: [
         {
           role: "user",
