@@ -861,6 +861,7 @@ const allowedChangedFiles = new Set([
   "lib/lpu/listingQueueServer.ts",
   "lib/lpu/deploymentEnv.ts",
   "lib/lpu/stagingStoragePolicy.ts",
+  "lib/lpu/stagingLegacyMacImagePolicy.ts",
   "app/api/lpu/staging/listing-queue/[id]/route.ts",
   "app/api/lpu/sign-storage-upload/route.ts",
   "app/api/lpu/sign-storage-image/route.ts",
@@ -870,6 +871,7 @@ const allowedChangedFiles = new Set([
   "app/lpu/page.tsx",
   "app/lpu-extension/page.tsx",
   "scripts/check-staging-support.mjs",
+  "scripts/check-staging-legacy-mac-images.mjs",
   "supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql",
 ]);
 const reviewedStagingFiles = new Set([
@@ -879,6 +881,7 @@ const reviewedStagingFiles = new Set([
   "lib/lpu/listingQueueServer.ts",
   "lib/lpu/deploymentEnv.ts",
   "lib/lpu/stagingStoragePolicy.ts",
+  "lib/lpu/stagingLegacyMacImagePolicy.ts",
   "app/api/lpu/staging/listing-queue/[id]/route.ts",
   "app/api/lpu/sign-storage-upload/route.ts",
   "app/api/lpu/sign-storage-image/route.ts",
@@ -889,6 +892,7 @@ const reviewedStagingFiles = new Set([
   "app/lpu-v2/page.tsx",
   "app/lpu-extension/page.tsx",
   "scripts/check-staging-support.mjs",
+  "scripts/check-staging-legacy-mac-images.mjs",
   "supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql",
 ]);
 const unexpectedChangedFiles = changedFiles.filter(
@@ -908,7 +912,7 @@ assert.deepEqual(forbiddenChangedFiles, [], "No V1 UI, Vendoo, or extension file
 
 const approvedStagingFileHashes = new Map([
   ["README.md", "6256f56f8a5854ec98bd6c8927bc15df237376ada0060a1af582d9d92246959a"],
-  ["package.json", "4bbee19ade3c77b53fc41c7b89b59952fef005baa0080bb41c2f6285dcef3789"],
+  ["package.json", "10110c51a41e040ffd9acb0311da14b7caf880d81c099eb32a9e5c5db9cf95b6"],
   ["lib/lpu/listingQueue.ts", "8702b012d44417fd9358c02d1e6c6e52b0c3f7ad8c1878d4bb99ce7f3a2aaa65"],
   ["lib/lpu/listingQueueServer.ts", "887e0874b57b27680ebfe1dc8da64fe448dd7d6e3178a678106f20847dfb5a99"],
   ["lib/lpu/deploymentEnv.ts", "55906ba293e303b4302f0e2b02a249ef9b126ce7755df08f04c0045dc69bc8d6"],
@@ -916,13 +920,15 @@ const approvedStagingFileHashes = new Map([
   ["app/api/lpu/staging/listing-queue/[id]/route.ts", "3130809e9647cb61e19e4d37b464b861cd132648045ab5bf1ae46526fb158b97"],
   ["app/api/lpu/sign-storage-upload/route.ts", "01c28fa03d17bdfba69ccd12adae75ead28525dad734a924f2bc3dd5e37eaa4d"],
   ["app/api/lpu/sign-storage-image/route.ts", "5eb7411b391ec429d861e824bcd2997412ef797b4d39062251c8fbdc631a000a"],
-  ["app/api/lpu/generate/route.ts", "25a95438419b5f524b31d2c531a4165c84f69e9071b198485d1c07ad6497bbd0"],
+  ["app/api/lpu/generate/route.ts", "b2d6e4143a7cecebdf3fe437639ee28434080f4ef508fba16a24e643bff4cad2"],
   ["app/api/lpu/web-comps/route.ts", "1d5f8b5c3efd9d55597d18def5f66cd9b9fd2912f734814f7e3e75fb9c996a2b"],
   ["app/api/lpu/staging-access/route.ts", "a37ff74f4a342a1d0d9458eaed5e545b07824bced252c8d58033f6addc3f6f83"],
   ["app/lpu/page.tsx", "b91b51b0ddd52d6106c73102145baf902e1dcf9e0f3533a6236db4dec7a9a188"],
   ["app/lpu-v2/page.tsx", "cd0e7c6b8e23c4bc5643f0c7a421a7bf1af3620b444ea8c2dca35f3d9bd460f4"],
   ["app/lpu-extension/page.tsx", "eef34035e5c27d3270f164e2ac1a00623c4482e3f15b6ee84335726aa081de03"],
   ["scripts/check-staging-support.mjs", "cc22c102d1f61ad8a7fba03c9aae519473007e730198448247007f450b91c2c0"],
+  ["lib/lpu/stagingLegacyMacImagePolicy.ts", "7f0543de7dd0c912f67f82c4552fee4361b7780172268778784df35c8f4ce777"],
+  ["scripts/check-staging-legacy-mac-images.mjs", "800ab12c004b6af59362e79ff76c7c8069d7a8258ea742ee337ef67eefb13cdd"],
   ["supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql", "1277225437f5f6477a187c730c8b05438ab3be99b77a2b2d500cf7d1db368f89"],
 ]);
 

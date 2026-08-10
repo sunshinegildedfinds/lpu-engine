@@ -12,6 +12,7 @@
     "check:v2-payload-preview": "node scripts/check-v2-payload-preview.mjs",
     "check:v2-listing-queue": "node scripts/check-v2-listing-queue.mjs",
     "check:staging-support": "node scripts/check-staging-support.mjs",
+    "check:staging-legacy-mac-images": "node scripts/check-staging-legacy-mac-images.mjs",
     "lint": "eslint"
   },
   "dependencies": {

@@ -17,6 +17,10 @@ import {
   getRequiredStagingStorageBucket,
   isStagingStoragePath,
 } from "@/lib/lpu/stagingStoragePolicy";
+import {
+  StagingLegacyMacImageError,
+  stagingLegacyMacImageUrls,
+} from "@/lib/lpu/stagingLegacyMacImagePolicy";
 
 type IncomingImage = {
   name: string;
@@ -159,8 +163,10 @@ function escapeRegExp(value: string): string {
 }
 
 async function resolveGeneratorImageUrl(
-  image: IncomingImage
+  image: IncomingImage,
+  legacyMacImageUrl?: string
 ): Promise<string> {
+  if (legacyMacImageUrl) return legacyMacImageUrl;
   const directUrl =
     typeof image?.imageUrl === "string" ? image.imageUrl.trim() : "";
   const storagePath =
@@ -4561,6 +4567,15 @@ export async function POST(request: Request) {
     const body = (await request.json()) as GenerateBody;
     const notes = body?.notes?.trim();
     const images = Array.isArray(body?.images) ? body.images : [];
+    // This runs after Queue-owner authentication and before resolving any
+    // image reference or calling a generation model.  It cannot alter the
+    // production path because the policy returns no legacy URLs outside
+    // staging.
+    const legacyMacImageUrls = stagingLegacyMacImageUrls(
+      images,
+      isStagingDeployment(),
+      isStagingStoragePath
+    );
     const mode = normalizeMode(body?.mode);
     const sellingBrief =
       typeof body?.sellingBrief === "string" ? body.sellingBrief.trim() : "";
@@ -4593,7 +4608,9 @@ export async function POST(request: Request) {
     }
 
     const imageUrls = (
-      await Promise.all(images.map((image) => resolveGeneratorImageUrl(image)))
+      await Promise.all(images.map((image, index) =>
+        resolveGeneratorImageUrl(image, legacyMacImageUrls.get(index))
+      ))
     ).filter((url) => typeof url === "string" && url.trim().length > 0);
 
     if (mode === "sellingBrief") {
@@ -4660,6 +4677,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Staging generation requires Queue sign-in. Use /lpu-v2 to sign in." },
         { status: 401 }
+      );
+    }
+    if (error instanceof StagingLegacyMacImageError) {
+      return NextResponse.json(
+        { error: "Invalid staging image reference." },
+        { status: 400 }
       );
     }
     console.error("LP-U generation error:", error);
