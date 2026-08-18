@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import type {
+  Response as OpenAIResponse,
+  ResponseCreateParamsNonStreaming,
+} from "openai/resources/responses/responses";
 import { openai } from "@/lib/openai";
 import { getLpuOpenAIGenerationModel } from "@/lib/lpu/openaiModels";
 import { isStagingDeployment } from "@/lib/lpu/deploymentEnv";
@@ -43,6 +48,19 @@ type GenerateBody = {
   includeGeneratorInstructionsReport?: boolean;
   interfaceVersion?: string;
   promptVersion?: string;
+  generationContinuation?: GenerationContinuation;
+};
+
+type GenerationContinuation = {
+  schemaVersion: 1;
+  requestFingerprint: string;
+  responseIds: Record<string, string>;
+  signature: string;
+};
+
+type BackgroundGenerationContext = {
+  requestFingerprint: string;
+  responseIds: Record<string, string>;
 };
 
 type GeneratorInstructionsReport = {
@@ -162,6 +180,168 @@ function normalizeInterfaceVersion(interfaceVersion: unknown): string | undefine
 
 function normalizeMode(mode: unknown): "sellingBrief" | "finalFromBrief" | undefined {
   return mode === "sellingBrief" || mode === "finalFromBrief" ? mode : undefined;
+}
+
+const BACKGROUND_GENERATION_SCHEMA_VERSION = 1 as const;
+const BACKGROUND_GENERATION_PHASE_PATTERN = /^[a-z][a-z0-9_]{2,63}$/;
+const BACKGROUND_RESPONSE_ID_PATTERN = /^resp_[A-Za-z0-9_-]{8,200}$/;
+const BACKGROUND_TERMINAL_FAILURES = new Set([
+  "failed",
+  "cancelled",
+  "incomplete",
+]);
+
+class BackgroundGenerationPending extends Error {
+  constructor(readonly continuation: GenerationContinuation) {
+    super("Background generation is still in progress.");
+  }
+}
+
+class BackgroundGenerationContinuationError extends Error {}
+
+function generationContinuationSecret(): string {
+  const secret = process.env.QUEUE_OWNER_SECRET?.trim();
+  if (!secret) {
+    throw new Error("Background generation requires Queue owner custody configuration.");
+  }
+  return secret;
+}
+
+function backgroundGenerationRequestFingerprint({
+  notes,
+  images,
+  sellingBrief,
+  promptVersion,
+  interfaceVersion,
+}: {
+  notes: string;
+  images: IncomingImage[];
+  sellingBrief: string;
+  promptVersion: "v1" | "v2";
+  interfaceVersion?: string;
+}): string {
+  const source = JSON.stringify({
+    mode: "finalFromBrief",
+    notes,
+    images: images.map((image) => ({
+      name: typeof image?.name === "string" ? image.name : "",
+      type: typeof image?.type === "string" ? image.type : "",
+      imageUrl: typeof image?.imageUrl === "string" ? image.imageUrl : "",
+      storagePath:
+        typeof image?.storagePath === "string" ? image.storagePath : "",
+    })),
+    sellingBrief,
+    promptVersion,
+    interfaceVersion: interfaceVersion ?? "",
+    model: getLpuOpenAIGenerationModel(),
+  });
+  return createHash("sha256").update(source, "utf8").digest("hex");
+}
+
+function generationContinuationSignature({
+  requestFingerprint,
+  responseIds,
+}: BackgroundGenerationContext): string {
+  const entries = Object.entries(responseIds).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return createHmac("sha256", generationContinuationSecret())
+    .update(JSON.stringify({ requestFingerprint, responseIds: entries }), "utf8")
+    .digest("hex");
+}
+
+function signedGenerationContinuation(
+  context: BackgroundGenerationContext
+): GenerationContinuation {
+  return {
+    schemaVersion: BACKGROUND_GENERATION_SCHEMA_VERSION,
+    requestFingerprint: context.requestFingerprint,
+    responseIds: { ...context.responseIds },
+    signature: generationContinuationSignature(context),
+  };
+}
+
+function backgroundGenerationContext({
+  continuation,
+  requestFingerprint,
+}: {
+  continuation: GenerateBody["generationContinuation"];
+  requestFingerprint: string;
+}): BackgroundGenerationContext {
+  if (continuation === undefined) {
+    return { requestFingerprint, responseIds: {} };
+  }
+  if (
+    !continuation ||
+    continuation.schemaVersion !== BACKGROUND_GENERATION_SCHEMA_VERSION ||
+    continuation.requestFingerprint !== requestFingerprint ||
+    !continuation.responseIds ||
+    typeof continuation.responseIds !== "object" ||
+    Array.isArray(continuation.responseIds) ||
+    typeof continuation.signature !== "string" ||
+    !/^[a-f0-9]{64}$/.test(continuation.signature)
+  ) {
+    throw new BackgroundGenerationContinuationError(
+      "Background generation continuation is invalid."
+    );
+  }
+  const responseIds = Object.fromEntries(
+    Object.entries(continuation.responseIds)
+      .filter(
+        ([phase, responseId]) =>
+          BACKGROUND_GENERATION_PHASE_PATTERN.test(phase) &&
+          typeof responseId === "string" &&
+          BACKGROUND_RESPONSE_ID_PATTERN.test(responseId)
+      )
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
+  if (
+    Object.keys(responseIds).length !== Object.keys(continuation.responseIds).length ||
+    Object.keys(responseIds).length > 12
+  ) {
+    throw new BackgroundGenerationContinuationError(
+      "Background generation continuation contains invalid response identities."
+    );
+  }
+  const context = { requestFingerprint, responseIds };
+  const expected = Buffer.from(generationContinuationSignature(context), "hex");
+  const supplied = Buffer.from(continuation.signature, "hex");
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+    throw new BackgroundGenerationContinuationError(
+      "Background generation continuation signature is invalid."
+    );
+  }
+  return context;
+}
+
+async function createGenerationResponse(
+  phase: string,
+  params: ResponseCreateParamsNonStreaming,
+  context?: BackgroundGenerationContext
+): Promise<OpenAIResponse> {
+  if (!context) {
+    return openai.responses.create(params);
+  }
+  if (!BACKGROUND_GENERATION_PHASE_PATTERN.test(phase)) {
+    throw new Error("Background generation phase identity is invalid.");
+  }
+  const existingResponseId = context.responseIds[phase];
+  const response = existingResponseId
+    ? await openai.responses.retrieve(existingResponseId)
+    : await openai.responses.create({ ...params, background: true, store: true });
+  if (!existingResponseId) {
+    if (!BACKGROUND_RESPONSE_ID_PATTERN.test(response.id)) {
+      throw new Error("OpenAI did not return a durable response identity.");
+    }
+    context.responseIds[phase] = response.id;
+  }
+  if (response.status === "completed") {
+    return response;
+  }
+  if (response.status && BACKGROUND_TERMINAL_FAILURES.has(response.status)) {
+    throw new Error(`OpenAI background generation ${phase} ended as ${response.status}.`);
+  }
+  throw new BackgroundGenerationPending(signedGenerationContinuation(context));
 }
 
 function escapeRegExp(value: string): string {
@@ -3428,9 +3608,13 @@ ${lpuOutput}`;
 async function repairFinalFromBriefBodySectionsWithAiIfNeeded({
   lpuOutput,
   sellingBrief,
+  backgroundContext,
+  phase,
 }: {
   lpuOutput: string;
   sellingBrief: string;
+  backgroundContext?: BackgroundGenerationContext;
+  phase: "body_repair_primary" | "body_repair_secondary";
 }): Promise<string> {
   const reports = getFinalFromBriefBodyIssueReports({ lpuOutput, sellingBrief });
 
@@ -3438,7 +3622,7 @@ async function repairFinalFromBriefBodySectionsWithAiIfNeeded({
     return lpuOutput;
   }
 
-  const response = await openai.responses.create({
+  const response = await createGenerationResponse(phase, {
     model: getLpuOpenAIGenerationModel(),
     input: [
       {
@@ -3455,7 +3639,7 @@ async function repairFinalFromBriefBodySectionsWithAiIfNeeded({
         ],
       },
     ],
-  });
+  }, backgroundContext);
 
   const repairedOutput = response.output_text ?? "";
 
@@ -4222,12 +4406,14 @@ async function generateValidatedLpuOutput({
   notes,
   promptVersion,
   sellingBrief,
+  backgroundContext,
 }: {
   imageUrls: string[];
   instructions: string;
   notes: string;
   promptVersion: "v1" | "v2";
   sellingBrief?: string;
+  backgroundContext?: BackgroundGenerationContext;
 }) {
   const requestText = sellingBrief
     ? `Generate the full LP-U output for this item.
@@ -4289,7 +4475,7 @@ ${notes}`;
     })),
   ];
 
-  const response = await openai.responses.create({
+  const response = await createGenerationResponse("initial_final_output", {
     model: getLpuOpenAIGenerationModel(),
     instructions,
     input: [
@@ -4298,7 +4484,7 @@ ${notes}`;
         content: userContent,
       },
     ],
-  });
+  }, backgroundContext);
 
   let lpuOutput = response.output_text ?? "";
 
@@ -4311,7 +4497,7 @@ ${notes}`;
   let validation = validateLpuOutput(lpuOutput, validationOptions);
 
   if (hasPoshmarkOutputOrderIssues(validation)) {
-    const revisionResponse = await openai.responses.create({
+    const revisionResponse = await createGenerationResponse("poshmark_order_repair", {
       model: getLpuOpenAIGenerationModel(),
       input: [
         {
@@ -4324,7 +4510,7 @@ ${notes}`;
           ],
         },
       ],
-    });
+    }, backgroundContext);
 
     const revisedOutput = revisionResponse.output_text ?? "";
 
@@ -4336,7 +4522,7 @@ ${notes}`;
   }
 
   if (promptVersion === "v2" && hasMercariOutputFormatIssues(validation)) {
-    const revisionResponse = await openai.responses.create({
+    const revisionResponse = await createGenerationResponse("mercari_format_repair", {
       model: getLpuOpenAIGenerationModel(),
       input: [
         {
@@ -4349,7 +4535,7 @@ ${notes}`;
           ],
         },
       ],
-    });
+    }, backgroundContext);
 
     const revisedOutput = revisionResponse.output_text ?? "";
 
@@ -4361,7 +4547,7 @@ ${notes}`;
   }
 
   if (promptVersion === "v2" && hasPoshmarkInvalidStyleTagIssues(validation)) {
-    const revisionResponse = await openai.responses.create({
+    const revisionResponse = await createGenerationResponse("poshmark_style_tags_repair", {
       model: getLpuOpenAIGenerationModel(),
       input: [
         {
@@ -4374,7 +4560,7 @@ ${notes}`;
           ],
         },
       ],
-    });
+    }, backgroundContext);
 
     const revisedOutput = revisionResponse.output_text ?? "";
 
@@ -4386,7 +4572,7 @@ ${notes}`;
   }
 
   if (promptVersion === "v2" && hasDepopInvalidAestheticModeIssues(validation)) {
-    const revisionResponse = await openai.responses.create({
+    const revisionResponse = await createGenerationResponse("depop_aesthetic_repair", {
       model: getLpuOpenAIGenerationModel(),
       input: [
         {
@@ -4399,7 +4585,7 @@ ${notes}`;
           ],
         },
       ],
-    });
+    }, backgroundContext);
 
     const revisedOutput = revisionResponse.output_text ?? "";
 
@@ -4411,7 +4597,7 @@ ${notes}`;
   }
 
   if (promptVersion === "v2" && hasEstimatedMeasurementUnsupportedIssues(validation)) {
-    const revisionResponse = await openai.responses.create({
+    const revisionResponse = await createGenerationResponse("measurement_repair", {
       model: getLpuOpenAIGenerationModel(),
       input: [
         {
@@ -4424,7 +4610,7 @@ ${notes}`;
           ],
         },
       ],
-    });
+    }, backgroundContext);
 
     const revisedOutput = revisionResponse.output_text ?? "";
 
@@ -4436,7 +4622,7 @@ ${notes}`;
   }
 
   if (hasOnlyTitleLengthIssues(validation)) {
-    const revisionResponse = await openai.responses.create({
+    const revisionResponse = await createGenerationResponse("title_length_repair", {
       model: getLpuOpenAIGenerationModel(),
       input: [
         {
@@ -4449,7 +4635,7 @@ ${notes}`;
           ],
         },
       ],
-    });
+    }, backgroundContext);
 
     const revisedOutput = revisionResponse.output_text ?? "";
 
@@ -4465,7 +4651,7 @@ ${notes}`;
     sellingBrief?.trim() &&
     hasRemainingValidationIssues(validation)
   ) {
-    const revisionResponse = await openai.responses.create({
+    const revisionResponse = await createGenerationResponse("targeted_final_repair", {
       model: getLpuOpenAIGenerationModel(),
       input: [
         {
@@ -4481,7 +4667,7 @@ ${notes}`;
           ],
         },
       ],
-    });
+    }, backgroundContext);
 
     const revisedOutput = revisionResponse.output_text ?? "";
 
@@ -4509,6 +4695,8 @@ ${notes}`;
       await repairFinalFromBriefBodySectionsWithAiIfNeeded({
         lpuOutput,
         sellingBrief,
+        backgroundContext,
+        phase: "body_repair_primary",
       });
 
     if (aiBodyRepairedOutput !== lpuOutput) {
@@ -4536,6 +4724,8 @@ ${notes}`;
         await repairFinalFromBriefBodySectionsWithAiIfNeeded({
           lpuOutput,
           sellingBrief,
+          backgroundContext,
+          phase: "body_repair_secondary",
         });
 
       if (finalBodyRepairedOutput !== lpuOutput) {
@@ -4620,6 +4810,26 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+    if (body?.generationContinuation && mode !== "finalFromBrief") {
+      return NextResponse.json(
+        { error: "Generation continuation is valid only for finalFromBrief mode." },
+        { status: 400 }
+      );
+    }
+
+    const backgroundContext =
+      mode === "finalFromBrief"
+        ? backgroundGenerationContext({
+            continuation: body?.generationContinuation,
+            requestFingerprint: backgroundGenerationRequestFingerprint({
+              notes,
+              images,
+              sellingBrief,
+              promptVersion,
+              interfaceVersion,
+            }),
+          })
+        : undefined;
 
     const imageUrls = (
       await Promise.all(images.map((image, index) =>
@@ -4645,7 +4855,7 @@ export async function POST(request: Request) {
       instructions,
       notes,
       promptVersion,
-      ...(mode === "finalFromBrief" ? { sellingBrief } : {}),
+      ...(mode === "finalFromBrief" ? { sellingBrief, backgroundContext } : {}),
     });
 
     const responseBody = {
@@ -4687,6 +4897,22 @@ export async function POST(request: Request) {
 
     return NextResponse.json(responseBody);
   } catch (error) {
+    if (error instanceof BackgroundGenerationPending) {
+      return NextResponse.json(
+        {
+          status: "in_progress",
+          generationContinuation: error.continuation,
+          retryAfterSeconds: 10,
+        },
+        { status: 202, headers: { "Retry-After": "10" } }
+      );
+    }
+    if (error instanceof BackgroundGenerationContinuationError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 400 }
+      );
+    }
     if (error instanceof QueueAuthError) {
       return NextResponse.json(
         { error: "Staging generation requires Queue sign-in. Use /lpu-v2 to sign in." },

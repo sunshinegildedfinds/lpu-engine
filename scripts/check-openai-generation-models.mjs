@@ -52,7 +52,30 @@ assert.match(
   generateRoute,
   /sellingBrief\?\.trim\(\)\s*&&\s*hasRemainingValidationIssues\(validation\)/
 );
-assert.equal((generateRoute.match(/model:\s*getLpuOpenAIGenerationModel\(\)/g) ?? []).length, 11);
+assert.match(generateRoute, /background:\s*true,\s*store:\s*true/);
+assert.match(generateRoute, /openai\.responses\.retrieve\(existingResponseId\)/);
+assert.match(generateRoute, /createHmac\("sha256",\s*generationContinuationSecret\(\)\)/);
+assert.match(generateRoute, /timingSafeEqual\(expected,\s*supplied\)/);
+assert.match(generateRoute, /status:\s*"in_progress"/);
+assert.match(generateRoute, /status:\s*202/);
+assert.match(generateRoute, /"Retry-After":\s*"10"/);
+assert.match(generateRoute, /body\?\.generationContinuation\s*&&\s*mode !== "finalFromBrief"/);
+const backgroundPhases = [
+  "initial_final_output",
+  "poshmark_order_repair",
+  "mercari_format_repair",
+  "poshmark_style_tags_repair",
+  "depop_aesthetic_repair",
+  "measurement_repair",
+  "title_length_repair",
+  "targeted_final_repair",
+  "body_repair_primary",
+  "body_repair_secondary",
+];
+for (const phase of backgroundPhases) {
+  assert.match(generateRoute, new RegExp(`(?:createGenerationResponse\\(\\"|phase:\\s*\\")${phase}`));
+}
+assert.equal((generateRoute.match(/model:\s*getLpuOpenAIGenerationModel\(\)/g) ?? []).length, 12);
 assert.match(webCompsRoute, /getLpuOpenAIWebCompsModel/);
 assert.match(webCompsRoute, /model:\s*getLpuOpenAIWebCompsModel\(\)/);
 assert.equal(/NEXT_PUBLIC_LPU_OPENAI/.test(modelSource), false);
