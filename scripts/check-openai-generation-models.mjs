@@ -55,7 +55,12 @@ assert.match(
 assert.match(generateRoute, /background:\s*true,\s*store:\s*true/);
 assert.match(generateRoute, /openai\.responses\.retrieve\(existingResponseId\)/);
 assert.match(generateRoute, /createHmac\("sha256",\s*generationContinuationSecret\(\)\)/);
+assert.match(generateRoute, /process\.env\.LPU_QUEUE_OWNER_SECRET/);
+assert.equal(/process\.env\.QUEUE_OWNER_SECRET/.test(generateRoute), false);
+assert.match(generateRoute, /generationContinuationSecret\(\),\s*backgroundGenerationContext/);
 assert.match(generateRoute, /timingSafeEqual\(expected,\s*supplied\)/);
+assert.match(generateRoute, /lpu_request_fingerprint:\s*context\.requestFingerprint/);
+assert.match(generateRoute, /lpu_generation_phase:\s*phase/);
 assert.match(generateRoute, /status:\s*"in_progress"/);
 assert.match(generateRoute, /status:\s*202/);
 assert.match(generateRoute, /"Retry-After":\s*"10"/);

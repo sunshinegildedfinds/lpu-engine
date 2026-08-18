@@ -200,7 +200,7 @@ class BackgroundGenerationPending extends Error {
 class BackgroundGenerationContinuationError extends Error {}
 
 function generationContinuationSecret(): string {
-  const secret = process.env.QUEUE_OWNER_SECRET?.trim();
+  const secret = process.env.LPU_QUEUE_OWNER_SECRET?.trim();
   if (!secret) {
     throw new Error("Background generation requires Queue owner custody configuration.");
   }
@@ -328,7 +328,16 @@ async function createGenerationResponse(
   const existingResponseId = context.responseIds[phase];
   const response = existingResponseId
     ? await openai.responses.retrieve(existingResponseId)
-    : await openai.responses.create({ ...params, background: true, store: true });
+    : await openai.responses.create({
+        ...params,
+        background: true,
+        store: true,
+        metadata: {
+          ...(params.metadata ?? {}),
+          lpu_request_fingerprint: context.requestFingerprint,
+          lpu_generation_phase: phase,
+        },
+      });
   if (!existingResponseId) {
     if (!BACKGROUND_RESPONSE_ID_PATTERN.test(response.id)) {
       throw new Error("OpenAI did not return a durable response identity.");
@@ -4819,7 +4828,7 @@ export async function POST(request: Request) {
 
     const backgroundContext =
       mode === "finalFromBrief"
-        ? backgroundGenerationContext({
+        ? (generationContinuationSecret(), backgroundGenerationContext({
             continuation: body?.generationContinuation,
             requestFingerprint: backgroundGenerationRequestFingerprint({
               notes,
@@ -4828,7 +4837,7 @@ export async function POST(request: Request) {
               promptVersion,
               interfaceVersion,
             }),
-          })
+          }))
         : undefined;
 
     const imageUrls = (
