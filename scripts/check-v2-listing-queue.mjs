@@ -950,7 +950,7 @@ const approvedStagingFileHashes = new Map([
   ["app/api/lpu/staging/listing-queue/[id]/route.ts", "3130809e9647cb61e19e4d37b464b861cd132648045ab5bf1ae46526fb158b97"],
   ["app/api/lpu/sign-storage-upload/route.ts", "01c28fa03d17bdfba69ccd12adae75ead28525dad734a924f2bc3dd5e37eaa4d"],
   ["app/api/lpu/sign-storage-image/route.ts", "5eb7411b391ec429d861e824bcd2997412ef797b4d39062251c8fbdc631a000a"],
-  ["app/api/lpu/generate/route.ts", "e160afc2a378e251a8c6aa1ca39a7a416c04f5612dd4d51bc568aee88c5c820a"],
+  ["app/api/lpu/generate/route.ts", "09334b59529a33c7932aa057f9e0f15ed9733478bd24cf8d95322f390d677e74"],
   ["app/api/lpu/web-comps/route.ts", "1af76529343f30f4d043d985ae6037079a1138fe35cec6e6756a2cb88fdcb9e8"],
   ["app/api/lpu/staging-access/route.ts", "a37ff74f4a342a1d0d9458eaed5e545b07824bced252c8d58033f6addc3f6f83"],
   ["app/api/lpu/listing-queue/route.ts", "469b1f3271415d01f4934554d6596222a88a08f64ae513db914b1ba368524cfd"],

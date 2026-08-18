@@ -23,6 +23,11 @@ import {
   stagingLegacyMacImageUrls,
 } from "@/lib/lpu/stagingLegacyMacImagePolicy";
 
+// A V2 finalFromBrief request may require the initial full listing plus
+// bounded validation repairs. Keep this below the Mac client's 600-second
+// read ceiling while avoiding Vercel's 300-second default termination.
+export const maxDuration = 540;
+
 type IncomingImage = {
   name: string;
   type: string;
