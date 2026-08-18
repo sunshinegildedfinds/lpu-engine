@@ -14,6 +14,7 @@
     "check:staging-support": "node scripts/check-staging-support.mjs",
     "check:staging-legacy-mac-images": "node scripts/check-staging-legacy-mac-images.mjs",
     "check:openai-generation-models": "node scripts/check-openai-generation-models.mjs",
+    "check:queue-safety": "node scripts/check-queue-safety.mjs",
     "lint": "eslint"
   },
   "dependencies": {

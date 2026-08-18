@@ -4,13 +4,31 @@ import { randomUUID } from "node:crypto";
 
 export type LpuDeploymentEnvironment = "production" | "staging";
 
+export class LpuDeploymentEnvironmentError extends Error {
+  constructor(value: string | undefined) {
+    super(
+      value === undefined
+        ? "LPU_DEPLOYMENT_ENV is required and must be exactly staging or production."
+        : "LPU_DEPLOYMENT_ENV must be exactly staging or production."
+    );
+    this.name = "LpuDeploymentEnvironmentError";
+  }
+}
+
 const STAGING_TITLE_PREFIX = "[STAGING TEST]";
 const DEFAULT_STAGING_TTL_HOURS = 24;
 
+export function resolveDeploymentEnvironment(): LpuDeploymentEnvironment {
+  const configured = process.env.LPU_DEPLOYMENT_ENV;
+  if (configured === "staging" || configured === "production") {
+    return configured;
+  }
+
+  throw new LpuDeploymentEnvironmentError(configured);
+}
+
 export function getLpuDeploymentEnvironment(): LpuDeploymentEnvironment {
-  return process.env.LPU_DEPLOYMENT_ENV?.trim().toLowerCase() === "staging"
-    ? "staging"
-    : "production";
+  return resolveDeploymentEnvironment();
 }
 
 export function isStagingDeployment(): boolean {

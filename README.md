@@ -37,9 +37,10 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ## Staging listing queue support
 
-Production remains the safe default: omit `LPU_DEPLOYMENT_ENV`, or set it to
-`production`. Production queue creation uses the original column set and does
-not send staging metadata.
+`LPU_DEPLOYMENT_ENV` is required and fails closed. Its only accepted values are
+the exact strings `production` and `staging`; missing, capitalized, padded, or
+unknown values are configuration errors. Production queue creation does not
+send staging metadata.
 
 To provision a separate staging deployment, apply the existing queue migration
 and then the additive `supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql`
@@ -83,3 +84,51 @@ failures by phase; retrying is safe because already-removed Storage objects are
 treated as complete while the exact database record remains the only target.
 Before deleting an object, cleanup also refuses a path referenced by another
 queue item, preventing cross-record Storage deletion from malformed metadata.
+Cleanup additionally refuses to delete from any bucket except the exact private
+`lpu-generator-images-staging` bucket; it has no fallback production bucket.
+
+## Queue create idempotency and Vendoo completion
+
+Apply
+`supabase/migrations/20260818000000_harden_queue_completion.sql` before deploying
+the corresponding backend. It pins `public.set_updated_at()` to an empty search
+path, adds optional Queue-create idempotency columns plus a unique operation-ID
+index, and installs the service-role-only terminal completion function. It does
+not add a public or authenticated database policy.
+
+Ordinary owner UI Queue creates remain compatible by omitting all autonomous
+identity fields. Autonomous clients must include the complete trio
+`agentItemFingerprint`, `createOperationId`, and `createRequestSha256` in
+`POST /api/lpu/listing-queue`. The hash is SHA-256 over UTF-8 compact JSON for
+the business request after removing only `createOperationId` and
+`createRequestSha256`, so the item fingerprint remains bound, and after sorting
+every object's keys by Unicode code point; array order is preserved. Idempotent
+autonomous requests also reject JSON numbers so Python and JavaScript cannot
+disagree over numeric serialization. They reject Queue photo rows because the current photo metadata
+insert is not part of the parent-row transaction (the Universal Mac workflow
+sends none), and autonomous Queue rows cannot later add photo metadata through
+the generic PATCH route. The first success returns HTTP 201 and `replayed: false`.
+Repeating the same operation ID, fingerprint, and request hash returns the
+original row with HTTP 200 and `replayed: true`; reusing an operation ID for
+different content returns 409.
+
+`POST /api/lpu/listing-queue/:id/vendoo-completion` is the only supported way to
+mark an autonomous Queue item sent to Vendoo. It requires the existing Queue
+owner session and an exact receipt containing the matching Queue ID,
+`expectedStatus: "lpu_generated"`, SHA-256 identities for the item, transformed
+LP-U, Vendoo draft, field ledger, and final manifest, the exact five verified
+marketplaces (`ebay`, `etsy`, `poshmark`, `mercari`, `depop`), the terminal
+item-bound SEO review hash, and the client completion timestamp. The database
+locks the row, verifies the current LP-U hash, stored item fingerprint, and
+exact deployment environment, updates only
+status/receipt/server completion time, returns exact retries unchanged, and
+rejects conflicting or wrong-state retries with 409. Generic Queue updates
+cannot set or overwrite these terminal fields.
+
+The owner UI's browser-extension bridge is not proof that Vendoo received,
+saved, or retained a listing. After posting a payload to that bridge, it keeps
+the Queue item `payload_ready` and may store only the exact nonterminal receipt
+`{ schemaVersion: 1, kind: "posted_to_extension_unverified",
+verificationStatus: "unverified", postedAt: <ISO timestamp> }`. The generic
+PATCH route rejects other Vendoo receipt shapes and can never use that receipt
+to set `sent_to_vendoo` or `sent_to_vendoo_at`.

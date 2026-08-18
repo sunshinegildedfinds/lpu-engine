@@ -50,6 +50,8 @@ assert.match(server, /const photos = await listPhotoRows\(id\)/);
 assert.match(server, /await assertStoragePathsExclusiveToListing\(/);
 assert.match(server, /rows\.some\(\(row\) => row\.listing_id !== listingId\)/);
 assert.match(server, /await deleteStorageObjects\(photos\.map\(\(photo\) => photo\.storage_path\)\)/);
+assert.match(server, /getRequiredStagingStorageBucket/);
+assert.equal(/\|\| "lpu-generator-images"/.test(server), false);
 assert.match(server, /listing_queue_photos\?listing_id=eq\.\$\{encodeURIComponent\(id\)\}/);
 assert.match(server, /listing_queue\?id=eq\.\$\{encodeURIComponent\(id\)\}&environment=eq\.staging/);
 // Expiry filtering is staging-only and is not scheduled or invoked by a route.
@@ -65,7 +67,8 @@ assert.match(server, /queueColumnsForEnvironment\(staging\)/);
 assert.match(server, /if \(staging\) \{[\s\S]*row\.environment = metadata\.environment/);
 assert.match(server, /title: staging \? prefixStagingTitle/);
 assert.match(env, /LPU_DEPLOYMENT_ENV/);
-assert.match(env, /=== "staging"[\s\S]*: "production"/);
+assert.match(env, /configured === "staging" \|\| configured === "production"/);
+assert.match(env, /throw new LpuDeploymentEnvironmentError\(configured\)/);
 assert.match(migration, /add column if not exists environment text null/i);
 assert.match(migration, /add column if not exists test_run_id uuid null/i);
 assert.match(migration, /add column if not exists expires_at timestamptz null/i);

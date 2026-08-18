@@ -4,6 +4,7 @@ import {
   setQueueOwnerSessionCookie,
   verifyOwnerSecret,
 } from "@/lib/lpu/queueAuth";
+import { resolveDeploymentEnvironment } from "@/lib/lpu/deploymentEnv";
 
 export const runtime = "nodejs";
 
@@ -17,6 +18,7 @@ function jsonError(message: string, status: number) {
 }
 
 export async function POST(request: Request) {
+  const deploymentEnvironment = resolveDeploymentEnvironment();
   let body: QueueAuthLoginBody;
 
   try {
@@ -44,6 +46,7 @@ export async function POST(request: Request) {
   const response = NextResponse.json({
     ok: true,
     authenticated: true,
+    deploymentEnvironment,
     expiresAt: session.expiresAt.toISOString(),
   });
   setQueueOwnerSessionCookie(response, session);

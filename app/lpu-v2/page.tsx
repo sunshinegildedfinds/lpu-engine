@@ -1410,10 +1410,6 @@ export default function LpuV2Page() {
       }),
       publicWebCompsSnapshot: toJsonObject(webCompsResult),
       manualCompInputs: toJsonObject(manualCompInputs),
-      vendooSendStatus: toJsonObject({
-        status: vendooSendStatus,
-        message: vendooSendMessage,
-      }),
       appVersion: `${INTERFACE_VERSION}/${PROMPT_VERSION}`,
       photos: queuePhotoMetadata,
     };
@@ -1905,7 +1901,7 @@ export default function LpuV2Page() {
         throw new Error("Payload could not be posted from this browser page.");
       }
 
-      const sentAt = new Date().toISOString();
+      const postedAt = new Date().toISOString();
       const postedMessage =
         "Payload send message posted. If the extension is installed and active on this app origin, it should receive it.";
       const patchResponse = await fetch(
@@ -1917,11 +1913,12 @@ export default function LpuV2Page() {
           },
           cache: "no-store",
           body: JSON.stringify({
-            status: "sent_to_vendoo",
+            status: "payload_ready",
             vendooSendStatus: {
-              status: "sent",
-              message: postedMessage,
-              sentAt,
+              schemaVersion: 1,
+              kind: "posted_to_extension_unverified",
+              verificationStatus: "unverified",
+              postedAt,
             },
           }),
         }

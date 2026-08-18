@@ -477,7 +477,15 @@ assert.match(listingQueueServerSource, /\/rest\/v1\/listing_queue_photos/);
 assert.equal(/@supabase\/supabase-js/.test(listingQueueServerSource), false);
 assert.equal(/OpenAI|openai|responses\.create|chat\.completions/.test(listingQueueServerSource), false);
 assert.equal(/from\s+["']react["']|window\.|document\.|localStorage|sessionStorage|FileReader/.test(listingQueueServerSource), false);
-assert.equal(/extension|vendoo-fill|content-vendoo|content-app/.test(listingQueueServerSource), false);
+const listingQueueServerWithoutReceiptName = listingQueueServerSource
+  .replaceAll("posted_to_extension_unverified", "")
+  .replaceAll("extension-post", "");
+assert.equal(
+  /extension|vendoo-fill|content-vendoo|content-app/.test(
+    listingQueueServerWithoutReceiptName
+  ),
+  false
+);
 assert.equal(/console\.(log|info|warn|error)/.test(listingQueueServerSource), false);
 assert.match(listingQueueServerSource, /createListingQueueDraftFromSnapshot/);
 assert.match(listingQueueServerSource, /sanitizePayloadSnapshotForQueue/);
@@ -521,6 +529,9 @@ assert.deepEqual(productionQueueColumns, [
   "updated_at",
   "archived_at",
   "sent_to_vendoo_at",
+  "create_operation_id",
+  "create_request_sha256",
+  "agent_item_fingerprint",
 ]);
 assert.equal(
   productionQueueColumns.some((column) => ["environment", "test_run_id", "expires_at"].includes(column)),
@@ -546,7 +557,7 @@ assert.match(
 assert.match(listingQueueServerSource, /row\.environment !== "staging"/);
 assert.match(listingQueueServerSource, /!isExactUuid\(row\.test_run_id\)/);
 assert.match(listingQueueServerSource, /!isValidStagingExpiry\(row\.expires_at\)/);
-assert.match(listingQueueServerSource, /return getListingQueueItem\(createdRow\.id\)/);
+assert.match(listingQueueServerSource, /item: await getListingQueueItem\(createdRow\.id\)/);
 assert.match(listingQueueServerSource, /return queueRecordFromRows\(row, photos\)/);
 const listingQueueTypeSource = fs.readFileSync(path.join(rootDir, "lib/lpu/listingQueue.ts"), "utf8");
 assert.match(listingQueueTypeSource, /environment\?: "staging";/);
@@ -671,7 +682,7 @@ assert.match(queueSnapshotBuilderMatch[0], /payloadSnapshot/);
 assert.match(queueSnapshotBuilderMatch[0], /pricingSnapshot/);
 assert.match(queueSnapshotBuilderMatch[0], /publicWebCompsSnapshot/);
 assert.match(queueSnapshotBuilderMatch[0], /manualCompInputs/);
-assert.match(queueSnapshotBuilderMatch[0], /vendooSendStatus/);
+assert.equal(/vendooSendStatus/.test(queueSnapshotBuilderMatch[0]), false);
 assert.match(queueSnapshotBuilderMatch[0], /photos:\s*queuePhotoMetadata/);
 assert.equal(/dataUrl|signedUrl|ownerSecret|queueOwnerSecret/i.test(queueSnapshotBuilderMatch[0]), false);
 
@@ -742,9 +753,12 @@ assert.match(queuedSendFunctionSource, /buildQueuedVendooPayload\(data\.item\)/)
 assert.match(queuedSendFunctionSource, /sendVendooPayloadToExtension\(payload\)/);
 assert.match(queuedSendFunctionSource, /Payload send message posted/);
 assert.match(queuedSendFunctionSource, /method:\s*["']PATCH["']/);
-assert.match(queuedSendFunctionSource, /status:\s*["']sent_to_vendoo["']/);
+assert.match(queuedSendFunctionSource, /status:\s*["']payload_ready["']/);
 assert.match(queuedSendFunctionSource, /vendooSendStatus/);
-assert.match(queuedSendFunctionSource, /sentAt/);
+assert.match(queuedSendFunctionSource, /kind:\s*["']posted_to_extension_unverified["']/);
+assert.match(queuedSendFunctionSource, /verificationStatus:\s*["']unverified["']/);
+assert.match(queuedSendFunctionSource, /postedAt/);
+assert.equal(/status:\s*["']sent_to_vendoo["']/.test(queuedSendFunctionSource), false);
 assert.match(queuedSendFunctionSource, /await loadQueueItems\(\)/);
 assert.equal(/sentToVendooAt/.test(queuedSendFunctionSource), false);
 assert.equal(/payloadSnapshot/.test(queuedSendFunctionSource), false);
@@ -860,10 +874,14 @@ const allowedChangedFiles = new Set([
   "lib/lpu/listingQueue.ts",
   "lib/lpu/listingQueueServer.ts",
   "lib/lpu/deploymentEnv.ts",
+  "lib/lpu/listingQueueIdempotency.ts",
   "lib/lpu/stagingStoragePolicy.ts",
   "lib/lpu/stagingLegacyMacImagePolicy.ts",
   "lib/lpu/openaiModels.ts",
   "app/api/lpu/staging/listing-queue/[id]/route.ts",
+  "app/api/lpu/queue-auth/login/route.ts",
+  "app/api/lpu/listing-queue/route.ts",
+  "app/api/lpu/listing-queue/[id]/vendoo-completion/route.ts",
   "app/api/lpu/sign-storage-upload/route.ts",
   "app/api/lpu/sign-storage-image/route.ts",
   "app/api/lpu/generate/route.ts",
@@ -872,9 +890,11 @@ const allowedChangedFiles = new Set([
   "app/lpu/page.tsx",
   "app/lpu-extension/page.tsx",
   "scripts/check-staging-support.mjs",
+  "scripts/check-queue-safety.mjs",
   "scripts/check-staging-legacy-mac-images.mjs",
   "scripts/check-openai-generation-models.mjs",
   "supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql",
+  "supabase/migrations/20260818000000_harden_queue_completion.sql",
 ]);
 const reviewedStagingFiles = new Set([
   "README.md",
@@ -882,10 +902,13 @@ const reviewedStagingFiles = new Set([
   "lib/lpu/listingQueue.ts",
   "lib/lpu/listingQueueServer.ts",
   "lib/lpu/deploymentEnv.ts",
+  "lib/lpu/listingQueueIdempotency.ts",
   "lib/lpu/stagingStoragePolicy.ts",
   "lib/lpu/stagingLegacyMacImagePolicy.ts",
   "lib/lpu/openaiModels.ts",
   "app/api/lpu/staging/listing-queue/[id]/route.ts",
+  "app/api/lpu/listing-queue/route.ts",
+  "app/api/lpu/listing-queue/[id]/vendoo-completion/route.ts",
   "app/api/lpu/sign-storage-upload/route.ts",
   "app/api/lpu/sign-storage-image/route.ts",
   "app/api/lpu/generate/route.ts",
@@ -895,9 +918,11 @@ const reviewedStagingFiles = new Set([
   "app/lpu-v2/page.tsx",
   "app/lpu-extension/page.tsx",
   "scripts/check-staging-support.mjs",
+  "scripts/check-queue-safety.mjs",
   "scripts/check-staging-legacy-mac-images.mjs",
   "scripts/check-openai-generation-models.mjs",
   "supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql",
+  "supabase/migrations/20260818000000_harden_queue_completion.sql",
 ]);
 const unexpectedChangedFiles = changedFiles.filter(
   (file) => !allowedChangedFiles.has(file)
@@ -915,11 +940,12 @@ assert.deepEqual(unexpectedChangedFiles, [], "Only intended V2 queue UI/check fi
 assert.deepEqual(forbiddenChangedFiles, [], "No V1 UI, Vendoo, or extension files changed.");
 
 const approvedStagingFileHashes = new Map([
-  ["README.md", "6256f56f8a5854ec98bd6c8927bc15df237376ada0060a1af582d9d92246959a"],
-  ["package.json", "f3d73653875cff45a51289c8b7f345355b59b5e9f8eefd1172bce35ac4ee7020"],
-  ["lib/lpu/listingQueue.ts", "8702b012d44417fd9358c02d1e6c6e52b0c3f7ad8c1878d4bb99ce7f3a2aaa65"],
-  ["lib/lpu/listingQueueServer.ts", "887e0874b57b27680ebfe1dc8da64fe448dd7d6e3178a678106f20847dfb5a99"],
-  ["lib/lpu/deploymentEnv.ts", "55906ba293e303b4302f0e2b02a249ef9b126ce7755df08f04c0045dc69bc8d6"],
+  ["README.md", "5b7e725d647f69b26cbf7dcdf624c0ba20ee934af796e7328432ff988f4a6e73"],
+  ["package.json", "0b7594fc24230b4c79a20dd72f8bfc09ba6b7e3f60bfa9c854a238d1b3fe0915"],
+  ["lib/lpu/listingQueue.ts", "a436390ca10562404002f41600e23f69bb7580de2e656340bb2d8251529dbfda"],
+  ["lib/lpu/listingQueueServer.ts", "6a47a75019061cadb8b42df93b8702761e9eae087070c459a428d90c11747703"],
+  ["lib/lpu/deploymentEnv.ts", "33f2e45cf327983fa525bcbd9dec5a93553c709e1ecf89339e6711654045d999"],
+  ["lib/lpu/listingQueueIdempotency.ts", "b08bd05059cb2eabf4b680ae080b2e0ef77828257a2a2628e7470c38f9767555"],
   ["lib/lpu/stagingStoragePolicy.ts", "f3dd4d818c6a955b6ec66bbb7fd97d31b3973ed8e08886c85743e51f808bbb8d"],
   ["app/api/lpu/staging/listing-queue/[id]/route.ts", "3130809e9647cb61e19e4d37b464b861cd132648045ab5bf1ae46526fb158b97"],
   ["app/api/lpu/sign-storage-upload/route.ts", "01c28fa03d17bdfba69ccd12adae75ead28525dad734a924f2bc3dd5e37eaa4d"],
@@ -927,14 +953,18 @@ const approvedStagingFileHashes = new Map([
   ["app/api/lpu/generate/route.ts", "e160afc2a378e251a8c6aa1ca39a7a416c04f5612dd4d51bc568aee88c5c820a"],
   ["app/api/lpu/web-comps/route.ts", "1af76529343f30f4d043d985ae6037079a1138fe35cec6e6756a2cb88fdcb9e8"],
   ["app/api/lpu/staging-access/route.ts", "a37ff74f4a342a1d0d9458eaed5e545b07824bced252c8d58033f6addc3f6f83"],
+  ["app/api/lpu/listing-queue/route.ts", "469b1f3271415d01f4934554d6596222a88a08f64ae513db914b1ba368524cfd"],
+  ["app/api/lpu/listing-queue/[id]/vendoo-completion/route.ts", "8d25bdd4d46de4d80e4cef0df640cc776ea71c8fe78340d35c4b55212266ac84"],
   ["app/lpu/page.tsx", "b91b51b0ddd52d6106c73102145baf902e1dcf9e0f3533a6236db4dec7a9a188"],
-  ["app/lpu-v2/page.tsx", "cd0e7c6b8e23c4bc5643f0c7a421a7bf1af3620b444ea8c2dca35f3d9bd460f4"],
+  ["app/lpu-v2/page.tsx", "b079ae9622558afc42d47af18fad13e591c1510674321e3fd0983f13a18f2545"],
   ["app/lpu-extension/page.tsx", "eef34035e5c27d3270f164e2ac1a00623c4482e3f15b6ee84335726aa081de03"],
-  ["scripts/check-staging-support.mjs", "cc22c102d1f61ad8a7fba03c9aae519473007e730198448247007f450b91c2c0"],
+  ["scripts/check-staging-support.mjs", "86c44aeafa64efdfbbe06961109103ed5e600eed1ffd9b8a46f68e0e53470046"],
+  ["scripts/check-queue-safety.mjs", "40a59ee7d32a1eb3d10fa08a05314a0f82d9142be6782e91df83faed63e6bb0f"],
   ["lib/lpu/stagingLegacyMacImagePolicy.ts", "7f0543de7dd0c912f67f82c4552fee4361b7780172268778784df35c8f4ce777"],
   ["lib/lpu/openaiModels.ts", "04b45ecea15b1ead879ec18b6b1571bf1ea7b2f79c3edfd2247f74854918cf7d"],
   ["scripts/check-staging-legacy-mac-images.mjs", "800ab12c004b6af59362e79ff76c7c8069d7a8258ea742ee337ef67eefb13cdd"],
   ["supabase/migrations/20260803000000_add_listing_queue_staging_metadata.sql", "1277225437f5f6477a187c730c8b05438ab3be99b77a2b2d500cf7d1db368f89"],
+  ["supabase/migrations/20260818000000_harden_queue_completion.sql", "40162fae64846763f6da2acec18530b461685633853326612009fea5bfe0cfe4"],
 ]);
 
 for (const [file, expectedHash] of approvedStagingFileHashes) {

@@ -41,6 +41,78 @@ export type ListingQueueManualCompInputs = JsonObject;
 export type ListingQueueVendooSendStatus = JsonObject;
 export type ListingQueuePayloadSnapshot = JsonObject;
 
+export const EXTENSION_POST_RECEIPT_SCHEMA_VERSION = 1;
+const EXTENSION_POST_RECEIPT_KEYS = new Set([
+  "schemaVersion",
+  "kind",
+  "verificationStatus",
+  "postedAt",
+]);
+
+export function normalizePostedToExtensionUnverifiedReceipt(
+  value: unknown
+): ListingQueueVendooSendStatus {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((key) => !EXTENSION_POST_RECEIPT_KEYS.has(key)) ||
+    value.schemaVersion !== EXTENSION_POST_RECEIPT_SCHEMA_VERSION ||
+    value.kind !== "posted_to_extension_unverified" ||
+    value.verificationStatus !== "unverified"
+  ) {
+    throw new Error("Invalid posted_to_extension_unverified receipt.");
+  }
+
+  return {
+    schemaVersion: EXTENSION_POST_RECEIPT_SCHEMA_VERSION,
+    kind: "posted_to_extension_unverified",
+    verificationStatus: "unverified",
+    postedAt: normalizeIsoTimestamp(value.postedAt),
+  };
+}
+
+export const VENDOO_COMPLETION_RECEIPT_SCHEMA_VERSION = 1;
+export const VENDOO_COMPLETION_MARKETPLACES = [
+  "ebay",
+  "etsy",
+  "poshmark",
+  "mercari",
+  "depop",
+] as const;
+
+export type VendooCompletionMarketplace =
+  (typeof VENDOO_COMPLETION_MARKETPLACES)[number];
+
+export type ListingQueueVendooCompletionReceipt = {
+  schemaVersion: typeof VENDOO_COMPLETION_RECEIPT_SCHEMA_VERSION;
+  kind: "vendoo_completion";
+  queueId: string;
+  expectedStatus: "lpu_generated";
+  itemFingerprint: string;
+  transformedLpuSha256: string;
+  vendooDraftIdentitySha256: string;
+  verifiedMarketplaces: Array<{
+    marketplace: VendooCompletionMarketplace;
+    status: "verified";
+  }>;
+  fieldLedgerSha256: string;
+  finalManifestSha256: string;
+  seoReviewSha256: string;
+  completedAt: string;
+};
+
+export type ListingQueueVendooCompletionInput = {
+  queueId?: unknown;
+  expectedStatus?: unknown;
+  itemFingerprint?: unknown;
+  transformedLpuSha256?: unknown;
+  vendooDraftIdentitySha256?: unknown;
+  verifiedMarketplaces?: unknown;
+  fieldLedgerSha256?: unknown;
+  finalManifestSha256?: unknown;
+  seoReviewSha256?: unknown;
+  completedAt?: unknown;
+};
+
 export type ListingQueueRecord = {
   id?: string;
   userId?: string | null;
@@ -65,6 +137,9 @@ export type ListingQueueRecord = {
   updatedAt?: string;
   archivedAt?: string | null;
   sentToVendooAt?: string | null;
+  createOperationId?: string;
+  createRequestSha256?: string;
+  agentItemFingerprint?: string;
   environment?: "staging";
   testRunId?: string;
   expiresAt?: string;
@@ -93,6 +168,76 @@ export type ListingQueueDraftInput = {
   archivedAt?: unknown;
   sentToVendooAt?: unknown;
 };
+
+const VENDOO_COMPLETION_INPUT_KEYS = new Set([
+  "queueId",
+  "expectedStatus",
+  "itemFingerprint",
+  "transformedLpuSha256",
+  "vendooDraftIdentitySha256",
+  "verifiedMarketplaces",
+  "fieldLedgerSha256",
+  "finalManifestSha256",
+  "seoReviewSha256",
+  "completedAt",
+]);
+
+export function normalizeVendooCompletionReceipt(
+  queueId: string,
+  input: unknown
+): ListingQueueVendooCompletionReceipt {
+  if (!isRecord(input)) {
+    throw new Error("Vendoo completion receipt must be an object.");
+  }
+  if (Object.keys(input).some((key) => !VENDOO_COMPLETION_INPUT_KEYS.has(key))) {
+    throw new Error("Vendoo completion receipt contains an unsupported field.");
+  }
+  if (toCleanString(input.queueId) !== queueId) {
+    throw new Error("Vendoo completion receipt queueId does not match the route.");
+  }
+  if (input.expectedStatus !== "lpu_generated") {
+    throw new Error("Vendoo completion expectedStatus must be lpu_generated.");
+  }
+
+  const itemFingerprint = normalizeSha256(input.itemFingerprint, "itemFingerprint");
+  const transformedLpuSha256 = normalizeSha256(
+    input.transformedLpuSha256,
+    "transformedLpuSha256"
+  );
+  const vendooDraftIdentitySha256 = normalizeSha256(
+    input.vendooDraftIdentitySha256,
+    "vendooDraftIdentitySha256"
+  );
+  const fieldLedgerSha256 = normalizeSha256(
+    input.fieldLedgerSha256,
+    "fieldLedgerSha256"
+  );
+  const finalManifestSha256 = normalizeSha256(
+    input.finalManifestSha256,
+    "finalManifestSha256"
+  );
+  const seoReviewSha256 = normalizeSha256(input.seoReviewSha256, "seoReviewSha256");
+  const completedAt = normalizeIsoTimestamp(input.completedAt);
+  const verified = normalizeVerifiedMarketplaces(input.verifiedMarketplaces);
+
+  return {
+    schemaVersion: VENDOO_COMPLETION_RECEIPT_SCHEMA_VERSION,
+    kind: "vendoo_completion",
+    queueId,
+    expectedStatus: "lpu_generated",
+    itemFingerprint,
+    transformedLpuSha256,
+    vendooDraftIdentitySha256,
+    verifiedMarketplaces: VENDOO_COMPLETION_MARKETPLACES.map((marketplace) => ({
+      marketplace,
+      status: verified.get(marketplace)!,
+    })),
+    fieldLedgerSha256,
+    finalManifestSha256,
+    seoReviewSha256,
+    completedAt,
+  };
+}
 
 const STATUS_SET = new Set<string>(LISTING_QUEUE_STATUSES);
 
@@ -413,4 +558,50 @@ function summarizeCategory(payloadSnapshot: unknown): string {
     ["marketplaces", "ebay", "canonicalVendooCategoryPath"],
     ["marketplaces", "ebay", "category"],
   ]);
+}
+
+function normalizeSha256(value: unknown, field: string): string {
+  const normalized = toCleanString(value).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error(`${field} must be a SHA-256 hex digest.`);
+  }
+  return normalized;
+}
+
+function normalizeIsoTimestamp(value: unknown): string {
+  const raw = toCleanString(value);
+  const parsed = Date.parse(raw);
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw) ||
+    !Number.isFinite(parsed)
+  ) {
+    throw new Error("completedAt must be an ISO-8601 timestamp.");
+  }
+  return new Date(parsed).toISOString();
+}
+
+function normalizeVerifiedMarketplaces(
+  value: unknown
+): Map<VendooCompletionMarketplace, "verified"> {
+  if (!Array.isArray(value) || value.length !== VENDOO_COMPLETION_MARKETPLACES.length) {
+    throw new Error("Exactly five verified marketplace receipts are required.");
+  }
+
+  const allowed = new Set<string>(VENDOO_COMPLETION_MARKETPLACES);
+  const verified = new Map<VendooCompletionMarketplace, "verified">();
+  for (const entry of value) {
+    if (
+      !isRecord(entry) ||
+      Object.keys(entry).some((key) => key !== "marketplace" && key !== "status") ||
+      typeof entry.marketplace !== "string" ||
+      !allowed.has(entry.marketplace) ||
+      entry.status !== "verified" ||
+      verified.has(entry.marketplace as VendooCompletionMarketplace)
+    ) {
+      throw new Error("Marketplace completion receipts must be unique and verified.");
+    }
+    verified.set(entry.marketplace as VendooCompletionMarketplace, "verified");
+  }
+
+  return verified;
 }

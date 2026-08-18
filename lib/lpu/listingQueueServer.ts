@@ -7,8 +7,11 @@ import {
   type ListingQueuePhoto,
   type ListingQueueRecord,
   type ListingQueueStatus,
+  type ListingQueueVendooCompletionReceipt,
   createListingQueueDraftFromSnapshot,
   hasQueuePhotoStorageReference,
+  normalizePostedToExtensionUnverifiedReceipt,
+  normalizeVendooCompletionReceipt,
   normalizeQueueStatus,
   sanitizePayloadSnapshotForQueue,
   sanitizeQueuePhotosForStorage,
@@ -19,6 +22,11 @@ import {
   isStagingDeployment,
   prefixStagingTitle,
 } from "@/lib/lpu/deploymentEnv";
+import {
+  getRequiredStagingStorageBucket,
+  isStagingStoragePath,
+} from "@/lib/lpu/stagingStoragePolicy";
+import { calculateQueueCreateRequestSha256 } from "@/lib/lpu/listingQueueIdempotency";
 
 const SUPABASE_URL_ENV = "NEXT_PUBLIC_SUPABASE_URL";
 const SUPABASE_SERVICE_ROLE_ENV = "SUPABASE_SERVICE_ROLE_KEY";
@@ -47,6 +55,9 @@ const QUEUE_COLUMNS = [
   "updated_at",
   "archived_at",
   "sent_to_vendoo_at",
+  "create_operation_id",
+  "create_request_sha256",
+  "agent_item_fingerprint",
 ].join(",");
 
 const STAGING_QUEUE_COLUMNS = `${QUEUE_COLUMNS},environment,test_run_id,expires_at`;
@@ -91,6 +102,9 @@ type QueueRow = {
   updated_at: string;
   archived_at: string | null;
   sent_to_vendoo_at: string | null;
+  create_operation_id: string | null;
+  create_request_sha256: string | null;
+  agent_item_fingerprint: string | null;
   environment?: string | null;
   test_run_id?: string | null;
   expires_at?: string | null;
@@ -110,6 +124,9 @@ type PhotoRow = {
 
 export type ListingQueueCreateInput = ListingQueueDraftInput & {
   thumbnailPath?: unknown;
+  createOperationId?: unknown;
+  createRequestSha256?: unknown;
+  agentItemFingerprint?: unknown;
 };
 
 export type ListingQueueUpdateInput = ListingQueueDraftInput & {
@@ -124,7 +141,12 @@ export type ListingQueueListOptions = {
 
 export class ListingQueueServerError extends Error {
   status: number;
-  code: "not_found" | "storage_unavailable" | "supabase_failed" | "invalid_input";
+  code:
+    | "not_found"
+    | "storage_unavailable"
+    | "supabase_failed"
+    | "invalid_input"
+    | "conflict";
 
   constructor(
     message: string,
@@ -176,17 +198,47 @@ export function normalizeQueueApiError(error: unknown): {
 
 export async function createListingQueueItem(
   input: ListingQueueCreateInput
-): Promise<ListingQueueRecord> {
-  assertPhotoStoragePaths(input.photos);
+): Promise<{ item: ListingQueueRecord; replayed: boolean }> {
+  const staging = isStagingDeployment();
+  assertPhotoStoragePaths(input.photos, staging);
+  assertQueueCreateDoesNotManageCompletion(input);
+  const idempotency = normalizeQueueCreateIdempotency(input);
 
   const draft = createListingQueueDraftFromSnapshot(input);
-  const staging = isStagingDeployment();
-  const queueRow = await supabaseRequest<QueueRow[]>({
-    path: `/rest/v1/listing_queue?select=${queueColumnsForEnvironment(staging)}`,
-    method: "POST",
-    body: toQueueInsertRow(draft, input, staging),
-    headers: { Prefer: "return=representation" },
-  });
+  if (idempotency && draft.photos.length > 0) {
+    throw new ListingQueueServerError(
+      "Idempotent autonomous Queue creation cannot include Queue photo rows.",
+      400,
+      "invalid_input"
+    );
+  }
+  if (idempotency) {
+    const existing = await getQueueRowByCreateOperationId(
+      idempotency.operationId,
+      staging
+    );
+    if (existing) {
+      return reconcileQueueCreateReplay(existing, idempotency);
+    }
+  }
+
+  let queueRow: QueueRow[];
+  try {
+    queueRow = await supabaseRequest<QueueRow[]>({
+      path: `/rest/v1/listing_queue?select=${queueColumnsForEnvironment(staging)}`,
+      method: "POST",
+      body: toQueueInsertRow(draft, input, staging, idempotency),
+      headers: { Prefer: "return=representation" },
+    });
+  } catch (error) {
+    if (!(error instanceof ListingQueueServerError) || error.code !== "conflict") {
+      throw error;
+    }
+    if (!idempotency) throw error;
+    const concurrent = await getQueueRowByCreateOperationId(idempotency.operationId, staging);
+    if (!concurrent) throw error;
+    return reconcileQueueCreateReplay(concurrent, idempotency);
+  }
   const createdRow = queueRow[0];
   if (!createdRow?.id) {
     throw new ListingQueueServerError(
@@ -200,14 +252,15 @@ export async function createListingQueueItem(
     await insertPhotoRows(createdRow.id, draft.photos);
   }
 
-  return getListingQueueItem(createdRow.id);
+  return { item: await getListingQueueItem(createdRow.id), replayed: false };
 }
 
 export async function listListingQueueItems(
   options: ListingQueueListOptions = {}
 ): Promise<ListingQueueRecord[]> {
+  const staging = isStagingDeployment();
   const params = new URLSearchParams();
-  params.set("select", queueColumnsForEnvironment(isStagingDeployment()));
+  params.set("select", queueColumnsForEnvironment(staging));
   params.set("order", "updated_at.desc");
   params.set("limit", normalizeLimit(options.limit).toString());
 
@@ -217,6 +270,7 @@ export async function listListingQueueItems(
   } else if (!options.includeArchived) {
     params.set("status", "neq.archived");
   }
+  params.set("environment", staging ? "eq.staging" : "is.null");
 
   const rows = await supabaseRequest<QueueRow[]>({
     path: `/rest/v1/listing_queue?${params.toString()}`,
@@ -239,21 +293,34 @@ export async function updateListingQueueItem(
   input: ListingQueueUpdateInput
 ): Promise<ListingQueueRecord> {
   assertValidId(id);
-  const patch = toQueuePatchRow(input, isStagingDeployment());
+  assertGenericUpdateDoesNotManageCompletion(input);
+  const staging = isStagingDeployment();
+  if (Object.prototype.hasOwnProperty.call(input, "photos")) {
+    const current = await getQueueRow(id);
+    if (current.agent_item_fingerprint) {
+      throw new ListingQueueServerError(
+        "Autonomous Queue photo rows are immutable.",
+        409,
+        "conflict"
+      );
+    }
+  }
+  const patch = toQueuePatchRow(input, staging);
 
   if (Object.keys(patch).length > 0) {
-    await supabaseRequest<QueueRow[]>({
-      path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}&select=${QUEUE_COLUMNS}`,
+    const updatedRows = await supabaseRequest<QueueRow[]>({
+      path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}${queueEnvironmentFilter(staging)}&status=neq.sent_to_vendoo&select=${queueColumnsForEnvironment(staging)}`,
       method: "PATCH",
       body: patch,
       headers: { Prefer: "return=representation" },
     });
+    if (updatedRows.length === 0) await assertQueueItemIsNotCompleted(id);
   } else {
-    await getQueueRow(id);
+    await assertQueueItemIsNotCompleted(id);
   }
 
   if (Object.prototype.hasOwnProperty.call(input, "photos")) {
-    assertPhotoStoragePaths(input.photos);
+    assertPhotoStoragePaths(input.photos, staging);
     const photos = sanitizeQueuePhotosForStorage(input.photos);
     await replacePhotoRows(id, photos);
   }
@@ -261,26 +328,88 @@ export async function updateListingQueueItem(
   return getListingQueueItem(id);
 }
 
+export type CompleteListingQueueVendooResult = {
+  item: ListingQueueRecord;
+  receipt: ListingQueueVendooCompletionReceipt;
+  replayed: boolean;
+};
+
+type CompletionRpcResult = {
+  outcome?: unknown;
+};
+
+export async function completeListingQueueVendoo(
+  id: string,
+  input: unknown
+): Promise<CompleteListingQueueVendooResult> {
+  assertExactUuid(id);
+  const staging = isStagingDeployment();
+
+  let receipt: ListingQueueVendooCompletionReceipt;
+  try {
+    receipt = normalizeVendooCompletionReceipt(id, input);
+  } catch (error) {
+    throw new ListingQueueServerError(
+      error instanceof Error ? error.message : "Invalid Vendoo completion receipt.",
+      400,
+      "invalid_input"
+    );
+  }
+
+  const result = await supabaseRequest<CompletionRpcResult>({
+    path: "/rest/v1/rpc/complete_listing_queue_vendoo",
+    method: "POST",
+    body: {
+      p_queue_id: id,
+      p_expected_status: receipt.expectedStatus,
+      p_expected_environment: staging ? "staging" : "production",
+      p_transformed_lpu_sha256: receipt.transformedLpuSha256,
+      p_receipt: receipt,
+    },
+  });
+  const outcome = cleanString(result?.outcome);
+  if (outcome === "not_found") {
+    throw new ListingQueueServerError("Queue item not found.", 404, "not_found");
+  }
+  if (outcome !== "completed" && outcome !== "replay") {
+    throw new ListingQueueServerError(
+      "Vendoo completion conflicts with the current Queue record.",
+      409,
+      "conflict"
+    );
+  }
+
+  return {
+    item: await getListingQueueItem(id),
+    receipt,
+    replayed: outcome === "replay",
+  };
+}
+
 export async function archiveListingQueueItem(id: string): Promise<ListingQueueRecord> {
   assertValidId(id);
   const now = new Date().toISOString();
+  const staging = isStagingDeployment();
 
-  await supabaseRequest<QueueRow[]>({
-    path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}&select=${QUEUE_COLUMNS}`,
+  const updatedRows = await supabaseRequest<QueueRow[]>({
+    path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}${queueEnvironmentFilter(staging)}&status=neq.sent_to_vendoo&select=${queueColumnsForEnvironment(staging)}`,
     method: "PATCH",
     body: { status: "archived", archived_at: now },
     headers: { Prefer: "return=representation" },
   });
+  if (updatedRows.length === 0) await assertQueueItemIsNotCompleted(id);
 
   return getListingQueueItem(id);
 }
 
 export async function restoreListingQueueItem(id: string): Promise<ListingQueueRecord> {
   const item = await getListingQueueItem(id);
+  if (item.status !== "archived") return item;
   const status = inferRestoredStatus(item);
+  const staging = isStagingDeployment();
 
   await supabaseRequest<QueueRow[]>({
-    path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}&select=${QUEUE_COLUMNS}`,
+    path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}${queueEnvironmentFilter(staging)}&status=eq.archived&select=${queueColumnsForEnvironment(staging)}`,
     method: "PATCH",
     body: { status, archived_at: null },
     headers: { Prefer: "return=representation" },
@@ -386,8 +515,9 @@ export async function hardDeleteStagingListingQueueItem(id: string): Promise<voi
 
 async function getQueueRow(id: string): Promise<QueueRow> {
   assertValidId(id);
+  const staging = isStagingDeployment();
   const rows = await supabaseRequest<QueueRow[]>({
-    path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}&select=${queueColumnsForEnvironment(isStagingDeployment())}&limit=1`,
+    path: `/rest/v1/listing_queue?id=eq.${encodeURIComponent(id)}${queueEnvironmentFilter(staging)}&select=${queueColumnsForEnvironment(staging)}&limit=1`,
     method: "GET",
   });
   const row = rows[0];
@@ -396,6 +526,17 @@ async function getQueueRow(id: string): Promise<QueueRow> {
   }
 
   return row;
+}
+
+async function getQueueRowByCreateOperationId(
+  operationId: string,
+  staging: boolean
+): Promise<QueueRow | undefined> {
+  const rows = await supabaseRequest<QueueRow[]>({
+    path: `/rest/v1/listing_queue?create_operation_id=eq.${encodeURIComponent(operationId)}${queueEnvironmentFilter(staging)}&select=${queueColumnsForEnvironment(staging)}&limit=1`,
+    method: "GET",
+  });
+  return rows[0];
 }
 
 async function listPhotoRows(listingId: string): Promise<PhotoRow[]> {
@@ -485,6 +626,13 @@ async function supabaseRequest<T>({
   });
 
   if (!response.ok) {
+    if (response.status === 409) {
+      throw new ListingQueueServerError(
+        "Queue operation conflicts with an existing record.",
+        409,
+        "conflict"
+      );
+    }
     throw new ListingQueueServerError(
       response.status === 404 ? "Queue item not found." : "Supabase request failed.",
       response.status === 404 ? 404 : 502,
@@ -517,7 +665,10 @@ function getSupabaseConfig(): SupabaseConfig {
 function toQueueInsertRow(
   record: ListingQueueRecord,
   input: ListingQueueCreateInput,
-  staging: boolean
+  staging: boolean,
+  idempotency:
+    | { operationId: string; requestSha256: string; itemFingerprint: string }
+    | undefined
 ): Record<string, unknown> {
   const thumbnailPath = cleanString(input.thumbnailPath) || record.thumbnailPath || null;
 
@@ -540,6 +691,9 @@ function toQueueInsertRow(
     app_version: record.appVersion ?? null,
     schema_version: LISTING_QUEUE_SCHEMA_VERSION,
     sent_to_vendoo_at: record.sentToVendooAt ?? null,
+    create_operation_id: idempotency?.operationId ?? null,
+    create_request_sha256: idempotency?.requestSha256 ?? null,
+    agent_item_fingerprint: idempotency?.itemFingerprint ?? null,
   };
   if (staging) {
     const metadata = getStagingListingMetadata();
@@ -581,7 +735,11 @@ function toQueuePatchRow(
   setObjectPatch(patch, "pricing_snapshot", input, "pricingSnapshot");
   setObjectPatch(patch, "public_web_comps_snapshot", input, "publicWebCompsSnapshot");
   setObjectPatch(patch, "manual_comp_inputs", input, "manualCompInputs");
-  setObjectPatch(patch, "vendoo_send_status", input, "vendooSendStatus");
+  if (input.vendooSendStatus != null) {
+    patch.vendoo_send_status = normalizePostedToExtensionUnverifiedReceipt(
+      input.vendooSendStatus
+    );
+  }
 
   return patch;
 }
@@ -632,6 +790,13 @@ function queueRecordFromRows(
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
     sentToVendooAt: row.sent_to_vendoo_at,
+    ...(row.create_operation_id ? { createOperationId: row.create_operation_id } : {}),
+    ...(row.create_request_sha256
+      ? { createRequestSha256: row.create_request_sha256 }
+      : {}),
+    ...(row.agent_item_fingerprint
+      ? { agentItemFingerprint: row.agent_item_fingerprint }
+      : {}),
     ...getStagingResponseMetadata(row, isStagingDeployment()),
   };
 }
@@ -695,7 +860,7 @@ function sanitizeObject(value: unknown): JsonObject | undefined {
   return sanitized;
 }
 
-function assertPhotoStoragePaths(photos: unknown): void {
+function assertPhotoStoragePaths(photos: unknown, staging: boolean): void {
   if (typeof photos === "undefined") return;
   if (!Array.isArray(photos)) {
     throw new ListingQueueServerError(
@@ -713,6 +878,13 @@ function assertPhotoStoragePaths(photos: unknown): void {
         "invalid_input"
       );
     }
+    if (staging && !isStagingStoragePath((photo as { storagePath?: unknown }).storagePath)) {
+      throw new ListingQueueServerError(
+        "Staging photo storagePath is invalid.",
+        400,
+        "invalid_input"
+      );
+    }
   }
 }
 
@@ -726,6 +898,142 @@ function assertValidId(id: string): void {
   }
 }
 
+function assertGenericUpdateDoesNotManageCompletion(input: ListingQueueUpdateInput): void {
+  if (input.status === "sent_to_vendoo" || input.sentToVendooAt != null) {
+    throw new ListingQueueServerError(
+      "Vendoo completion must use the dedicated completion endpoint.",
+      400,
+      "invalid_input"
+    );
+  }
+  if (input.vendooSendStatus != null) {
+    if (input.status !== "payload_ready") {
+      throw new ListingQueueServerError(
+        "An extension-post receipt must keep the Queue item payload_ready.",
+        400,
+        "invalid_input"
+      );
+    }
+    try {
+      normalizePostedToExtensionUnverifiedReceipt(input.vendooSendStatus);
+    } catch (error) {
+      throw new ListingQueueServerError(
+        error instanceof Error
+          ? error.message
+          : "Invalid posted_to_extension_unverified receipt.",
+        400,
+        "invalid_input"
+      );
+    }
+  }
+}
+
+function assertQueueCreateDoesNotManageCompletion(input: ListingQueueCreateInput): void {
+  if (
+    input.status === "sent_to_vendoo" ||
+    input.vendooSendStatus != null ||
+    input.sentToVendooAt != null
+  ) {
+    throw new ListingQueueServerError(
+      "Vendoo completion cannot be set during Queue creation.",
+      400,
+      "invalid_input"
+    );
+  }
+}
+
+async function assertQueueItemIsNotCompleted(id: string): Promise<void> {
+  const row = await getQueueRow(id);
+  if (row.status === "sent_to_vendoo") {
+    throw new ListingQueueServerError(
+      "Completed Queue records are immutable.",
+      409,
+      "conflict"
+    );
+  }
+}
+
+function normalizeQueueCreateIdempotency(input: ListingQueueCreateInput): {
+  operationId: string;
+  requestSha256: string;
+  itemFingerprint: string;
+} | undefined {
+  const operationId = cleanString(input.createOperationId);
+  const requestSha256 = cleanString(input.createRequestSha256).toLowerCase();
+  const itemFingerprint = cleanString(input.agentItemFingerprint).toLowerCase();
+  if (!operationId && !requestSha256 && !itemFingerprint) return undefined;
+  if (!operationId || !requestSha256 || !itemFingerprint) {
+    throw new ListingQueueServerError(
+      "agentItemFingerprint, createOperationId, and createRequestSha256 must be provided together.",
+      400,
+      "invalid_input"
+    );
+  }
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(operationId)) {
+    throw new ListingQueueServerError(
+      "createOperationId must be a stable 8-128 character operation identity.",
+      400,
+      "invalid_input"
+    );
+  }
+  if (!/^[0-9a-f]{64}$/.test(requestSha256)) {
+    throw new ListingQueueServerError(
+      "createRequestSha256 must be a SHA-256 hex digest.",
+      400,
+      "invalid_input"
+    );
+  }
+  if (!/^[0-9a-f]{64}$/.test(itemFingerprint)) {
+    throw new ListingQueueServerError(
+      "agentItemFingerprint must be a SHA-256 hex digest.",
+      400,
+      "invalid_input"
+    );
+  }
+  if (containsJsonNumber(input)) {
+    throw new ListingQueueServerError(
+      "Idempotent autonomous Queue requests cannot contain JSON numbers.",
+      400,
+      "invalid_input"
+    );
+  }
+
+  const calculated = calculateQueueCreateRequestSha256(input);
+  if (calculated !== requestSha256) {
+    throw new ListingQueueServerError(
+      "createRequestSha256 does not match the canonical request body.",
+      400,
+      "invalid_input"
+    );
+  }
+
+  return { operationId, requestSha256, itemFingerprint };
+}
+
+function containsJsonNumber(value: unknown): boolean {
+  if (typeof value === "number") return true;
+  if (Array.isArray(value)) return value.some(containsJsonNumber);
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value as Record<string, unknown>).some(containsJsonNumber);
+}
+
+async function reconcileQueueCreateReplay(
+  row: QueueRow,
+  idempotency: { requestSha256: string; itemFingerprint: string }
+): Promise<{ item: ListingQueueRecord; replayed: true }> {
+  if (
+    row.create_request_sha256 !== idempotency.requestSha256 ||
+    row.agent_item_fingerprint !== idempotency.itemFingerprint
+  ) {
+    throw new ListingQueueServerError(
+      "createOperationId is already bound to a different Queue request.",
+      409,
+      "conflict"
+    );
+  }
+  return { item: await getListingQueueItem(row.id), replayed: true };
+}
+
 function assertExactUuid(id: string): void {
   if (!isExactUuid(id)) {
     throw new ListingQueueServerError("Invalid queue item ID.", 400, "invalid_input");
@@ -736,12 +1044,25 @@ function queueColumnsForEnvironment(staging: boolean): string {
   return staging ? STAGING_QUEUE_COLUMNS : QUEUE_COLUMNS;
 }
 
+function queueEnvironmentFilter(staging: boolean): string {
+  return staging ? "&environment=eq.staging" : "&environment=is.null";
+}
+
 async function deleteStorageObjects(storagePaths: string[]): Promise<void> {
   const uniquePaths = [...new Set(storagePaths.filter(Boolean))];
   if (uniquePaths.length === 0) return;
+  if (uniquePaths.some((storagePath) => !isStagingStoragePath(storagePath))) {
+    throw new ListingQueueServerError(
+      "Staging storage path is invalid.",
+      400,
+      "invalid_input"
+    );
+  }
 
   const config = getSupabaseConfig();
-  const bucket = process.env[SUPABASE_STORAGE_BUCKET_ENV]?.trim() || "lpu-generator-images";
+  const bucket = getRequiredStagingStorageBucket(
+    process.env[SUPABASE_STORAGE_BUCKET_ENV]?.trim()
+  );
   for (const storagePath of uniquePaths) {
     const encodedPath = storagePath.split("/").map(encodeURIComponent).join("/");
     const response = await fetch(

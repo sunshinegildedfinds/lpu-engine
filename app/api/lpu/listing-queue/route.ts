@@ -46,8 +46,11 @@ export async function POST(request: Request) {
       return jsonError("Invalid JSON body.", 400);
     }
 
-    const item = await createListingQueueItem(body ?? {});
-    return NextResponse.json({ ok: true, item }, { status: 201 });
+    const result = await createListingQueueItem(body ?? {});
+    return NextResponse.json(
+      { ok: true, item: result.item, replayed: result.replayed },
+      { status: result.replayed ? 200 : 201 }
+    );
   } catch (error) {
     if (error instanceof QueueAuthError) return authError(error);
     const normalized = normalizeQueueApiError(error);
