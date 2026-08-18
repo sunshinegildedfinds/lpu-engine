@@ -47,7 +47,11 @@ assert.throws(
 assert.equal(/gpt-5\.3-chat-latest/.test(generateRoute), false);
 assert.equal(/gpt-5\.3-chat-latest/.test(webCompsRoute), false);
 assert.match(generateRoute, /getLpuOpenAIGenerationModel/);
-assert.match(generateRoute, /export const maxDuration = 540/);
+assert.match(generateRoute, /export const maxDuration = 300/);
+assert.match(
+  generateRoute,
+  /sellingBrief\?\.trim\(\)\s*&&\s*hasRemainingValidationIssues\(validation\)/
+);
 assert.equal((generateRoute.match(/model:\s*getLpuOpenAIGenerationModel\(\)/g) ?? []).length, 11);
 assert.match(webCompsRoute, /getLpuOpenAIWebCompsModel/);
 assert.match(webCompsRoute, /model:\s*getLpuOpenAIWebCompsModel\(\)/);

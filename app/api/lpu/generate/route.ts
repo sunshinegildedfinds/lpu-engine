@@ -23,10 +23,10 @@ import {
   stagingLegacyMacImageUrls,
 } from "@/lib/lpu/stagingLegacyMacImagePolicy";
 
-// A V2 finalFromBrief request may require the initial full listing plus
-// bounded validation repairs. Keep this below the Mac client's 600-second
-// read ceiling while avoiding Vercel's 300-second default termination.
-export const maxDuration = 540;
+// The production project currently has Vercel's 300-second function ceiling.
+// Provider repairs below must therefore remain evidence-triggered rather than
+// adding an unconditional second full-output generation call.
+export const maxDuration = 300;
 
 type IncomingImage = {
   name: string;
@@ -269,6 +269,10 @@ function hasOnlyTitleLengthIssues(validation: TitleValidationShape): boolean {
       typeof issue?.code === "string" &&
       allowedCodes.has(issue.code)
   );
+}
+
+function hasRemainingValidationIssues(validation: TitleValidationShape): boolean {
+  return Array.isArray(validation?.issues) && validation.issues.length > 0;
 }
 
 function hasPoshmarkOutputOrderIssues(validation: TitleValidationShape): boolean {
@@ -4456,7 +4460,11 @@ ${notes}`;
     }
   }
 
-  if (promptVersion === "v2" && sellingBrief?.trim()) {
+  if (
+    promptVersion === "v2" &&
+    sellingBrief?.trim() &&
+    hasRemainingValidationIssues(validation)
+  ) {
     const revisionResponse = await openai.responses.create({
       model: getLpuOpenAIGenerationModel(),
       input: [
